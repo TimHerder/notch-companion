@@ -1,0 +1,41 @@
+name: Bug report
+description: Report a reproducible problem with Notch Companion.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For security vulnerabilities, follow SECURITY.md instead. Remove credentials,
+        private prompts, session identifiers and personal paths from anything you share.
+  - type: input
+    id: version
+    attributes:
+      label: Notch Companion version
+      description: Copy the version and build number from the bottom of Settings.
+      placeholder: 2026.10.27-r1 · Build 1
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and macOS version
+      placeholder: MacBook Pro M4, macOS 26.5
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Agent and version
+      description: If the problem involves an agent, include its native CLI version.
+      placeholder: Claude Code, Codex, Hermes, or no agent involved
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: What happened?
+      description: Include steps to reproduce, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Additional information
+      description: Optional screenshots or redacted errors. Do not include credentials or private conversations.

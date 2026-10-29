@@ -1,0 +1,15 @@
+.DS_Store
+.build/
+build/
+dist/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+__pycache__/
+*.pyc
+.claude/worktrees/
+.env
+.env.*
+!.env.example
+output/
+brag-output*/

@@ -1,0 +1,6 @@
+Notch Companion attachment verification
+
+Verification marker: moss-42
+
+This is a harmless test fixture. The original file must remain unchanged when
+it is attached, read by Hermes, or removed from the composer.

@@ -1,0 +1,171 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Keep queued main runs; replace outdated previews of the same pull request.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  queue: ${{ github.event_name == 'pull_request' && 'single' || 'max' }}
+
+jobs:
+  check-runner:
+    name: Select check runner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    outputs:
+      runner: ${{ steps.select.outputs.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate allocation recovery decisions
+        run: python3 -B -m unittest discover -v -s Tests/Release -p 'test_ci_runner.py'
+      - id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci-runner.py select check
+
+  check:
+    name: Offline tests and app build (${{ needs.check-runner.outputs.runner }})
+    needs: check-runner
+    runs-on: ${{ needs.check-runner.outputs.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
+      NOTCH_VERSION_FILE: build/ci-version.json
+      # Keep the distributed app explicitly targeted at Apple Silicon.
+      NOTCH_BUILD_ARCH: arm64
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      eligible: ${{ steps.plan.outputs.eligible }}
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # On pull_request this is GitHub's tested merge commit, not its head.
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Check toolchain
+        run: |
+          uname -m
+          xcodebuild -version
+          xcrun swift --version
+          python3 --version
+          node --version
+          mkdir -p build
+          {
+            echo "Test host architecture: $(uname -m)"
+            echo "Packaged app architecture: $NOTCH_BUILD_ARCH"
+            echo "Checked source: $GITHUB_SHA"
+            echo "Workflow run: $GITHUB_RUN_ID (attempt $GITHUB_RUN_ATTEMPT)"
+            echo "Tests execute on the host. An Intel run cross-builds the ARM app; it does not test native ARM execution."
+          } | tee build/ci-runner.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Plan version and release eligibility
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci-release.py plan
+      - name: Test and build
+        run: ./scripts/check.sh
+      - name: Package the checked app
+        if: steps.plan.outputs.mode == 'preview' || steps.plan.outputs.mode == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci-release.py package
+      - name: Upload preview or release candidate
+        id: artifact
+        if: steps.plan.outputs.mode == 'preview' || steps.plan.outputs.mode == 'release'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.plan.outputs.artifact_name }}
+          path: |
+            build/ci-plan.json
+            build/ci-version.json
+            build/ci-runner.txt
+            build/ci-package/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish-runner:
+    name: Select publication runner
+    needs: check
+    if: >-
+      github.repository == 'TimHerder/notch-companion' &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.check.outputs.mode == 'release' && needs.check.outputs.eligible == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+    outputs:
+      runner: ${{ steps.select.outputs.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci-runner.py select publish
+
+  publish:
+    name: Publish beta release (${{ needs.publish-runner.outputs.runner }})
+    needs: [check, publish-runner]
+    # Both dependencies must succeed; selection also enforces release eligibility.
+    runs-on: ${{ needs.publish-runner.outputs.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: read
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
+      NOTCH_VERSION_FILE: build/ci-version.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Download the checked package from this run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.check.outputs.artifact_id }}
+          path: build
+          digest-mismatch: error
+      - name: Verify and publish the beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci-release.py publish
