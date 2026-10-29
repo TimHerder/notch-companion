@@ -32,7 +32,8 @@ appears in its visible sidebar, or that live handoff works in general.
   skipped) and 31 release/recovery tests. An ARM runner allocation failure
   happened once (run `40722456527`, no runner and no steps). Automatic Intel
   recovery is unit-tested but hasn't yet recovered a real outage.
-- No beta has been published from native ARM CI yet.
+- No release has been published from native ARM CI yet. Releases are now full
+  GitHub releases marked Latest, with no Beta title or pre-release flag.
 - Repository settings were read back on 2026-10-29: private, issues on, PR
   creation limited to collaborators, workflow token read-only, and only the owner
   as collaborator. Branch protection isn't available on the current plan.
@@ -51,7 +52,7 @@ source snapshot. Known limits:
 
 **Not yet done**
 
-- A downloaded beta hasn't been installed through Gatekeeper on another Mac.
+- A downloaded release hasn't been installed through Gatekeeper on another Mac.
 - No third-party rights or full secret review has been done. Pattern scans found
   nothing, but they aren't a certification.
 - No physical UI acceptance of a release build has been done.

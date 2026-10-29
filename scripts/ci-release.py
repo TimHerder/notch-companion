@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan, package checked CI output, and publish immutable main-merge betas."""
+"""Plan, package checked CI output, and publish immutable main-merge releases."""
 
 import argparse
 import base64
@@ -279,11 +279,11 @@ def publish():
     repo, tag = plan["repository"], plan["tag"]
     remote = existing_release(repo, tag)
     if remote is None:
-        release.run("gh", "release", "create", tag, "--repo", repo, "--verify-tag", "--draft", "--prerelease",
-                    "--generate-notes", "--title", f"Notch Companion {plan['metadata']['version']} Beta")
+        release.run("gh", "release", "create", tag, "--repo", repo, "--verify-tag", "--draft",
+                    "--generate-notes", "--title", f"Notch Companion {plan['metadata']['version']}")
         remote = existing_release(repo, tag)
-    if remote is None or not remote["prerelease"]:
-        raise ValueError("Expected an existing beta release for the verified tag.")
+    if remote is None or remote["prerelease"]:
+        raise ValueError("Expected an existing full release for the verified tag.")
     missing = verify_assets(repo, remote, assets)
     if missing and not remote["draft"]:
         raise ValueError("A published release is missing expected assets; it cannot be modified.")
@@ -292,11 +292,11 @@ def publish():
     if missing and verify_assets(repo, remote, assets):
         raise ValueError("Release upload is incomplete; retry with this same artifact.")
     if remote["draft"]:
-        release.run("gh", "release", "edit", tag, "--repo", repo, "--draft=false", "--prerelease")
+        release.run("gh", "release", "edit", tag, "--repo", repo, "--draft=false", "--latest")
     final = existing_release(repo, tag)
-    if final is None or final["draft"] or not final["prerelease"]:
-        raise ValueError("GitHub has not confirmed beta publication.")
-    print(f"Verified beta release: {final['html_url']}")
+    if final is None or final["draft"] or final["prerelease"]:
+        raise ValueError("GitHub has not confirmed release publication.")
+    print(f"Verified release: {final['html_url']}")
 
 
 def main():

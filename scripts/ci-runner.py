@@ -12,7 +12,7 @@ ARM = "macos-26"
 INTEL = "macos-26-intel"
 STAGES = {
     "check": ("Offline tests and app build", "Select check runner"),
-    "publish": ("Publish beta release", "Select publication runner"),
+    "publish": ("Publish release", "Select publication runner"),
 }
 ALLOCATION_ERROR = "The job was not acquired by Runner of type hosted even after multiple attempts"
 

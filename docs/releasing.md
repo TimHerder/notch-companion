@@ -1,7 +1,7 @@
 # Releasing Notch Companion
 
 Open a pull request, check its preview, merge. GitHub then re-checks the merged
-source, ad-hoc signs the app and publishes a beta ZIP as a prerelease. No Apple
+source, ad-hoc signs the app and publishes the ZIP as the latest release. No Apple
 developer account is needed, and the repository stays private until an explicit
 public-launch decision.
 
@@ -12,7 +12,7 @@ public-launch decision.
    `notch-companion-preview-pr-<PR>-…` (ZIP, `SHA256SUMS`, `release.json`) to the
    run for 7 days. The app is labeled **Preview**, is built from the PR's merge
    revision, and can never be published as a release. Fix red checks before merging.
-3. **Merge.** Merging an app-affecting change authorizes beta publication; there
+3. **Merge.** Merging an app-affecting change authorizes release publication; there
    is no extra approval step. Agents may merge only when the user authorizes
    merging that task.
 4. **Confirm.** Check the Actions run and the
@@ -112,12 +112,12 @@ There is no in-app updater. Users replace the app once their sessions are idle.
 The build copies [LICENSE](../LICENSE) into `Contents/Resources/LICENSE` before
 signing. This repository starts from a single reviewed snapshot. Earlier history
 lives in the private `notch-companion-private` and `notch-companion-prerelease`
-archives, including their PRs, tags and betas. Never merge or push their commits,
+archives, including their PRs, tags and releases. Never merge or push their commits,
 branches or tags here.
 
 ## Before public launch
 
-A beta in a private repository is still private. Before changing visibility:
+A release in a private repository is still private. Before changing visibility:
 
 - Review the source, secrets and third-party rights. Pattern scans alone aren't enough.
 - Confirm hosted checks and a release passed for the intended source. Verify its

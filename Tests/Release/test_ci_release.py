@@ -138,7 +138,7 @@ class CIReleaseTests(unittest.TestCase):
         paths = [self.root / name for name in ("app.zip", "release.json", "SHA256SUMS")]
         for path in paths:
             path.write_bytes(b"verified bytes")
-        remote = {"id": 7, "prerelease": True, "draft": True, "html_url": "https://example.invalid/release"}
+        remote = {"id": 7, "prerelease": False, "draft": True, "html_url": "https://example.invalid/release"}
         uploaded = [{"id": 1, "name": "app.zip", "size": paths[0].stat().st_size}]
 
         def download(args, **kwargs):
@@ -162,10 +162,32 @@ class CIReleaseTests(unittest.TestCase):
             self.assertTrue(all("--clobber" not in command for command in commands))
             self.assertNotIn(str(paths[0]), str(commands))
             self.assertIn("--draft=false", commands[-1])
+            self.assertIn("--latest", commands[-1])
+
+    def test_new_release_is_a_full_release_without_beta_wording(self):
+        plan = self.eligible_plan()
+        draft = {"id": 7, "prerelease": False, "draft": True, "html_url": "https://example.invalid/release"}
+        with patch.object(ci, "load_plan", return_value=plan), patch.object(ci, "make_plan", return_value=plan), \
+             patch.object(ci, "authenticated_git"), patch.object(ci, "ensure_tag"), \
+             patch.object(ci.release, "verify_package", return_value=[]), \
+             patch.object(ci, "existing_release", side_effect=[None, draft, {**draft, "draft": False}]), \
+             patch.object(ci, "verify_assets", return_value=[]), patch.object(ci.release, "run") as run:
+            ci.publish()
+            create = run.call_args_list[0].args
+            self.assertNotIn("--prerelease", create)
+            self.assertEqual(create[create.index("--title") + 1], f"Notch Companion {plan['metadata']['version']}")
+        with patch.object(ci, "load_plan", return_value=plan), patch.object(ci, "make_plan", return_value=plan), \
+             patch.object(ci, "authenticated_git"), patch.object(ci, "ensure_tag"), \
+             patch.object(ci.release, "verify_package", return_value=[]), \
+             patch.object(ci, "existing_release", return_value={**draft, "prerelease": True}), \
+             patch.object(ci.release, "run") as run:
+            with self.assertRaisesRegex(ValueError, "full release"):
+                ci.publish()
+            run.assert_not_called()
 
     def test_published_retry_is_noop_and_never_repairs_changed_or_missing_assets(self):
         plan = self.eligible_plan()
-        remote = {"id": 7, "prerelease": True, "draft": False, "html_url": "https://example.invalid/release"}
+        remote = {"id": 7, "prerelease": False, "draft": False, "html_url": "https://example.invalid/release"}
         with patch.object(ci, "load_plan", return_value=plan), patch.object(ci, "make_plan", return_value=plan), \
              patch.object(ci, "authenticated_git"), patch.object(ci, "ensure_tag"), \
              patch.object(ci.release, "verify_package", return_value=[]), \
