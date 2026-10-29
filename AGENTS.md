@@ -66,7 +66,7 @@ disagree, establish which one is intended before treating the discrepancy as cor
 5. Merge only when the user authorizes merging this task, after reviewing the
    final diff and seeing the relevant checks pass. GitHub can't enforce this on
    the current plan. An authorized merge of an app change also authorizes the
-   automatic beta publication.
+   automatic release publication.
 6. Report the change, checks, commit, branch and PR, plus release status after
    a merge. After a rebuild, tell the user an idle Quit/reopen is needed unless
    you performed it. If something is blocked, name the exact blocker and the
@@ -85,5 +85,5 @@ work local overrides this. Read-only reviews and planning need no commit or PR.
   tags are permanent, versions never come from bot commits, and Preview builds
   never become releases.
 - External code and documentation contributions are closed. The repository stays
-  private, even with published betas, until the maintainer explicitly instructs
+  private, even with published releases, until the maintainer explicitly instructs
   a public launch.

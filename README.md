@@ -5,7 +5,7 @@ work, answer approvals and drop in files from a small panel beside the camera,
 using the agents you already have installed. On a display without a notch, it
 draws a small one.
 
-> **Private beta.** Apple Silicon, macOS 26 or newer.
+> **Private release.** Apple Silicon, macOS 26 or newer.
 
 ## What it does
 
@@ -57,7 +57,7 @@ for details.
 
 1. Download the ZIP from [Releases](https://github.com/TimHerder/notch-companion/releases)
    and move **Notch Companion.app** to **Applications**.
-2. The beta isn't notarized yet. If macOS blocks it, go to **System Settings →
+2. The app isn't notarized yet. If macOS blocks it, go to **System Settings →
    Privacy & Security → Open Anyway** ([Apple's guide](https://support.apple.com/102445)).
 3. Open Settings in the app to connect your agents.
 
