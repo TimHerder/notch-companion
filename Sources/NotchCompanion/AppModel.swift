@@ -173,6 +173,8 @@ final class AppModel: ObservableObject {
     var steerRefused: Set<String> = []
     /// Child creations in flight by task ID, so a retry joins the first call.
     var delegationCreations: [String: (parentID: String, task: Task<String, Error>)] = [:]
+    /// What a connected installation reported about hosting delegation (OpenCode 1.x cannot).
+    var delegationHosting: [RuntimeRoute: Bool] = [:]
     var unfinishedParents: Set<String> = []
     /// Sessions whose adapter was sent a mode; Inherit then asks it to restore once.
     private var permissionOverrides: Set<String> = []
@@ -470,6 +472,7 @@ final class AppModel: ObservableObject {
             guard connectGeneration == generation else { return }
             guard let catalog = result["catalog"] as? RuntimeModelCatalog else { throw AppError("This runtime did not report its models.") }
             modelCatalogs[key] = catalog
+            if let hosts = result["hosts_delegation"] as? Bool { delegationHosting[key.route] = hosts }
         } catch {
             if connectGeneration == generation { modelCatalogErrors[key] = "Models unavailable. \(error.localizedDescription)" }
         }
@@ -1649,6 +1652,11 @@ final class AppModel: ObservableObject {
             throw error
         }
         guard let sid = result["session_id"] as? String else { throw AppError("The runtime returned an invalid session response.") }
+        if let hosts = result["hosts_delegation"] as? Bool {
+            delegationHosting[session.route] = hosts
+            // An installation that cannot host never uses the token.
+            if !hosts, delegation != nil { delegationServer.revoke(sessionID: localID) }
+        }
         let nativeCwd = result["cwd"] as? String ?? requestedCwd
         guard URL(fileURLWithPath: nativeCwd).standardizedFileURL.resolvingSymlinksInPath()
             == URL(fileURLWithPath: requestedCwd).standardizedFileURL.resolvingSymlinksInPath() else {

@@ -47,12 +47,12 @@ project invalidates it.
 | Hermes | Authenticated headless frontend; selected native Hermes profile | Read-only authentication and source/config protections ([Shared Hermes](#shared-hermes)). |
 | Codex | `codex app-server`; selected `CODEX_HOME` | See [Codex](#codex). |
 | OpenCode | Owned `opencode serve`, native V1/V2 HTTP/SSE; `OPENCODE_CONFIG_DIR`, project `cwd` | Version/schema-guarded 1.18.34–1.18.x and 2.0.30–2.0.x. Paginated history, exact resume, tools, permissions/questions, session models, owned parent/child status. Saved protections from the older ACP frontend stay intact. |
-| DeepSeek Harness | `dsh --profile <existing-name>` with original `$DSH_HOME/profiles/<name>` | Experimental ACP. Never creates or patches an `acp`/`sdk` replacement profile. Resume, tools, approvals, negotiated model/image/context support. |
+| DeepSeek Harness | `dsh --profile <existing-name>` with original `$DSH_HOME/profiles/<name>` | ACP. Never creates or patches an `acp`/`sdk` replacement profile. Resume, tools, approvals, negotiated model/image/context support. |
 | Pi | `pi --mode rpc`; `PI_CODING_AGENT_DIR`, native session file | Native extensions/dialogs, tools, per-session models, images, settled lifecycle. Context from `get_session_stats.contextUsage` only. Bundled process-only extension provides `notch_ask_user`. Terminal-rendered extension UI and built-in tool approvals are unavailable. |
 | OpenClaw | Authenticated WebSocket to the existing loopback Gateway; selected agent | Protocol 4 pairing, sessions/history, chat, approvals/questions, models, tool/child activity. Never starts/stops the Gateway. Remote/TLS unsupported. |
 | Claude Code | Installed unmodified `claude --print` stream-json; `CLAUDE_CONFIG_DIR`, trusted `cwd` | Native hooks/memory, exact UUID resume, models, permissions/questions, child events. Context = latest parent request's input/cache counts against the reported window. Never `--bare`, an SDK replacement or copied credentials; bypass only for confirmed [Full access](#permission-modes). |
 | Antigravity CLI | Installed `agy` streaming I/O; original `~/.gemini/antigravity-cli` | Conversation IDs/resume, file references, tools, model discovery and exact-ID switching. Context estimate from latest parent-response counts; window unknown. Native `ask_question` is opaque, so questions, approvals and images are unsupported; it shows a limitation notice. Native policy can soft-deny tools on a successful turn. |
-| Cursor CLI | Installed `cursor-agent acp` after `authenticate` with `cursor_login`; native `~/.cursor`, trusted `cwd` | Experimental, not yet run against an installed CLI. Shared ACP adapter. `cursor/ask_question` → question card, `cursor/create_plan` → plan approval, answered in the documented `outcome` shape; requests without `sessionId` are attributed by `toolCallId` or the sole active session, else declined. Sign-in stays with `cursor-agent login`; no profile override. |
+| Cursor CLI | Installed `cursor-agent acp` after `authenticate` with `cursor_login`; native `~/.cursor`, trusted `cwd` | Shared ACP adapter. `cursor/ask_question` → question card, `cursor/create_plan` → plan approval, answered in the documented `outcome` shape; requests without `sessionId` are attributed by `toolCallId` or the sole active session, else declined. Sign-in stays with `cursor-agent login`; no profile override. |
 
 ### Installed harness compatibility
 
@@ -504,12 +504,16 @@ this adds app-owned children.
 `/mcp`, server name `notch`: minimal MCP Streamable HTTP (`initialize`, `ping`,
 `tools/list`, `tools/call` as JSON-RPC `POST`, single or batch; notifications
 get 202; `GET`/`DELETE` get 405). `initialize` returns the delegation
-instructions. Each native session gets one token (32 random bytes, base64url);
+instructions (empty for OpenCode, whose session instruction entry carries them).
+Each native session gets one token (32 random bytes, base64url);
 only its SHA-256 is kept, in memory, scoped to the companion session, harness
-and a `subagent` flag. Missing/unknown bearer: 401. Tokens expire after 24 hours
+and a `subagent` flag. Missing/unknown bearer: 401. A `tools/call` whose
+`_meta["ai.opencode/sessionID"]` is neither the caller's native session nor one
+of its native subagents is `capability_denied`. Tokens expire after 24 hours
 unused unless the session is busy, and are revoked when the session's process is
-released (`session.disconnected`, route/app disconnect, deletion) or its launch
-fails. Reopening reuses a live token. **Cross-agent delegation** in Settings
+released (`session.disconnected`, route/app disconnect, deletion), its launch
+fails, or its installation reports it cannot host (`hosts_delegation: false`,
+OpenCode 1.x). Reopening reuses a live token. **Cross-agent delegation** in Settings
 (default on) controls injection for new launches; while off, calls fail with
 `capability_denied`.
 
@@ -615,17 +619,20 @@ sends a child (created worktrees remain). A client closing its connection
 cancels its tool call; an abandoned `wait` never acknowledges a result. An ACP
 session reloaded while live keeps the bridge it was opened with.
 
-**Injection** (`hostsDelegation`: Claude, Codex, DeepSeek, Pi; version-specific,
-rerun native acceptance before release):
+**Injection** (`hostsDelegation`: Claude, Codex, OpenCode 2, DeepSeek, Pi,
+Cursor; version-specific, rerun native acceptance before release). An adapter
+may report `hosts_delegation` with a session or model catalog; `false` drops
+that route from hosting until it reports otherwise, and `orchestrator_capabilities`
+then says its children cannot delegate:
 
 | Harness | Mechanism |
 | --- | --- |
 | Claude Code 2.1.287 | `--allowedTools mcp__notch__*` (Plan: only `orchestrator_capabilities`, `notch_session_list`, `notch_session_wait`, `pending_request_list`, `pending_request_read`); instructions as `appendSystemPrompt` in `initialize`; then the server, bearer header and 65-minute `timeout` via `mcp_set_servers`, so the token never enters argv. No `--mcp-config`/`--strict-mcp-config`: user servers stay. A failed registration leaves the session usable with a notice. |
 | Codex 0.162.1 | Per-thread `config` on `thread/start`/`thread/resume` with only `mcp_servers.notch` (`url`, `http_headers.Authorization`, `tool_timeout_sec: 3900`), keeping user servers. Instructions as `additionalContext` `notch_delegation` (`kind: application`) on the thread's first turn in this process; `developerInstructions` untouched. |
-| ACP (DeepSeek) | A stdio MCP server in `session/new`/`session/load` `mcpServers`: the companion executable with `--notch-delegation-bridge`, endpoint and token in its `env`. It relays JSON-RPC lines concurrently (65-minute timeout) and answers a revoked token with an error. Instructions come from the server's `initialize`. Without delegation `mcpServers` is `[]`. |
+| ACP (DeepSeek, Cursor) | A stdio MCP server in `session/new`/`session/load` `mcpServers`: the companion executable with `--notch-delegation-bridge`, endpoint and token in its `env`. It relays JSON-RPC lines concurrently (65-minute timeout) and answers a revoked token with an error. Instructions come from the server's `initialize`. Without delegation `mcpServers` is `[]`. |
 | Pi 1.3.0 | Bundled `pi_delegation.mjs` via `--extension`, endpoint and token in the process environment (deleted before the agent runs commands). Registers tools as `mcp__notch__<tool>`; `before_agent_start` appends instructions. Uses `node:http`, not `fetch`, so hour-long waits are not cut. Nothing written to the Pi home. |
-| OpenCode | Not hosting: its runtime MCP option (`PUT /api/experimental/mcp/{server}`) is folder-scoped and shared by all sessions there, which would share one session's token. |
-| Hermes, OpenClaw, Antigravity, Cursor | Not hosting (Hermes/OpenClaw/Antigravity have no per-run MCP option; `agy mcp add` writes configuration). All can be children. |
+| OpenCode 2.0.30 | One runtime server per session, `notch-<first 16 hex of SHA-256(native ID)>`, added with `PUT /api/experimental/mcp/{server}?location[directory]=<session folder>` (`type: remote`, bearer header, `oauth: false`); runtime-only, so it ends with the owned server and nothing is written to configuration. Added when the session opens and again before each prompt, because an idle folder drops runtime servers. Every server at a folder is visible there, so each session's rules (`PATCH /api/session/{id}` `permissions`, its other rules kept) end with deny `notch-*`, then allow its own `<server>_*`; a session opened without delegation gets the deny alone and loses a stale `notch` instruction entry. Instructions as session instruction entry `notch`. A failure leaves the session usable with a notice. OpenCode 1.x reports `hosts_delegation: false`. |
+| Hermes, OpenClaw, Antigravity | Not hosting (Hermes/OpenClaw/Antigravity have no per-run MCP option; `agy mcp add` writes configuration). All can be children. |
 
 ## Capability boundaries
 

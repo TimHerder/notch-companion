@@ -3,9 +3,9 @@ import CryptoKit
 
 extension RuntimeKind {
     /// Harnesses that take the companion's delegation server through a supported
-    /// per-run option. OpenCode's only one is per folder, so one session's token
-    /// would serve all of them; Hermes, OpenClaw and Antigravity have none.
-    var hostsDelegation: Bool { [.claude, .codex, .deepseek, .pi].contains(self) }
+    /// per-run or per-session option. OpenCode does from 2.0 (`AppModel.hostsDelegation(_:)`);
+    /// Hermes, OpenClaw and Antigravity have none.
+    var hostsDelegation: Bool { [.claude, .codex, .opencode, .deepseek, .pi, .cursor].contains(self) }
     /// Harnesses that accept input into a running turn.
     var steersTurns: Bool { self == .codex }
 }
@@ -231,6 +231,10 @@ extension AppModel {
         delegationServer.instructions = Delegation.instructions
         delegationServer.tools = { _ in Delegation.tools } // Children get every tool, including delegate_task.
         delegationServer.isActive = { [weak self] id in self?.sessions.first { $0.id == id }?.isBusy == true }
+        delegationServer.ownsNative = { [weak self] caller, native in
+            guard let session = self?.sessions.first(where: { $0.id == caller.sessionID }) else { return false }
+            return session.storedID == native || session.agents.contains { $0.nativeID == native }
+        }
         delegationServer.call = { [weak self] caller, name, arguments in
             guard let self else { throw DelegationFailure("orchestration_error", "Notch Companion is closing.") }
             return try await self.handleDelegationTool(caller, name: name, arguments: arguments)
@@ -246,10 +250,13 @@ extension AppModel {
         syncDelegatedChildren()
     }
 
+    /// A hosting harness, unless its connected installation reported it cannot host.
+    func hostsDelegation(_ route: RuntimeRoute) -> Bool { route.runtime.hostsDelegation && delegationHosting[route] != false }
+
     /// The server, a fresh token and the instructions for a hosting session's launch.
     /// A session whose process still holds a live token keeps it.
     func delegationLaunch(for session: CompanionSession) async -> [String: Any]? {
-        guard delegationEnabled, session.runtime.hostsDelegation, !session.isLegacyPrivate,
+        guard delegationEnabled, hostsDelegation(session.route), !session.isLegacyPrivate,
               !delegationServer.hasGrant(sessionID: session.id) else { return nil }
         guard let url = try? await delegationServer.start() else { return nil }
         let token = delegationServer.issueToken(for: DelegationCaller(sessionID: session.id, runtime: session.runtime,
@@ -364,7 +371,7 @@ extension AppModel {
             let modeAllowed = (try? Delegation.childMode(parent: parent.permissionMode, requested: nil, supported: modes)) != nil
                 || parent.permissionMode == nil || parent.permissionMode == .fullAccess
             if !modeAllowed { constraints.append("It has no permission mode within yours, so it cannot run your child tasks.") }
-            if !runtime.hostsDelegation { constraints.append("Its children cannot delegate further.") }
+            if !hostsDelegation(delegationCatalogKey(runtime, parent: parent).route) { constraints.append("Its children cannot delegate further.") }
             return ["runtime": runtime.rawValue, "displayName": runtime.title,
                     "defaultModel": catalog?.defaultModel?.model as Any? ?? NSNull(),
                     "models": models.prefix(limit).map { option -> [String: Any] in

@@ -1,8 +1,8 @@
 import Foundation
 
-/// Native OpenCode / DeepSeek Harness / Cursor CLI ACP v1 frontends. No injected tools,
-/// provider overrides, or alternate empty agent homes; modes only as advertised
-/// and explicitly chosen per session.
+/// Native OpenCode / DeepSeek Harness / Cursor CLI ACP v1 frontends. The only
+/// added tools are the companion's own delegation bridge; no provider overrides
+/// or alternate empty agent homes; modes only as advertised and explicitly chosen per session.
 @MainActor
 final class ACPRuntimeClient: RuntimeTransport {
     var onEvent: ((String, [String: Any]) -> Void)?
@@ -141,7 +141,7 @@ final class ACPRuntimeClient: RuntimeTransport {
                     "contextUsage": true, "delegation": false,
                     "permissionModes": PermissionMode.allCases.filter { modeIDs[sid]?[$0] != nil }.map(\.rawValue)],
                     "capability_note": runtime == .cursor ? runtime.capabilityNote : runtime == .deepseek
-                        ? "Experimental: selected native ACP composition; native resume preserves context but ACP does not replay history or expose interactive extensions. Lost sends require native verification."
+                        ? "Selected native ACP composition; native resume preserves context but ACP does not replay history or expose interactive extensions. Lost sends require native verification."
                         : "ACP v1: native child activity is shown, but ACP cannot confirm child completion. If delegation occurs, further sends remain protected pending native verification. Models are reported after the native session opens."]
                 if let model = catalog.defaultModel?.model { info["model"] = model }
                 var response: [String: Any] = ["session_id": sid, "stored_session_id": sid, "profile_id": profileID, "cwd": cwd, "running": false, "info": info, "catalog": catalog]

@@ -55,8 +55,8 @@ and the version/capability checks implemented in the adapter.
 ACP capabilities are negotiated; a shared protocol does not guarantee identical
 profile composition, approval behavior, extensions or persistence. In particular,
 DeepSeek's existing selected profile must remain intact. Do not create a minimal
-replacement profile to make its ACP startup succeed. Cursor remains experimental
-until its installed CLI has passed live acceptance. Antigravity's opaque question
+replacement profile to make its ACP startup succeed. Record Cursor's evidence as
+protocol fixtures until its installed CLI has passed live acceptance. Antigravity's opaque question
 steps cannot be treated as answered questions or approvals.
 
 Claude uses the installed unmodified CLI, not `--bare`, copied credentials or a

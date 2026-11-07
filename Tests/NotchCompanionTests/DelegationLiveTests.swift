@@ -87,6 +87,57 @@ import XCTest
         XCTAssertFalse(model.hasActiveWork)
     }
 
+    /// No prompt: an owned OpenCode 2 server opens one session in a temporary
+    /// folder. Its data, state and cache live in that folder, so the disposable
+    /// session stays out of the user's history; the native configuration is
+    /// only read.
+    func testInstalledOpenCodeConnectsTheSessionsOwnServer() async throws {
+        try requireLive()
+        let supervisor = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".build/debug/NotchCompanion")
+        guard FileManager.default.isExecutableFile(atPath: supervisor.path) else { throw XCTSkip("Build the app product first.") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("notch-live-opencode-\(UUID().uuidString)")
+        let project = folder.appendingPathComponent("project")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let profile = RuntimeRoute.defaultProfile(.opencode)
+        func configuration() -> [String] {
+            (FileManager.default.subpaths(atPath: profile) ?? []).sorted().map { path in
+                let values = try? FileManager.default.attributesOfItem(atPath: profile + "/" + path)
+                return "\(path) \((values?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0) \(values?[.size] ?? 0)"
+            }
+        }
+        let before = configuration()
+        let keys = ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]
+        let saved = keys.map { ProcessInfo.processInfo.environment[$0] }
+        for key in keys { setenv(key, folder.appendingPathComponent(key).path, 1) }
+        defer { for (key, value) in zip(keys, saved) { if let value { setenv(key, value, 1) } else { unsetenv(key) } } }
+
+        let server = DelegationServer()
+        defer { server.stop() }
+        let caller = DelegationCaller(sessionID: "live-opencode", runtime: .opencode, subagent: false)
+        var listedBy: [DelegationCaller] = []
+        server.tools = { listedBy.append($0); return Delegation.tools }
+        server.instructions = Delegation.instructions
+        let url = try await server.start()
+        let client = OpenCodeClient(profileID: profile, supervisorURL: supervisor)
+        var notices: [String] = []
+        client.onEvent = { name, payload in if name == "runtime.notice" { notices.append(payload["message"] as? String ?? "") } }
+        defer { client.disconnect() }
+        try await client.connect()
+        let result = try await client.request("session.create", params: [
+            "cwd": project.path, "title": "Notch Companion delegation check",
+            "delegation": ["url": url.absoluteString, "token": server.issueToken(for: caller), "instructions": Delegation.instructions]])
+        guard result["hosts_delegation"] as? Bool == true else { throw XCTSkip("The installed OpenCode cannot host delegation (1.x).") }
+        let deadline = Date().addingTimeInterval(20)
+        while listedBy.isEmpty, Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertEqual(listedBy.first, caller, "OpenCode connected the session's own server with its token")
+        XCTAssertEqual(notices, [], "Rules, instructions and the server were all accepted")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("XDG_DATA_HOME").path), "The session stayed in the temporary data folder")
+        client.disconnect()
+        XCTAssertEqual(configuration(), before, "The native configuration is unchanged")
+    }
+
     func testInstalledPiLoadsTheExtensionAndListsTheTools() async throws {
         try requireLive()
         let server = DelegationServer()

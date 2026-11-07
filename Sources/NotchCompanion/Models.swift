@@ -101,6 +101,8 @@ struct ToolActivity: Identifiable, Codable, Equatable {
         for prefix in ["mcp__\(server)__", "\(server).", "\(server)__", "\(server)/"] where name.hasPrefix(prefix) {
             return String(name.dropFirst(prefix.count))
         }
+        // OpenCode 2 gives each session its own server, `notch-<16 hex>`.
+        if let match = name.prefixMatch(of: #/notch-[0-9a-f]{16}_/#) { return String(name[match.range.upperBound...]) }
         return delegationLabels[name] == nil ? nil : name
     }
     var displayName: String {
