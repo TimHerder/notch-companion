@@ -429,8 +429,12 @@ Context usage is the latest native occupancy/request snapshot (`context_used`
 or `last.totalTokens`; Hermes `session.info`/`session.usage`/completion usage,
 Codex `thread/tokenUsage/updated` and reroute events), never cumulative usage
 and never guessed. The composer shows a monochrome gauge; hover and a click
-overlay show percentage and abbreviated counts (`20k/828k tokens used`), with
-`≈` for estimates, `—` and a dashed ring for unknown values. Samples may drop
+overlay show percentage and abbreviated counts (`20k / 828k`, `42k used` without
+a window), with `≈` for estimates, `—` and a dashed ring for unknown values.
+The percentage is not clamped (`110%` over the window) while the gauge and bar
+are; the overlay's bar takes the warning color from 90 %, and its caption names
+an estimate, an unreported window or an over-limit report before the report
+time ([wording](interaction-design.md#composer-model-controls)). Samples may drop
 after compaction, survive restart as a last report, and clear when the reported
 model changes. Children never overwrite their parent's context. A late Codex
 final usage event counts for the latest turn; old-turn and unowned-thread events
@@ -466,6 +470,10 @@ exposed.
 time, reached flag and report time; missing values stay nil. AppModel keeps the
 latest per runtime in preferences, merged by window name, cleared when the
 profile location changes. The router forwards `runtime.rateLimits` by route.
+Views order windows by the duration in their names (`RuntimeRateLimit.sorted`,
+the inverse of `label(minutes:)`), extra usage last; a bar's fraction is 1 when
+reached, nil when unknown; a reset time already past makes the window unknown
+until the next report.
 
 - **Codex:** `account/rateLimits/read` (`rateLimitsByLimitId` or single
   `rateLimits`; `primary`/`secondary` with `usedPercent`, `windowDurationMins`,

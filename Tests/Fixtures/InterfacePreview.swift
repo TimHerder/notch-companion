@@ -804,9 +804,9 @@ import ImageIO
         (model.sessions[0].messages, model.sessions[0].tools) = (toolMessages, savedTools)
         model.sessions[0].state = .finished
         try render(ModelControlsView(model: model, showingContext: true).padding(20)
-            .frame(width: 560, height: 170, alignment: .bottom).background(CompanionStyle.background)
+            .frame(width: 560, height: 200, alignment: .bottom).background(CompanionStyle.background)
             .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
-            size: NSSize(width: 560, height: 170), name: "context-details", output: output)
+            size: NSSize(width: 560, height: 200), name: "context-details", output: output)
         model.showModelPicker = false
         let contextSamples: [(String, RuntimeContextUsage?)] = [
             ("example", RuntimeContextUsage(used: 20000, limit: 828000)),
@@ -828,15 +828,12 @@ import ImageIO
                 .frame(width: 220, height: 44).background(CompanionStyle.background)
                 .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
                 size: NSSize(width: 220, height: 44), name: "context-gauge-\(name)", output: output)
+            // Wide enough for the fixed 264-point bubble anchored at the trailing edge.
             try render(ModelControlsView(model: model, showingContext: true).padding(20)
-                .frame(width: 260, height: 170, alignment: .bottom).background(CompanionStyle.background)
+                .frame(width: 340, height: 200, alignment: .bottom).background(CompanionStyle.background)
                 .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
-                size: NSSize(width: 260, height: 170), name: "context-details-\(name)", output: output)
+                size: NSSize(width: 340, height: 200), name: "context-details-\(name)", output: output)
         }
-        try render(ModelControlsView(model: model, showingContext: true).padding(20)
-            .frame(width: 260, height: 200, alignment: .bottom).background(CompanionStyle.background)
-            .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
-            size: NSSize(width: 260, height: 200), name: "context-details-unavailable", output: output)
         model.showModelPicker = true
         model.sessions[0].runtimeInfo?.context = RuntimeContextUsage(used: 42000, limit: 200000, estimated: true)
         model.sessions[0].modelOverride = RuntimeModelChoice(model: "fixture-long-context-model", provider: "fixture-provider")
@@ -862,9 +859,12 @@ import ImageIO
         model.receive("runtime.rateLimits", payload: ["runtime": "codex", "limits": [
             RuntimeRateLimit(name: "5-hour", usedPercent: 42, resetsAt: Date().addingTimeInterval(7_200)),
             RuntimeRateLimit(name: "Weekly", usedPercent: 81, resetsAt: Date().addingTimeInterval(4 * 86_400))]])
+        // Out of display order on purpose; Weekly · Opus reports no percentage.
         model.receive("runtime.rateLimits", payload: ["runtime": "claude", "limits": [
+            RuntimeRateLimit(name: "Extra usage", usedPercent: 12),
             RuntimeRateLimit(name: "5-hour", resetsAt: Date().addingTimeInterval(3_600), reached: true),
-            RuntimeRateLimit(name: "Weekly", usedPercent: 63)]])
+            RuntimeRateLimit(name: "Weekly · Opus", resetsAt: Date().addingTimeInterval(3 * 86_400)),
+            RuntimeRateLimit(name: "Weekly", usedPercent: 63, resetsAt: Date().addingTimeInterval(3 * 86_400))]])
         let unreported = model.sessions.map(\.turnTokens)
         for index in model.sessions.indices where index % 2 == 0 {
             for message in model.sessions[index].messages where message.role == "user" {
@@ -883,10 +883,21 @@ import ImageIO
         for runtime in [RuntimeKind.codex, .claude] {
             model.sessions[0].runtime = runtime
             try render(ModelControlsView(model: model, showingContext: true).padding(20)
-                .frame(width: 560, height: 260, alignment: .bottom).background(CompanionStyle.background)
+                .frame(width: 560, height: 420, alignment: .bottom).background(CompanionStyle.background)
                 .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
-                size: NSSize(width: 560, height: 260), name: "context-details-limits-\(runtime.rawValue)", output: output)
+                size: NSSize(width: 560, height: 420), name: "context-details-limits-\(runtime.rawValue)", output: output)
         }
+        // Claude reports only during turns: a day-old report, its 5-hour window reset since.
+        let dayOld = Date().addingTimeInterval(-26 * 3_600)
+        model.receive("runtime.rateLimits", payload: ["runtime": "claude", "limits": [
+            RuntimeRateLimit(name: "Extra usage", usedPercent: 12, reportedAt: dayOld),
+            RuntimeRateLimit(name: "5-hour", resetsAt: dayOld.addingTimeInterval(3_600), reached: true, reportedAt: dayOld),
+            RuntimeRateLimit(name: "Weekly · Opus", resetsAt: Date().addingTimeInterval(2 * 86_400), reportedAt: dayOld),
+            RuntimeRateLimit(name: "Weekly", usedPercent: 58, resetsAt: Date().addingTimeInterval(2 * 86_400), reportedAt: dayOld)]])
+        try render(ModelControlsView(model: model, showingContext: true).padding(20)
+            .frame(width: 560, height: 420, alignment: .bottom).background(CompanionStyle.background)
+            .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
+            size: NSSize(width: 560, height: 420), name: "context-details-limits-claude-old", output: output)
         model.sessions[0].runtime = fixtureRuntime
         model.page = .session
         for index in model.sessions.indices { model.sessions[index].turnTokens = unreported[index] }
