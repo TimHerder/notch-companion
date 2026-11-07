@@ -147,21 +147,7 @@ struct WelcomeView: View {
                     .frame(width: 18, height: 18)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(runtime.title).font(.system(size: 13, weight: .medium)).foregroundStyle(CompanionStyle.text)
-                        if runtime.isExperimental {
-                            if PanelTheme.current == .instrument {
-                                Text("Experimental").microLabel(8.5, tracking: 0.6).foregroundStyle(CompanionStyle.secondary)
-                                    .padding(.horizontal, 5).padding(.vertical, 2)
-                                    .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(CompanionStyle.ruleStrong, lineWidth: 0.5))
-                            } else {
-                                Text("Experimental").font(.system(size: PanelTheme.pick(11, 9.5, 9.5), weight: .medium))
-                                    .foregroundStyle(CompanionStyle.secondary)
-                                    .padding(.horizontal, 6).padding(.vertical, PanelTheme.pick(1, 1.5, 1.5))
-                                    .background(Color.white.opacity(0.07), in: Capsule())
-                            }
-                        }
-                    }
+                    Text(runtime.title).font(.system(size: 13, weight: .medium)).foregroundStyle(CompanionStyle.text)
                     Text((path as NSString).abbreviatingWithTildeInPath)
                         .font(PanelTheme.current == .instrument ? CompanionStyle.mono(10.5) : .system(size: 11))
                         .foregroundStyle(PanelTheme.current == .instrument ? CompanionStyle.secondary : CompanionStyle.secondary.opacity(0.85))

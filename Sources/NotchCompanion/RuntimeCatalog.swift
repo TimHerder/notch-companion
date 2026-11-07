@@ -107,7 +107,6 @@ extension RuntimeKind {
     var requiresProjectTrust: Bool { self == .claude || self == .antigravity || self == .cursor }
     /// Runs only its native default profile; the companion never sets a profile override.
     var usesNativeProfileOnly: Bool { self == .antigravity || self == .cursor }
-    var isExperimental: Bool { self == .deepseek || self == .antigravity || self == .cursor }
     var capabilities: RuntimeCapabilities {
         switch self {
         case .hermes:
@@ -144,9 +143,9 @@ extension RuntimeKind {
         case .pi: return "Uses native RPC, models, context usage and extensions. The companion adds a native question tool for its UI; terminal-only extension interfaces still need Pi's terminal. Pi has no built-in tool approval gate."
         case .openclaw: return "Connects to your existing local Gateway and chosen agent. Native pairing may be required. Remote Gateways are not supported."
         case .claude: return "Uses your unmodified Claude CLI, native sign-in, hooks and memory. Trust this working folder before starting its hooks."
-        case .deepseek: return "Experimental: choose your existing ACP-enabled launch profile. Its plugin composition must match your usual setup; the companion never substitutes a minimal profile."
+        case .deepseek: return "Choose your existing ACP-enabled launch profile. Its plugin composition must match your usual setup; the companion never substitutes a minimal profile."
         case .antigravity: return AntigravityClient.protocolNote
-        case .cursor: return "Experimental: uses your installed Cursor CLI over its native ACP server, with your sign-in, rules, MCP servers and saved chats. Sign in with cursor-agent login first. Trust this working folder before starting its project hooks and MCP servers. Dashboard team MCP servers are unavailable over ACP."
+        case .cursor: return "Uses your installed Cursor CLI over its native ACP server, with your sign-in, rules, MCP servers and saved chats. Sign in with cursor-agent login first. Trust this working folder before starting its project hooks and MCP servers. Dashboard team MCP servers are unavailable over ACP."
         default: return "This app does not include this adapter. Saved history and drafts remain available."
         }
     }

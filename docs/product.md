@@ -22,8 +22,8 @@ is missing or settings change. Legacy Hermes remains resumable in its original
 protected profile, with an explicit reviewed transition to a new shared draft.
 
 The runtime catalog has Hermes, Codex, OpenCode, DeepSeek Harness, Pi, OpenClaw,
-Claude Code, Antigravity CLI and Cursor CLI. Capabilities differ. Experimental
-or unavailable behavior must be labeled; enum cases and fixtures alone do not
+Claude Code, Antigravity CLI and Cursor CLI. Capabilities differ. Unavailable
+behavior must be labeled; enum cases and fixtures alone do not
 establish end-to-end support. See the [runtime contract](backend-runtime.md).
 
 ## Interface

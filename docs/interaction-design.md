@@ -421,7 +421,7 @@ appearance previews, and uses neutral wording without a character voice.
   reduced motion). The step lives in the page, so it survives the panel closing
   for a preview.
 - **Agent** (*Choose your agent*): installed harnesses in catalog order, with
-  install location and an Experimental tag where relevant; the default agent if
+  install location; the default agent if
   found, else the first, is preselected. Choosing sets the default agent and the
   untouched first draft's harness; **Continue** checks the connection, showing
   failures in the panel's error line. With none found: *Install an agent*, setup
@@ -883,12 +883,14 @@ session inside its parent; notch silhouette and bounds are unchanged.
 - **Sessions an agent creates.** `create_sessions` adds ordinary sessions in the
   caller's project that list, search and notify normally.
 - **Tools.** Companion tools read the same under any harness prefix
-  (`mcp__notch__`, `notch.`, Codex's bare name): “Delegate / Delegating /
+  (`mcp__notch__`, `notch.`, OpenCode's per-session `notch-<16 hex>_`, Codex's
+  bare name): “Delegate / Delegating /
   Delegated a child task”, “Get / Getting / Got delegated task status”, and so
   on. While a turn waits on a delegation `wait`, the header reads **Waiting on a
   child**.
 - **Settings.** **Cross-agent delegation** (default on) lets Claude Code,
-  Codex, Pi and DeepSeek Harness sessions opened afterwards delegate.
+  Codex, OpenCode 2, Pi, DeepSeek Harness and Cursor CLI sessions opened
+  afterwards delegate.
 - **Delete.** Deleting a parent removes its children from the companion; native
   histories stay.
 - **Changes.** The delegating parent turn folds each child's changed files into

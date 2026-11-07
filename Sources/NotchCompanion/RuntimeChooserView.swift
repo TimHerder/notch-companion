@@ -101,7 +101,7 @@ struct RuntimeChooserView: View {
     }
 
     private func detail(_ runtime: RuntimeKind) -> String {
-        (runtime.isExperimental ? "Experimental · " : "") + (installed.contains(runtime) ? "Installation found" : "Setup needed")
+        installed.contains(runtime) ? "Installation found" : "Setup needed"
     }
 
     private func choose(_ runtime: RuntimeKind, @ViewBuilder label: () -> some View) -> some View {

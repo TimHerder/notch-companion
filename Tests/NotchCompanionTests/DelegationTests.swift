@@ -12,6 +12,8 @@ import XCTest
     var failNextCreate = false
     var createDelay: Duration?
     var modelDelay: Duration?
+    /// What each harness's installation reports about hosting delegation, by runtime name.
+    var hosts: [String: Bool] = [:]
     struct Rejected: LocalizedError, RuntimeDefinitiveRejection { var errorDescription: String? { "Refused." } }
     func connect() async throws { onConnectionChange?(true, nil) }
     func disconnect() { onConnectionChange?(false, nil) }
@@ -22,13 +24,17 @@ import XCTest
             if failNextCreate { failNextCreate = false; throw AppError("The harness did not start.") }
             if let createDelay { try await Task.sleep(for: createDelay) }
             let owner = params["companion_id"] as? String ?? UUID().uuidString
-            return ["session_id": "rt-" + owner, "stored_session_id": "native-" + owner]
+            var result: [String: Any] = ["session_id": "rt-" + owner, "stored_session_id": "native-" + owner]
+            result["hosts_delegation"] = hosts[params["runtime"] as? String ?? ""]
+            return result
         case "runtime.models":
             // Deliberately finish even after cancellation: the caller must
             // recheck before creating a child from this late catalog.
             if let modelDelay { try? await Task.sleep(for: modelDelay) }
-            return ["catalog": RuntimeModelCatalog(defaultModel: RuntimeModelChoice(model: "fixture-default"),
+            var result: [String: Any] = ["catalog": RuntimeModelCatalog(defaultModel: RuntimeModelChoice(model: "fixture-default"),
                 models: [RuntimeModelOption(choice: RuntimeModelChoice(model: "fixture-large"), title: "Large", reasoningEfforts: ["high"])])]
+            result["hosts_delegation"] = hosts[params["runtime"] as? String ?? ""]
+            return result
         case "prompt.steer" where steerFails: throw AppError("No running turn.")
         case "prompt.submit" where rejectSubmits.contains(params["session_id"] as? String ?? ""): throw Rejected()
         default: return [:]
@@ -431,13 +437,72 @@ import XCTest
     }
 
     func testCompanionToolsAreLabelledUnderEveryPrefix() {
-        for name in ["mcp__notch__delegate_task", "notch.delegate_task", "delegate_task"] {
+        for name in ["mcp__notch__delegate_task", "notch.delegate_task", "delegate_task", OpenCodeClient.delegationServerName("ses_x") + "_delegate_task"] {
             XCTAssertEqual(ToolActivity(id: "a", name: name, detail: "").displayName, "Delegating a child task", name)
         }
+        XCTAssertNil(ToolActivity.delegationTool("notch-docs_search"), "Only a companion server's tools, not a user's server named notch-…")
         XCTAssertEqual(ToolActivity(id: "a", name: "mcp__notch__task_status", detail: "", state: .finished).displayName, "Got delegated task status")
         XCTAssertEqual(NotchHeaderView.status(state: .working, session: CompanionSession(), waitingOnChild: true).text, "Waiting on a child")
         XCTAssertLessThan(Delegation.instructions.utf8.count, 4_000, "Codex truncates a longer context entry")
         XCTAssertEqual(Set(Delegation.tools.compactMap { $0["name"] as? String }), Set(ToolActivity.delegationLabels.keys), "Every tool has a label")
+    }
+
+    func testAnInstallationThatCannotHostGetsNoTokenAndIsNotOfferedAsDelegating() async throws {
+        for hosts in [false, true] {
+            let (model, transport, _, _) = makeModel(preferences: preferences(ready: [.codex, .opencode]))
+            transport.hosts["opencode"] = hosts
+            // Opened before anything was known: the installation's answer decides whether the token stays.
+            await model.connect()
+            await model.newSession(showPanel: false, runtime: .opencode)
+            let direct = try XCTUnwrap(model.currentID)
+            model.draft = "Hello"
+            await model.send()
+            XCTAssertNotNil(transport.calls.last { $0.0 == "session.create" }?.1["delegation"])
+            XCTAssertEqual(model.delegationServer.hasGrant(sessionID: direct), hosts, "OpenCode 1.x never uses its token")
+
+            let (_, caller) = try await activeParent(model)
+            let capabilities = try await model.handleDelegationTool(caller, name: "orchestrator_capabilities", arguments: [:])
+            let rows = try XCTUnwrap(capabilities["runtimes"] as? [[String: Any]])
+            let constraints = rows.first { $0["runtime"] as? String == "opencode" }?["constraints"] as? [String] ?? []
+            XCTAssertEqual(constraints.contains("Its children cannot delegate further."), !hosts)
+            let task = try await model.handleDelegationTool(caller, name: "delegate_task", arguments: ["task": "Look", "target": ["runtime": "opencode"]])
+            let delegated = try XCTUnwrap(child(model, task: task["taskId"]))
+            XCTAssertEqual(transport.calls.last { $0.0 == "session.create" }?.1["delegation"] != nil, hosts, "Only a hosting child gets the tools")
+            XCTAssertEqual(model.delegationServer.hasGrant(sessionID: delegated.id), hosts)
+        }
+    }
+
+    func testOpenCodeToolsRefuseACallFromAnotherNativeSession() async throws {
+        let (model, _, _, _) = makeModel(preferences: preferences(ready: [.codex, .opencode]))
+        let (parentID, caller) = try await activeParent(model, runtime: .opencode)
+        let server = model.delegationServer
+        let token = server.issueToken(for: caller)
+        func post(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {
+            let response = await server.respond(method: "POST", path: "/mcp", headers: ["Authorization": "Bearer " + token],
+                                                body: try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 1, "method": method, "params": params]))
+            return try XCTUnwrap((try JSONSerialization.jsonObject(with: response.body) as? [String: Any])?["result"] as? [String: Any])
+        }
+        func list(from native: String?) async throws -> Bool {
+            var params: [String: Any] = ["name": "notch_session_list", "arguments": [:]]
+            if let native { params["_meta"] = ["ai.opencode/sessionID": native] }
+            let result = try await post("tools/call", params)
+            if result["isError"] as? Bool == true {
+                XCTAssertTrue(((result["content"] as? [[String: Any]])?.first?["text"] as? String)?.contains("capability_denied") == true)
+            }
+            return result["isError"] as? Bool == false
+        }
+        let initialized = try await post("initialize", ["protocolVersion": "2025-06-18"])
+        XCTAssertEqual(initialized["instructions"] as? String, "", "The session instruction entry carries them once, not once per server")
+        let own = try XCTUnwrap(model.sessions.first { $0.id == parentID }?.storedID)
+        let ownResult = try await list(from: own)
+        XCTAssertTrue(ownResult, "The session itself")
+        let unnamed = try await list(from: nil)
+        XCTAssertTrue(unnamed, "No session named, nothing to check")
+        let other = try await list(from: "ses_another")
+        XCTAssertFalse(other, "Another session cannot use this session's server and token")
+        model.update(parentID) { $0.agents.append(ChildAgent(id: "ses_native_child", nativeID: "ses_native_child", title: "Explore")) }
+        let nativeChild = try await list(from: "ses_native_child")
+        XCTAssertTrue(nativeChild, "A native subagent works inside its parent's turn")
     }
 
     // MARK: Session tools
@@ -831,6 +896,10 @@ import XCTest
     }
 
     func testAnACPReloadKeepsTheBridgeItWasOpenedWith() async throws {
+        for runtime in [RuntimeKind.opencode, .cursor] { try await checkACPReloadKeepsTheBridge(runtime) }
+    }
+
+    private func checkACPReloadKeepsTheBridge(_ runtime: RuntimeKind) async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("notch-acp-delegation-\(UUID().uuidString)")
         folders.append(folder)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -849,7 +918,7 @@ import XCTest
             if wire is not None: print(json.dumps({"jsonrpc": "2.0", "id": wire, "result": result}), flush=True)
         """#.utf8).write(to: executable)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-        let client = ACPRuntimeClient(runtime: .opencode, profileID: folder.path, executableOverride: executable)
+        let client = ACPRuntimeClient(runtime: runtime, profileID: folder.path, executableOverride: executable)
         defer { client.disconnect() }
         try await client.connect()
         let delegation: [String: Any] = ["url": "http://127.0.0.1:9/mcp", "token": "tok", "bridge": "/bin/bridge"]
@@ -860,7 +929,7 @@ import XCTest
         }
         let servers = rows.filter { ["session/new", "session/load"].contains($0["method"] as? String) }
             .map { (($0["params"] as? [String: Any])?["mcpServers"] as? [[String: Any]])?.first?["command"] as? String }
-        XCTAssertEqual(servers, ["/bin/bridge", "/bin/bridge"], "Check last send reloads with the same bridge")
+        XCTAssertEqual(servers, ["/bin/bridge", "/bin/bridge"], "\(runtime.title): Check last send reloads with the same bridge")
     }
 
     func testAClientThatClosesCancelsItsBlockingToolCall() async throws {
@@ -1059,7 +1128,7 @@ import XCTest
         var untouched = ["PATH": "/usr/bin"]
         XCTAssertTrue(PiClient.delegationArguments(nil, environment: &untouched).isEmpty)
         XCTAssertEqual(untouched, ["PATH": "/usr/bin"])
-        XCTAssertEqual(RuntimeKind.allCases.filter(\.hostsDelegation), [.codex, .pi, .claude, .deepseek])
+        XCTAssertEqual(RuntimeKind.allCases.filter(\.hostsDelegation), [.codex, .opencode, .pi, .claude, .deepseek, .cursor])
     }
 
     func testTheStdioBridgeRelaysEachLineWithTheSessionToken() async throws {

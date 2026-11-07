@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 struct OpenCodeHTTPRejection: LocalizedError, RuntimeDefinitiveRejection {
     let status: Int
@@ -29,6 +30,10 @@ final class OpenCodeClient: RuntimeTransport {
     private var generation = UUID()
     private var ready = false
     private var isV2 = false
+    /// OpenCode 2 can add a runtime MCP server per session; 1.x cannot.
+    private var hostsMCP = false
+    /// Hosting sessions: their native folder and delegation launch.
+    private var delegations: [String: (location: String, launch: [String: Any])] = [:]
     private var opening: CheckedContinuation<URL, Error>?
     private var deadline: Task<Void, Never>?
     private var streams: [String: Task<Void, Never>] = [:]
@@ -128,6 +133,7 @@ final class OpenCodeClient: RuntimeTransport {
             let paths = doc["paths"] as? [String: Any] ?? [:]
             let required = isV2 ? OpenCodeV2.requiredPaths : ["/session", "/session/status", "/session/{sessionID}", "/session/{sessionID}/children", "/session/{sessionID}/message", "/session/{sessionID}/prompt_async", "/session/{sessionID}/abort", "/event", "/permission", "/permission/{requestID}/reply", "/question", "/question/{requestID}/reply", "/question/{requestID}/reject", "/provider", "/config"]
             guard required.allSatisfy({ paths[$0] != nil }) else { throw AppError("OpenCode's native HTTP schema is missing required conversation, model, or interaction endpoints.") }
+            hostsMCP = isV2 && Self.delegationPaths.allSatisfy { paths[$0] != nil }
             guard generation == run else { throw AppError("The OpenCode connection changed during initialization.") }
             ready = true; onConnectionChange?(true, "OpenCode \(version) native HTTP server connected. Provider authentication is checked on Send.")
         } catch { if generation == run { fail(error) }; throw error }
@@ -155,7 +161,7 @@ final class OpenCodeClient: RuntimeTransport {
         let operation = generation
         if method == "runtime.models" {
             let cwd = try directory(params["cwd"] as? String)
-            return ["catalog": try await catalog(cwd)]
+            return ["catalog": try await catalog(cwd), "hosts_delegation": hostsMCP]
         }
         if method == "session.create" || method == "session.resume" {
             let cwd = try directory(params["cwd"] as? String)
@@ -179,6 +185,12 @@ final class OpenCodeClient: RuntimeTransport {
             try requireGeneration(operation)
             roots[sid] = cwd
             if let agent = info["agent"] as? String { nativeAgents[sid] = agent }
+            if hostsMCP {
+                // A reopen without a new launch keeps the server it was opened with.
+                if let launch = params["delegation"] as? [String: Any] { delegations[sid] = (nativeDirectory, launch) }
+                await openDelegation(sid, permissions: info["permissions"] as? [[String: Any]] ?? [])
+                try requireGeneration(operation)
+            }
             let models = try await catalog(cwd)
             // Initialization can emit late idle/diff events. Re-read a fenced
             // snapshot rather than strand an empty session as apparent work.
@@ -197,6 +209,7 @@ final class OpenCodeClient: RuntimeTransport {
             var result = snapshot
             result["session_id"] = sid; result["stored_session_id"] = sid; result["profile_id"] = profileID
             result["cwd"] = cwd; result["info"] = sessionInfo; result["catalog"] = models; result["activity_verified"] = true
+            result["hosts_delegation"] = hostsMCP
             return result
         }
         let sid = params["session_id"] as? String ?? ""
@@ -245,6 +258,10 @@ final class OpenCodeClient: RuntimeTransport {
             return ["steered": true, "turn_id": id]
         case "prompt.submit":
             guard !isBusy(sid) else { throw OpenCodeLocalRejection(message: "This OpenCode session or a delegated child is still active.") }
+            // An idle folder drops runtime servers; re-adding an unchanged one keeps its connection.
+            if delegations[sid] != nil, (try? await registerDelegation(sid)) == nil {
+                event("runtime.notice", sid: sid, ["message": Self.delegationNotice])
+            }
             // Reconcile just before sending, including background descendants.
             var checked: [String: Any]
             do {
@@ -728,8 +745,8 @@ final class OpenCodeClient: RuntimeTransport {
             // including when the original companion process died unexpectedly.
             child.terminationHandler = nil; Self.retiring.append(child)
         }
-        process = nil; address = nil; launchBuffer.removeAll(); password = ""; isV2 = false
-        roots.removeAll(); parent.removeAll(); busy.removeAll(); started.removeAll(); finished.removeAll(); pendingPrompts.removeAll()
+        process = nil; address = nil; launchBuffer.removeAll(); password = ""; isV2 = false; hostsMCP = false
+        delegations.removeAll(); roots.removeAll(); parent.removeAll(); busy.removeAll(); started.removeAll(); finished.removeAll(); pendingPrompts.removeAll()
         promptIDs.removeAll(); failures.removeAll()
         revisions.removeAll(); awaitingChildStart.removeAll()
         delivered.removeAll(); messages.removeAll(); requests.removeAll(); answers.removeAll(); models.removeAll(); images.removeAll(); tools.removeAll()
@@ -843,6 +860,62 @@ extension OpenCodeClient {
             return [:]
         default: throw AppError("This OpenCode V2 session operation is unsupported.")
         }
+    }
+}
+
+/// Delegation on OpenCode 2, as T3 Code's adapter hosts it: a runtime MCP server
+/// per session at its folder (gone when the owned server stops), session rules
+/// that deny every companion server but the session's own, and a session
+/// instruction entry. Nothing is written to OpenCode's configuration.
+extension OpenCodeClient {
+    nonisolated static let delegationPaths = ["/api/experimental/mcp/{server}", "/api/experimental/session/{sessionID}/instructions/entries",
+                                              "/api/experimental/session/{sessionID}/instructions/entries/{key}"]
+    nonisolated static let delegationNotice = "OpenCode did not add Notch Companion's delegation tools to this session."
+
+    /// Short and per session: OpenCode hides tools whose names pass 64 characters.
+    nonisolated static func delegationServerName(_ sid: String) -> String {
+        DelegationServer.name + "-" + SHA256.hash(data: Data(sid.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The session's own rules, then the companion's (last match wins): every
+    /// session's server denied, then this session's allowed.
+    nonisolated static func delegationRules(_ existing: [[String: Any]], server: String?) -> [[String: Any]] {
+        existing.filter { ($0["action"] as? String)?.wholeMatch(of: #/notch-(\*|[0-9a-f]{16}_\*)/#) == nil }
+            + [["action": "notch-*", "resource": "*", "effect": "deny"]]
+            + (server.map { [["action": $0 + "_*", "resource": "*", "effect": "allow"]] } ?? [])
+    }
+
+    /// Runtime-only, at the session's folder; the token goes only in the header.
+    nonisolated static func delegationRegistration(_ launch: [String: Any], server: String, location: String) -> (path: String, body: [String: Any])? {
+        guard let url = launch["url"] as? String, let token = launch["token"] as? String else { return nil }
+        return ("/api/experimental/mcp/\(server)?location%5Bdirectory%5D=" + (location.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""),
+                ["config": ["type": "remote", "url": url, "headers": ["Authorization": "Bearer " + token], "oauth": false]])
+    }
+
+    /// Rules for every session; the server and instructions for a hosting one.
+    /// A failure leaves the session usable with a notice.
+    private func openDelegation(_ sid: String, permissions: [[String: Any]]) async {
+        let launch = delegations[sid]?.launch
+        let entry = "/api/experimental/session/\(component(sid))/instructions/entries"
+        do {
+            let rules = Self.delegationRules(permissions, server: launch.map { _ in Self.delegationServerName(sid) })
+            if !(rules as NSArray).isEqual(to: permissions) { _ = try await rawCall("PATCH", "/api/session/\(component(sid))", body: ["permissions": rules]) }
+            if let launch {
+                _ = try await rawCall("PUT", entry + "/notch", body: ["value": launch["instructions"] as? String ?? Delegation.instructions])
+                try await registerDelegation(sid)
+            } else if try await v2List(entry).contains(where: { $0["key"] as? String == "notch" }) {
+                // Delegation was turned off since; the entry would point at missing tools.
+                _ = try await rawCall("DELETE", entry + "/notch")
+            }
+        } catch {
+            if launch != nil { event("runtime.notice", sid: sid, ["message": Self.delegationNotice]) }
+        }
+    }
+
+    private func registerDelegation(_ sid: String) async throws {
+        guard let delegation = delegations[sid], let request = Self.delegationRegistration(
+            delegation.launch, server: Self.delegationServerName(sid), location: delegation.location) else { return }
+        _ = try await rawCall("PUT", request.path, body: request.body)
     }
 }
 

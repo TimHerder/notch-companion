@@ -40,6 +40,8 @@ final class DelegationServer {
     var instructions = ""
     /// A session with a running turn keeps its token fresh.
     var isActive: ((String) -> Bool)?
+    /// Whether a native session ID the harness names on a call is the caller's own (or its native child's).
+    var ownsNative: ((DelegationCaller, String) -> Bool)?
     var now: () -> Date = Date.init
 
     private struct Grant { var caller: DelegationCaller; var lastUsed: Date }
@@ -172,7 +174,8 @@ final class DelegationServer {
             return result(["protocolVersion": Self.protocolVersions.contains(requested) ? requested : Self.protocolVersions[0],
                            "capabilities": ["tools": ["listChanged": false]],
                            "serverInfo": ["name": Self.name, "title": "Notch Companion", "version": "0.2.0"],
-                           "instructions": instructions])
+                           // OpenCode adds every server's instructions at a folder to each prompt; its session entry carries them once.
+                           "instructions": caller.runtime == .opencode ? "" : instructions])
         case "ping": return result([:])
         case "tools/list": return result(["tools": tools?(caller) ?? []])
         case "tools/call":
@@ -180,6 +183,10 @@ final class DelegationServer {
                 return Self.error(id: id, code: -32602, message: "Unknown tool")
             }
             do {
+                // OpenCode names the session running the tool; one session cannot use another's server.
+                if let native = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String, ownsNative?(caller, native) == false {
+                    throw DelegationFailure("capability_denied", "These tools belong to a different session.")
+                }
                 let value = try await call?(caller, name, params["arguments"] as? [String: Any] ?? [:]) ?? [:]
                 let text = String(data: (try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])) ?? Data(), encoding: .utf8) ?? "{}"
                 return result(["content": [["type": "text", "text": text]], "structuredContent": value, "isError": false])

@@ -890,7 +890,7 @@ struct SettingsContent: View {
                 }
                 SettingsRow("Cross-agent delegation", symbol: "arrow.triangle.branch", tint: .pink, divider: true) {
                     Toggle("Cross-agent delegation", isOn: $model.delegationEnabled).toggleStyle(NotchSwitchStyle())
-                        .help("Let Claude Code, Codex, Pi and DeepSeek Harness sessions hand a task to another harness you set up here. The child appears in the parent's team. Applies to sessions opened from now on.")
+                        .help("Let Claude Code, Codex, OpenCode 2, Pi, DeepSeek Harness and Cursor CLI sessions hand a task to another harness you set up here. The child appears in the parent's team. Applies to sessions opened from now on.")
                 }
             }
             SettingsGroup(PanelTheme.pick(nil, "Notch", "Notch")) {
