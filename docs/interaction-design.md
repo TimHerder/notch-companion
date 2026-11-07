@@ -168,11 +168,27 @@ centred like the panel, top-anchored, covering the band and camera.
 
 **Announcement.** When a session finishes, fails or asks for input while the
 notch is not expanded, the band keeps its height and widens on the right (the
-camera-side edge never moves) to show an icon, “Done”/“Failed”/“Needs you” and
-the title, sized to the text and bounded. It springs open, holds 4.2 / 5 / 6 s
-(done / failed / needs you), and retracts over 340 ms. The eyes take the
-result's expression and look at the label. Clicking it opens the session;
-hovering opens the glance. Dots stay to the label's right.
+camera-side edge never moves) to show the colored status icon, the session
+title and one line of the message, sized to the text within 120–250 points.
+The icon and its color carry the verb, so no “Done”/“Failed”/“Needs you” word
+is drawn; VoiceOver still hears “Done: <title>. <message>”. A title stops at
+100 points when a message follows, so the message always gets room; both
+truncate at the tail. It springs open, holds 4.2 / 5 / 6 s (done / failed /
+needs you), and retracts over 340 ms. The eyes take the result's expression
+and look at the label. Clicking it opens the session; hovering opens the
+glance. Dots stay to the label's right.
+
+The message is a snapshot taken when the moment is announced, so it keeps
+saying what happened even if the session moves on during the hold:
+
+- Done: this turn's answer as one plain line (Markdown removed), never the
+  prompt or an earlier turn's answer.
+- Failed: the runtime's reason from its error event, else the reason the
+  failed turn's own terminal event or notice gives, else “Send unconfirmed”,
+  the failed delegated child, this turn's last answer, or “Something went
+  wrong”.
+- Needs you: the question's text, or the command an approval wants to run.
+- The first-launch hello reads “Hi! Hover here to begin”.
 
 **Aura.** A click-through, non-activating `NotchAuraPanel` ordered directly
 **behind** the notch panel mirrors the presentation while an effect plays, then
@@ -185,9 +201,10 @@ ring. Reduced motion keeps only a soft fade. The aura owns no geometry, input
 or expansion and never plays while the full panel is open.
 
 **Toast.** In the open panel, a result from a session other than the one being
-read appears as a small capsule below the header (glyph, verb, title, “Open”),
-for the same hold, until the panel closes or that conversation opens; clicking
-it opens the session. The band, toast and aura never play for a conversation
+read appears as a small capsule below the header (status glyph, title, one
+line of the message, “Open”; no verb word, VoiceOver keeps it), at most 380
+points wide, for the same hold, until the panel closes or that conversation
+opens; clicking it opens the session. The band, toast and aura never play for a conversation
 that is on screen. VoiceOver hears each announcement.
 
 **Status effects** (`notch.statusEffects`, default on) controls announcements,
@@ -254,8 +271,9 @@ Each effect is brief, driven by real state, and dropped under reduced motion.
   at most 6 points, dying away over 0.5 s. Only the notch and aura windows move;
   `NotchPresentation`, geometry and hit testing stay put, and the window lands
   exactly on the announced band.
-- **Announcement icons act out their verb:** Done draws its check, Hi waves,
-  Failed wiggles, Needs you hops.
+- **Announcement icons act out their verb,** which they replace as a word in
+  the band and on the stage: Done draws its check, Hi waves, Failed wiggles,
+  Needs you hops.
 - **Writing waveform.** While an answer streams, its live glyph is three bars
   that jump as text arrives and settle within about a second of a pause.
 - **Working shimmer.** A soft highlight sweeps the header status and a glance
@@ -371,27 +389,48 @@ hover, clicks, swipes or drops, and the window top, flares, aura and hit regions
 are unchanged.
 
 **The stage.** With Popup, a result, question or failure (and the hello) grows
-the notch into a 440 × (band + 132) point island, top-anchored and centred like
-the glance, on the glance's spring, corners radius +14. It uses the one panel,
-silhouette and clock (`stage`), never shows while the panel is open (the toast
-stands in) or over an open glance (the edge still lights).
+the notch into a 440-point-wide island below the band, top-anchored and
+centred like the glance, on the glance's spring, corners radius +14. It uses
+the one panel, silhouette and clock (`stage`), never shows while the panel is
+open (the toast stands in) or over an open glance (the edge still lights).
 
-- With Mascot, the mascot stands at the left, about 150 points tall; beside it
-  rows materialize: verb icon and runtime, title, up to three lines of result.
-  With Eyes, the eyes stay in the band and text uses the full width with a
-  20-point inset. Wrapping and height follow the available width.
+- Rows, without a verb row:
+  - a header: the acting status icon (14 points, colored), the title (15
+    semibold, one line) and, trailing in faint monospaced digits, the runtime
+    and how long the turn worked (“Codex · 2:14”);
+  - the message (12.5 points, 78% white), up to three lines, two when answers
+    or a command follow;
+  - for a finished turn with changes, one quiet line such as “4 files +120 −8”
+    with the counts in green and red;
+  - for an approval, “Wants to run” and its command in a monospaced inset
+    field, one line truncated in the middle;
+  - the answers directly beneath.
+
+  Message, line, field and answers hang after the icon's column.
+- Content is kind-aware. Results and failures show the announcement's snapshot
+  (see [announcement](#island-tiers)), never live status such as “Thinking…”;
+  a question shows the live request, so one answered meanwhile shows **Answer
+  sent**.
+- The body height is measured from this content and the text width before the
+  stage opens, and re-springs if it changes (the next question, a late change
+  summary). With Eyes, the eyes stay in the band; the text starts 8 points below
+  it with a 20-point inset, and short results leave no empty space. With
+  Mascot, the mascot stands at the left, about 150 points tall, the body keeps
+  at least 132 points for it, and the text block is centred vertically beside
+  it.
 - The stage has **no buttons of its own**: clicking outside its answers opens
   the session on the panel spring, the mascot gliding into the header; hovering
   away lets it retract. The opening area shows a pointing hand; answer controls
   keep their cursors (the reply field an I-beam). VoiceOver reads it as a button
   with a Dismiss action.
 
-**Answering on the stage.** A native question or approval shows two lines of
-question with answers beneath, on the same native path and duplicate protection
-as glance and card: **Deny** / **Allow once**; a single-choice question's
-options (up to four, any length) as wrapped pills; and, when the runtime allows
-a written answer, a reply field that sends on Return (a failed send keeps the
-text). Each answer row past the first adds 30 points. Clicking the field lets
+**Answering on the stage.** A native question or approval shows up to two
+lines of question with answers directly beneath, on the same native path and
+duplicate protection as glance and card: **Deny** / **Allow once**; a
+single-choice question's options (up to four, any length) as wrapped pills; and,
+when the runtime allows a written answer, a reply field that sends on Return (a
+failed send keeps the text). Each answer row is 26 points with 4 between, and
+grows the stage. Clicking the field lets
 the non-activating panel take the keyboard without activating the app; the stage
 gives it back as it retracts. After answering it shows **Answer sent** and
 retracts 1.6 s later, unless the batch's next question takes its place.

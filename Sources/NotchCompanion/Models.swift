@@ -583,14 +583,12 @@ struct NotchGeometry: Equatable {
     /// The mascot stage: a larger island where the mascot presents a moment, shaped
     /// and centred like the glance.
     static let stageWidth: CGFloat = 440
-    static let stageBodyHeight: CGFloat = 132
-    /// A question's answers: the body fits one row, each further row grows the stage.
-    var stageAnswerRows = 0
-    static let stageAnswerHeight: CGFloat = 30
-    var stageFrame: CGRect {
-        islandFrame(width: Self.stageWidth,
-                    height: bandHeight + Self.stageBodyHeight + CGFloat(max(0, stageAnswerRows - 1)) * Self.stageAnswerHeight)
-    }
+    /// The mascot's 150-point figure needs this much body below the band.
+    static let mascotStageBodyHeight: CGFloat = 132
+    /// The body's height for the presented moment, measured from its content
+    /// (`StageContent.bodyHeight`); the host sets it before staging.
+    var stageBodyHeight: CGFloat = mascotStageBodyHeight
+    var stageFrame: CGRect { islandFrame(width: Self.stageWidth, height: bandHeight + stageBodyHeight) }
     /// A physical camera's right edge in glance coordinates; band text starts after it.
     var glanceCameraMaxX: CGFloat? { hasHardware ? hardware.maxX - glanceFrame.minX : nil }
     var glanceCameraMinX: CGFloat? { hasHardware ? hardware.minX - glanceFrame.minX : nil }

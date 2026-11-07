@@ -81,6 +81,31 @@ final class IslandTierTests: XCTestCase {
         XCTAssertEqual(geometry.expandedFrame, plain.expandedFrame)
     }
 
+    func testAnnouncementLabelMeasuresTitleAndMessageButNoVerb() {
+        let plain = NotchAnnouncement(kind: .finished, sessionID: "s", title: "Website accessibility review")
+        // Icon and color carry the verb, so every kind measures alike.
+        for kind in NotchAnnouncement.Kind.allCases {
+            XCTAssertEqual(NotchAnnouncement(kind: kind, sessionID: "s", title: plain.title).labelWidth, plain.labelWidth)
+        }
+        XCTAssertEqual(NotchAnnouncement(kind: .failed, sessionID: "s", title: "Fix").labelWidth, 120, "short labels keep a minimum")
+        var told = plain
+        told.detail = "Focus follows the reading order"
+        XCTAssertGreaterThan(told.labelWidth, plain.labelWidth, "the message widens the band")
+        XCTAssertLessThanOrEqual(told.labelWidth, 250)
+        // A long title is capped so a long message still gets room; together they stay bounded.
+        let long = NotchAnnouncement(kind: .needsInput, sessionID: "s",
+                                     title: "Compare the implementation options for the release",
+                                     detail: "Which milestone should ship first: the glance or the aura?")
+        XCTAssertEqual(long.labelWidth, 250)
+        XCTAssertEqual(long.titleWidth, NotchAnnouncement.titleCap)
+        XCTAssertGreaterThanOrEqual(long.labelWidth - NotchAnnouncement.iconWidth - long.titleWidth - 15, 100)
+        let alone = NotchAnnouncement(kind: .needsInput, sessionID: "s", title: long.title)
+        XCTAssertGreaterThan(alone.titleWidth, NotchAnnouncement.titleCap, "without a message the title takes the room")
+        // VoiceOver keeps the verb.
+        XCTAssertEqual(long.spoken, "Needs you: \(long.title). \(long.detail)")
+        XCTAssertEqual(plain.spoken, "Done: Website accessibility review")
+    }
+
     func testExternalAnnouncementStaysCenteredAndVisiblyGrows() {
         var geometry = external()
         let resting = geometry.collapsedFrame
@@ -319,6 +344,60 @@ final class IslandTierTests: XCTestCase {
         XCTAssertNil(model.announcement)
         // The dot and receipt behave as before regardless of effects.
         XCTAssertEqual(model.sessionIndicators.map(\.status), [.failed])
+    }
+
+    @MainActor func testAnnouncementsSnapshotTheMessageTheMomentIsAbout() {
+        let (model, file) = makeModel()
+        let original = model.statusEffects
+        defer {
+            model.statusEffects = original
+            model.shutdown()
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        }
+        model.statusEffects = true
+        func turn(_ prompt: String, startedAgo: TimeInterval = 0) {
+            model.sessions[0].messages.append(ChatMessage(role: "user", text: prompt, createdAt: Date().addingTimeInterval(-startedAgo)))
+            model.receive("message.start", payload: ["session_id": "parent"])
+        }
+        // Finished: the answer, as one plain line, with the turn's work time.
+        turn("Write the release notes.", startedAgo: 134)
+        model.receive("message.complete", payload: ["session_id": "parent", "text": "## Notes\nShipped the glance and the aura."])
+        XCTAssertEqual(model.announcement?.kind, .finished)
+        XCTAssertEqual(model.announcement?.detail, "Notes — Shipped the glance and the aura.")
+        XCTAssertEqual(model.announcement?.worked ?? 0, 134, accuracy: 5)
+        // Needs input: the question itself.
+        model.receive("clarify.request", payload: ["session_id": "parent", "request_id": "q", "question": "Which tag?\nv2 or v3"])
+        XCTAssertEqual(model.announcement?.kind, .needsInput)
+        XCTAssertEqual(model.announcement?.detail, "Which tag? v2 or v3")
+        model.receive("clarify.expire", payload: ["session_id": "parent", "request_id": "q"])
+        // Failed: the error event's reason, kept on the stage after the session moves on.
+        turn("Tag it.")
+        model.receive("session.error", payload: ["session_id": "parent", "message": "Rate limit reached.\nTry again at 14:00."])
+        XCTAssertEqual(model.announcement?.kind, .failed)
+        XCTAssertEqual(model.announcement?.detail, "Rate limit reached. Try again at 14:00.")
+        model.sessions[0].state = .working
+        XCTAssertEqual(StageContent.make(model.announcement!, sessions: model.sessions, requests: model.requests).detail,
+                       "Rate limit reached. Try again at 14:00.", "never the live Thinking…")
+        // A failed turn whose terminal event names no reason uses this turn's notice (Codex, ACP)…
+        turn("Try again.")
+        model.receive("runtime.notice", payload: ["session_id": "parent", "message": "The model is overloaded."])
+        model.receive("message.complete", payload: ["session_id": "parent", "status": "error", "text": ""])
+        XCTAssertEqual(model.announcement?.detail, "The model is overloaded.")
+        // …its own error field when it carries one (OpenClaw, Pi)…
+        turn("Once more.")
+        model.receive("message.complete", payload: ["session_id": "parent", "status": "error", "text": "", "error": "Provider unavailable"])
+        XCTAssertEqual(model.announcement?.detail, "Provider unavailable")
+        // …else this turn's last answer, never the prompt or an earlier turn's notice.
+        turn("Last try.")
+        model.receive("message.delta", payload: ["session_id": "parent", "text": "Tagged v3, pushing"])
+        model.receive("message.complete", payload: ["session_id": "parent", "status": "error", "text": "Tagged v3, pushing"])
+        XCTAssertEqual(model.announcement?.detail, "Tagged v3, pushing")
+        turn("Quiet failure.")
+        model.receive("message.complete", payload: ["session_id": "parent", "status": "error", "text": ""])
+        XCTAssertEqual(model.announcement?.detail, "Something went wrong")
+        // The first-launch hello shows where to hover.
+        XCTAssertEqual(AppModel.helloAnnouncement.title, "Hi!")
+        XCTAssertEqual(AppModel.helloAnnouncement.detail, "Hover here to begin")
     }
 
     @MainActor func testSettingsPreviewClosesThePanelAndAnnouncesWithoutTouchingSessions() {

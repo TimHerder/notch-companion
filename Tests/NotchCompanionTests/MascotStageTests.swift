@@ -21,16 +21,17 @@ final class MascotStageTests: XCTestCase {
         for geometry in [physical(), external()] {
             let stage = geometry.stageFrame
             XCTAssertEqual(stage.width, NotchGeometry.stageWidth)
-            XCTAssertEqual(stage.height, geometry.bandHeight + NotchGeometry.stageBodyHeight)
+            XCTAssertEqual(stage.height, geometry.bandHeight + NotchGeometry.mascotStageBodyHeight)
             XCTAssertEqual(stage.maxY, geometry.screen.maxY)
             XCTAssertTrue(stage.contains(geometry.collapsedFrame))
             XCTAssertLessThan(stage.height, geometry.expandedFrame.height / 2)
-            var asking = geometry
-            asking.stageAnswerRows = 1
-            XCTAssertEqual(asking.stageFrame, stage, "the body fits one row of answers")
-            asking.stageAnswerRows = 3
-            XCTAssertEqual(asking.stageFrame.height, stage.height + 2 * NotchGeometry.stageAnswerHeight)
-            XCTAssertEqual(asking.stageFrame.maxY, stage.maxY, "answers grow it downward")
+            var measured = geometry
+            measured.stageBodyHeight = 192
+            XCTAssertEqual(measured.stageFrame.height, geometry.bandHeight + 192)
+            XCTAssertEqual(measured.stageFrame.maxY, stage.maxY, "taller content grows it downward")
+            measured.stageBodyHeight = 64
+            XCTAssertEqual(measured.stageFrame.width, stage.width, "only the height follows the content")
+            XCTAssertTrue(measured.stageFrame.contains(geometry.collapsedFrame), "a short stage still covers the band")
         }
         XCTAssertEqual(physical().stageFrame.midX, physical().glanceFrame.midX, "centred like the glance")
     }
@@ -138,7 +139,9 @@ final class MascotStageTests: XCTestCase {
         let asking = NotchAnnouncement(kind: .needsInput, sessionID: "plan", title: session.title)
         let content = StageContent.make(asking, sessions: [session], requests: [request])
         XCTAssertEqual(content.title, "Plan the release")
-        XCTAssertEqual(content.detail, "Run swift test")
+        XCTAssertEqual(content.detail, "Wants to run")
+        XCTAssertEqual(content.command, "Run swift test", "an approval shows what it runs in its own field")
+        XCTAssertEqual(content.meta, "Hermes")
         XCTAssertEqual(content.quickReply?.choices.map(\.value), ["deny", "once"])
         XCTAssertFalse(content.answered)
         XCTAssertFalse(content.acceptsText, "approvals are not typed")
@@ -158,6 +161,69 @@ final class MascotStageTests: XCTestCase {
                                          sessions: [], requests: [], mascot: "Mote").title, "Hi, I’m Mote")
         XCTAssertEqual(StageContent.make(NotchAnnouncement(kind: .finished, sessionID: "gone", title: "Old"), sessions: [],
                                          requests: []).title, "Old")
+    }
+
+    @MainActor func testResultsAndFailuresShowTheirSnapshotNotLiveStatus() {
+        // A queued send started during the hold: the session is thinking again.
+        var session = CompanionSession(id: "plan", runtimeID: "live", title: "Plan the release", state: .working,
+                                       messages: [ChatMessage(id: "turn", role: "user", text: "Draft it.")])
+        session.runtime = .codex
+        let failed = NotchAnnouncement(kind: .failed, sessionID: "plan", title: "Plan the release",
+                                       detail: "Rate limit reached. Try again at 14:00.", worked: 134)
+        let failure = StageContent.make(failed, sessions: [session], requests: [])
+        XCTAssertEqual(failure.detail, "Rate limit reached. Try again at 14:00.")
+        XCTAssertNotEqual(SessionDigest.entry(session, requests: []).detail, failure.detail, "live status says Thinking…")
+        XCTAssertEqual(failure.meta, "Codex · 2:14")
+        XCTAssertNil(failure.changes)
+        // A finished turn with changes adds one quiet line; an earlier turn's changes do not count.
+        session.state = .finished
+        session.changes = [TurnChanges(id: "earlier", workspace: "/tmp", files: [ChangedFile(path: "a.swift", additions: 9, deletions: 1)])]
+        let done = NotchAnnouncement(kind: .finished, sessionID: "plan", title: "Plan the release", detail: "Drafted.")
+        XCTAssertNil(StageContent.make(done, sessions: [session], requests: []).changes)
+        session.changes.append(TurnChanges(id: "turn", workspace: "/tmp", files: [ChangedFile(path: "b.swift", additions: 120, deletions: 8)]))
+        let changed = StageContent.make(done, sessions: [session], requests: [])
+        XCTAssertEqual(changed.changes?.id, "turn")
+        XCTAssertEqual(changed.detail, "Drafted.")
+        XCTAssertEqual(changed.meta, "Codex", "no work time without a snapshot")
+    }
+
+    @MainActor func testStageHeightFollowsItsContent() {
+        let session = CompanionSession(id: "plan", runtimeID: "live", title: "Plan the release", state: .finished,
+                                       messages: [ChatMessage(role: "user", text: "Draft it.")])
+        func content(_ detail: String, requests: [PendingRequest] = [], kind: NotchAnnouncement.Kind = .finished) -> StageContent {
+            var waiting = session
+            if kind == .needsInput { waiting.state = .waiting }
+            return StageContent.make(NotchAnnouncement(kind: kind, sessionID: "plan", title: session.title, detail: detail),
+                                     sessions: [waiting], requests: requests, textWidth: 406)
+        }
+        let short = content("Drafted.")
+        let long = content(String(repeating: "Keyboard focus now follows the reading order. ", count: 12))
+        XCTAssertEqual(short.messageLines, 1)
+        XCTAssertEqual(long.messageLines, 3, "at most three lines")
+        XCTAssertEqual(long.bodyHeight(mascot: false), content(long.detail + long.detail).bodyHeight(mascot: false),
+                       "longer text truncates instead of growing the stage")
+        // With the eyes a short result drops the empty space; the mascot keeps its room.
+        XCTAssertLessThan(short.bodyHeight(mascot: false), 70)
+        XCTAssertLessThan(short.bodyHeight(mascot: false), long.bodyHeight(mascot: false))
+        XCTAssertEqual(short.bodyHeight(mascot: true), NotchGeometry.mascotStageBodyHeight)
+        // Answers sit under the message and grow it a row at a time.
+        let pick = PendingRequest(id: "q", kind: .clarification, title: "Question", detail: "Which milestone ships first?",
+                                  choices: ["The glance", "The aura"], sessionID: "live", allowsFreeText: false)
+        var typed = pick
+        typed.allowsFreeText = true
+        let one = content("", requests: [pick], kind: .needsInput), two = content("", requests: [typed], kind: .needsInput)
+        XCTAssertEqual(one.answerRows, 1)
+        XCTAssertEqual(two.answerRows, 2)
+        XCTAssertEqual(two.bodyHeight(mascot: false) - one.bodyHeight(mascot: false), StageContent.answerHeight + StageContent.rowSpacing)
+        XCTAssertGreaterThan(one.bodyHeight(mascot: false), short.bodyHeight(mascot: false))
+        // An approval's message makes room for its command field: two lines at most.
+        let approval = PendingRequest(id: "a", kind: .approval, title: "Permission", detail: long.detail, choices: ["once", "deny"], sessionID: "live")
+        let approving = content("", requests: [approval], kind: .needsInput)
+        XCTAssertEqual(approving.command, SessionDigest.oneLine(long.detail))
+        XCTAssertEqual(approving.messageLines, 1)
+        XCTAssertEqual(approving.answerRows, 1)
+        XCTAssertEqual(approving.bodyHeight(mascot: false) - one.bodyHeight(mascot: false),
+                       StageContent.commandGap + StageContent.commandHeight, "one line of message, the field, one row of answers")
     }
 
     @MainActor func testQuestionsShowTheirChoicesAndAReplyField() {

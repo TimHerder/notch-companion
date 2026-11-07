@@ -294,7 +294,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         geometry.glanceActionRows = model.glanceEntries.filter { $0.quickReply != nil }.count
         geometry.announcing = announcing
         if let announcement = model.announcement { geometry.announcementWidth = announcement.labelWidth }
-        geometry.stageAnswerRows = model.stageAnswerRows
+        geometry.stageBodyHeight = model.stageBodyHeight
         guard previous != geometry else { return }
         model.geometry = geometry
         // Only retarget when the presented tier's own bounds change.
@@ -505,8 +505,8 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
                     || model.geometry?.glanceActionRows != model.glanceEntries.filter({ $0.quickReply != nil }).count {
             // A session starting, finishing or being answered reshapes the open glance.
             updateGeometry(animated: true)
-        } else if model.geometry?.stageAnswerRows != model.stageAnswerRows {
-            // A question's answers, or its next question, reshape the stage.
+        } else if model.geometry?.stageBodyHeight != model.stageBodyHeight {
+            // A question's answers, its next question or a late change summary reshape the stage.
             updateGeometry(animated: true)
         }
         let now = ProcessInfo.processInfo.systemUptime
@@ -883,7 +883,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
     /// VoiceOver hears what the band or toast shows.
     private func speak(_ announcement: NotchAnnouncement) {
         NSAccessibility.post(element: notchPanel, notification: .announcementRequested, userInfo: [
-            .announcement: "\(announcement.kind.verb): \(announcement.title)",
+            .announcement: announcement.spoken,
             .priority: NSAccessibilityPriorityLevel.medium.rawValue
         ])
     }

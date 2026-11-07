@@ -134,6 +134,9 @@ final class AppModel: ObservableObject {
     private var connecting = false
     private var connectGeneration = UUID()
     var lastCompletion: [String: Date] = [:]
+    /// This turn's latest runtime notice per session: a failed turn's reason
+    /// when its terminal event carries none (Codex, ACP).
+    private var turnNotices: [String: String] = [:]
     private var notchSessionVisible = false
     private var fullSessionVisible = false
     private var fullConversationVisible = true
@@ -742,7 +745,8 @@ final class AppModel: ObservableObject {
     func previewStatusEffect(_ kind: NotchAnnouncement.Kind = .finished, title: String = "Status effects preview") {
         guard statusEffects else { return }
         dismissPanel?()
-        announcement = NotchAnnouncement(kind: kind, sessionID: Self.previewAnnouncementID, title: title)
+        announcement = NotchAnnouncement(kind: kind, sessionID: Self.previewAnnouncementID, title: title,
+                                         detail: "Finished sessions, questions and failures appear here.")
     }
     static let previewAnnouncementID = "notch.preview"
     static let helloAnnouncementID = "notch.hello"
@@ -771,15 +775,22 @@ final class AppModel: ObservableObject {
         page = .session
         dismissPanel?()
         guard statusEffects else { return }
-        announcement = NotchAnnouncement(kind: .hello, sessionID: Self.helloAnnouncementID, title: "Hover here to begin")
+        announcement = Self.helloAnnouncement
+    }
+    static var helloAnnouncement: NotchAnnouncement {
+        NotchAnnouncement(kind: .hello, sessionID: helloAnnouncementID, title: "Hi!", detail: "Hover here to begin")
     }
 
     /// Offscreen fixtures show a specific announcement without runtime events.
     func setAnnouncementForPreview(_ value: NotchAnnouncement?) { announcement = value }
 
-    func announce(_ kind: NotchAnnouncement.Kind, sessionID: String) {
+    /// Snapshots the message with the moment, so the band and stage keep
+    /// saying what happened even if the session moves on during the hold.
+    func announce(_ kind: NotchAnnouncement.Kind, sessionID: String, failure: String = "") {
         guard statusEffects, let session = sessions.first(where: { $0.id == sessionID }) else { return }
-        announcement = NotchAnnouncement(kind: kind, sessionID: sessionID, title: session.title)
+        announcement = NotchAnnouncement(kind: kind, sessionID: sessionID, title: session.title,
+                                         detail: SessionDigest.announcementDetail(kind, session: session, requests: requests, failure: failure),
+                                         worked: SessionDigest.turnStart(session).map { Date().timeIntervalSince($0) })
     }
 
     func canChangeRuntime(_ id: String) -> Bool {
@@ -1803,6 +1814,7 @@ final class AppModel: ObservableObject {
         let turnID = sessions[index].latestUserTurnID
         let wasFailed = sessions[index].state == .failed
         let wasDisplayedFailed = sessions[index].displayState == .failed
+        var failure = ""
         sessions[index].updatedAt = Date()
         switch name {
         case "turn.changes":
@@ -1834,7 +1846,9 @@ final class AppModel: ObservableObject {
             if let tokens = payload["turn_tokens"] as? Int, tokens >= 0, let turnID { sessions[index].turnTokens[turnID] = tokens }
         case "runtime.notice":
             errorMessage = EventValue.string(payload["message"])
+            turnNotices[localID] = errorMessage
         case "message.start":
+            turnNotices[localID] = nil
             confirmSubmission(localID)
             unfinishedParents.insert(localID)
             sessions[index].parentTurnComplete = false
@@ -1873,6 +1887,8 @@ final class AppModel: ObservableObject {
             sessions[index].parentTurnComplete = true
             if status == "error" {
                 sessions[index].state = .failed
+                failure = EventValue.string(payload["error"])
+                if failure.isEmpty { failure = turnNotices[localID] ?? "" }
             } else if status == "interrupted" {
                 sessions[index].state = .interrupted
                 for child in sessions[index].agents.indices where [.working, .waiting].contains(sessions[index].agents[child].state) { sessions[index].agents[child].state = .interrupted }
@@ -1948,12 +1964,13 @@ final class AppModel: ObservableObject {
             pauseQueuedSends(localID)
             sessions[index].state = .failed
             errorMessage = EventValue.string(payload["message"] ?? payload["error"])
+            failure = errorMessage ?? ""
         default: break
         }
         // One cue per transition, whichever event (error, failed turn, failed child) caused it.
         if !wasFailed, sessions[index].state == .failed, sessions[index].parentSessionID == nil {
             play(.failure)
-            announce(.failed, sessionID: sessions[index].id)
+            announce(.failed, sessionID: sessions[index].id, failure: failure)
         }
         if !wasDisplayedFailed, sessions[index].displayState == .failed {
             sessions[index].completionID = UUID().uuidString

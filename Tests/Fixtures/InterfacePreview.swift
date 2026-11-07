@@ -1198,9 +1198,21 @@ import ImageIO
         working.runtime = .codex
         working.updatedAt = now.addingTimeInterval(-3)
         var finished = CompanionSession(id: "review", title: "Website accessibility review", state: .finished,
-                                        messages: [ChatMessage(role: "user", text: "Review the plan."),
+                                        messages: [ChatMessage(id: "review-turn", role: "user", text: "Review the plan.",
+                                                               createdAt: now.addingTimeInterval(-134)),
                                                    ChatMessage(role: "assistant", text: "## Ready for review\nKeyboard focus now follows the reading order, and every control has a visible label.")])
         finished.updatedAt = now.addingTimeInterval(-240)
+        finished.changes = [TurnChanges(id: "review-turn", workspace: "/Users/me/Developer/site",
+                                        files: [ChangedFile(path: "Sources/Navigation.swift", additions: 84, deletions: 6),
+                                                ChangedFile(path: "Sources/Labels.swift", additions: 31, deletions: 2),
+                                                ChangedFile(path: "Sources/FocusOrder.swift", additions: 3, deletions: 0),
+                                                ChangedFile(path: "Tests/AccessibilityTests.swift", additions: 2, deletions: 0)])]
+        // The compare run, after its tests failed: a real failed session with the runtime's reason.
+        var failed = working
+        failed.state = .failed
+        failed.tools = [ToolActivity(id: "t1", name: "terminal", detail: "swift test --filter NotchGlanceTests", state: .failed)]
+        failed.messages.append(ChatMessage(role: "assistant", text: "Running the glance tests before comparing both options."))
+        let failure = "swift test exited with code 1: 3 tests failed in NotchGlanceTests (row height, stop button, timer)."
         var read = CompanionSession(id: "sounds", title: "Refine the sound palette", state: .finished,
                                     messages: [ChatMessage(role: "assistant", text: "Regenerated all seven cues with balanced loudness.")])
         read.runtime = .claude
@@ -1258,11 +1270,8 @@ import ImageIO
             try render(scene(geometry, model.notchPresentation, height: 90), size: NSSize(width: sceneWidth, height: 90),
                        name: "island-resting-\(name)", output: output)
             for kind in NotchAnnouncement.Kind.allCases {
-                let session = kind == .finished ? finished : kind == .failed ? working : waiting
-                let announcement = kind == .hello
-                    ? NotchAnnouncement(kind: .hello, sessionID: AppModel.helloAnnouncementID, title: "Hover here to begin")
-                    : NotchAnnouncement(kind: kind, sessionID: session.id, title: session.title)
-                model.setAnnouncementForPreview(announcement)
+                model.sessions = [finished, working, waiting, read]
+                let announcement = try announce(model, kind, failed: failed, failure: failure)
                 geometry.announcing = true
                 geometry.announcementWidth = announcement.labelWidth
                 model.geometry = geometry
@@ -1274,6 +1283,7 @@ import ImageIO
                            name: "island-announce-\(kind)-\(name)", output: output)
                 geometry.announcing = false
             }
+            model.sessions = [finished, working, waiting, read]
             model.setAnnouncementForPreview(nil)
             model.geometry = geometry
         }
@@ -1435,7 +1445,8 @@ import ImageIO
         model.notchPresentation = .expanded(external)
         model.page = .session
         model.currentID = "review"
-        model.panelToast = NotchAnnouncement(kind: .finished, sessionID: "compare", title: "Compare the implementation options")
+        model.panelToast = NotchAnnouncement(kind: .finished, sessionID: "compare", title: "Compare the implementation options",
+                                             detail: "Option B keeps one presentation clock and needs no second window.")
         try render(UnifiedNotchView(model: model), size: external.expandedFrame.size, name: "island-panel-toast", output: output)
         model.panelToast = nil
         model.expanded = false
@@ -1451,7 +1462,8 @@ import ImageIO
         try render(scene(quiet, model.notchPresentation, height: 150), size: NSSize(width: sceneWidth, height: 150),
                    name: "island-glance-empty", output: output)
         model.glancing = false
-        try renderMascot(model: model, sessions: allSessions, requests: allRequests, external: external, notched: notched,
+        try renderMascot(model: model, sessions: allSessions, requests: allRequests, failed: failed, failure: failure,
+                         external: external, notched: notched,
                          scene: {
                              // Compact appearances trim the sheets; load each endpoint before its offscreen capture.
                              model.mascotLibrary.prepare(Array(model.mascotLibrary.clips.keys), synchronously: true)
@@ -1461,10 +1473,28 @@ import ImageIO
                          output: output)
     }
 
+    /// Announces a fixture moment the way runtime events do, so the band and
+    /// stage show the snapshotted message: the review's answer, the failed
+    /// compare run's reason, the release plan's question, or the hello.
+    @MainActor static func announce(_ model: AppModel, _ kind: NotchAnnouncement.Kind,
+                                    failed: CompanionSession, failure: String) throws -> NotchAnnouncement {
+        switch kind {
+        case .hello: model.setAnnouncementForPreview(AppModel.helloAnnouncement)
+        case .finished: model.announce(.finished, sessionID: "review")
+        case .needsInput: model.announce(.needsInput, sessionID: "plan")
+        case .failed:
+            model.sessions = model.sessions.map { $0.id == failed.id ? failed : $0 }
+            model.announce(.failed, sessionID: failed.id, failure: failure)
+        }
+        guard let announcement = model.announcement else { throw CocoaError(.featureUnsupported) }
+        return announcement
+    }
+
     /// Each rendered mascot (characters without assets are skipped): the stage
     /// for each moment, the open panel's header, and every clip with the live
     /// eyes on the face (checks the anchors), stage clips on their island edge.
     @MainActor static func renderMascot(model: AppModel, sessions: [CompanionSession], requests: [PendingRequest],
+                                        failed: CompanionSession, failure: String,
                                         external: NotchGeometry, notched: NotchGeometry,
                                         scene: (NotchGeometry, NotchPresentation, CGFloat, (NotchAnnouncement.Kind, AuraSample)?, String) throws -> Void,
                                         output: URL) throws {
@@ -1484,7 +1514,7 @@ import ImageIO
         model.sessions = sessions
         model.requests = requests
         let approval = PendingRequest(id: "approve", kind: .approval, title: "Hermes needs permission",
-                                      detail: "Run swift test --filter NotchGlanceTests", choices: ["once", "session", "deny"],
+                                      detail: "swift test --filter NotchGlanceTests --parallel --num-workers 4", choices: ["once", "session", "deny"],
                                       sessionID: "live-plan")
         let choice = PendingRequest(id: "pick", kind: .clarification, title: "Claude Code", detail: "Which milestone should ship first?",
                                     choices: ["The glance", "The aura", "Both together in one release"], sessionID: "live-plan")
@@ -1495,17 +1525,16 @@ import ImageIO
             for look in looks {
                 model.companionAppearance = look.0
                 if let mascot = look.1 { model.mascotCharacter = mascot }
-                for (variant, kind, session) in [("finished", NotchAnnouncement.Kind.finished, "review"), ("failed", .failed, "compare"),
-                                                 ("question", .needsInput, "plan"), ("choice", .needsInput, "plan"),
-                                                 ("approval", .needsInput, "plan"), ("hello", .hello, "")]
+                for (variant, kind) in [("finished", NotchAnnouncement.Kind.finished), ("failed", .failed),
+                                        ("question", .needsInput), ("choice", .needsInput),
+                                        ("approval", .needsInput), ("hello", .hello)]
                     where name == "physical" || variant == "finished" {
                     model.requests = variant == "approval" ? [approval] : variant == "choice" ? [choice] : requests
-                    let title = sessions.first { $0.id == session }?.title ?? "Hover here to begin"
-                    model.setAnnouncementForPreview(NotchAnnouncement(kind: kind, sessionID: kind == .hello ? AppModel.helloAnnouncementID : session,
-                                                                      title: title))
+                    model.sessions = sessions
+                    _ = try announce(model, kind, failed: failed, failure: failure)
                     model.staging = true
                     var geometry = base
-                    geometry.stageAnswerRows = model.stageAnswerRows
+                    geometry.stageBodyHeight = model.stageBodyHeight
                     model.geometry = geometry
                     model.notchPresentation = .stage(geometry)
                     let sample = NotchAuraTimeline.sample(kind, elapsed: kind == .failed ? 0.3 : 0.9, reducedMotion: false)
@@ -1514,8 +1543,8 @@ import ImageIO
                 }
                 model.updateStyle = .compact
                 model.staging = false
-                let announcement = NotchAnnouncement(kind: .finished, sessionID: "review", title: "Website accessibility review")
-                model.setAnnouncementForPreview(announcement)
+                model.sessions = sessions
+                let announcement = try announce(model, .finished, failed: failed, failure: failure)
                 var geometry = base
                 geometry.announcing = true
                 geometry.announcementWidth = announcement.labelWidth

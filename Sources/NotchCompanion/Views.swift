@@ -94,7 +94,7 @@ struct MascotView: View {
 
     private var indicatorSummary: String {
         if let announcement = model.announcement, model.notchPresentation.announce > 0.5 {
-            return "\(announcement.kind.verb): \(announcement.title)"
+            return announcement.spoken
         }
         let indicators = model.sessionIndicators
         return indicators.isEmpty ? "Ready." : indicators.map { "\($0.title): \($0.status.label)" }.joined(separator: ". ")
