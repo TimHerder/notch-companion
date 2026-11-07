@@ -1,0 +1,179 @@
+import XCTest
+@testable import NotchCompanion
+
+/// How streamed text becomes reply segments between tool calls, how a runtime's
+/// authoritative text is reconciled with them, and how native history splits alike.
+@MainActor final class ConversationSegmentTests: XCTestCase {
+    private var model: AppModel!
+    private var folder: URL!
+    private var suite = ""
+
+    override func setUp() async throws {
+        folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        suite = "notch-segments-\(UUID().uuidString)"
+        model = AppModel(storageURL: folder.appendingPathComponent("sessions.json"), playsSounds: false,
+                         client: SegmentTransport(), preferences: UserDefaults(suiteName: suite)!)
+        model.sessions[0].runtimeID = "live"
+        model.sessions[0].messages = [ChatMessage(id: "u", role: "user", text: "Check it", turnID: "u")]
+    }
+
+    override func tearDown() async throws {
+        model.shutdown()
+        UserDefaults().removePersistentDomain(forName: suite)
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    private func send(_ name: String, _ payload: [String: Any] = [:]) {
+        model.receive(name, payload: payload.merging(["session_id": "live"]) { old, _ in old })
+    }
+    private var replies: [String] { model.sessions[0].messages.filter { $0.role == "assistant" }.map(\.text) }
+
+    private func streamCommentaryToolAndAnswer() {
+        send("message.start", ["role": "assistant"])
+        send("message.delta", ["text": "Let me check."])
+        send("tool.start", ["tool_id": "t1", "name": "terminal", "context": "swift test"])
+        send("tool.complete", ["tool_id": "t1", "result": "ok"])
+        // Codex separates its messages with a blank line.
+        send("message.delta", ["text": "\n\nAll green."])
+    }
+
+    func testAToolCallSplitsTheReplyAndTheNewSegmentStartsAfterIt() throws {
+        streamCommentaryToolAndAnswer()
+        XCTAssertEqual(replies, ["Let me check.", "All green."])
+        let answer = try XCTUnwrap(model.sessions[0].messages.last)
+        XCTAssertGreaterThanOrEqual(answer.createdAt, model.sessions[0].tools[0].startedAt)
+        XCTAssertEqual(answer.turnID, "u")
+        send("message.delta", ["text": " Done."])
+        XCTAssertEqual(replies, ["Let me check.", "All green. Done."], "Text without a call between stays one segment")
+    }
+
+    func testClaudeCompletionWithOnlyTheFinalMessageKeepsTheCommentary() {
+        streamCommentaryToolAndAnswer()
+        send("message.complete", ["text": "All green.", "status": "complete"])
+        XCTAssertEqual(replies, ["Let me check.", "All green."])
+        XCTAssertEqual(model.sessions[0].latestResponse, "All green.")
+    }
+
+    func testCodexCompletionWithEveryMessageJoinedKeepsTheSegments() {
+        streamCommentaryToolAndAnswer()
+        send("message.complete", ["text": "Let me check.\n\nAll green.", "status": "complete"])
+        XCTAssertEqual(replies, ["Let me check.", "All green."])
+    }
+
+    func testDifferentCompletionTextReplacesOnlyTheCurrentSegment() {
+        streamCommentaryToolAndAnswer()
+        send("message.complete", ["text": "All 12 tests passed.", "status": "complete"])
+        XCTAssertEqual(replies, ["Let me check.", "All 12 tests passed."])
+    }
+
+    func testUnstreamedAnswerAfterAToolBecomesItsOwnSegment() {
+        send("message.start", ["role": "assistant"])
+        send("message.delta", ["text": "Let me check."])
+        send("tool.start", ["tool_id": "t1", "name": "terminal"])
+        send("message.interim", ["text": "Let me check.", "already_streamed": true])
+        send("message.complete", ["text": "All green.", "status": "complete"])
+        XCTAssertEqual(replies, ["Let me check.", "All green."])
+        XCTAssertEqual(model.sessions[0].tools[0].state, .finished)
+        XCTAssertNotNil(model.sessions[0].tools[0].finishedAt, "A call the turn's end finished gets an end time")
+    }
+
+    func testPiInterimForEachMessageChangesNothingAlreadyStreamed() {
+        send("message.start")
+        send("message.delta", ["text": "Reading the file."])
+        send("message.interim", ["text": "Reading the file.", "already_streamed": true])
+        send("tool.start", ["tool_id": "t1", "name": "read_file"])
+        send("message.start")
+        send("message.delta", ["text": "It is fine."])
+        send("message.interim", ["text": "It is fine.", "already_streamed": true])
+        send("message.complete", ["text": "It is fine.", "status": "complete"])
+        XCTAssertEqual(replies, ["Reading the file.", "It is fine."])
+    }
+
+    func testSteeredTurnCompletionDoesNotRepeatTextFromBeforeTheSteer() {
+        send("message.start")
+        send("message.delta", ["text": "First part."])
+        model.sessions[0].messages.append(ChatMessage(id: "steer", role: "user", text: "Also check the docs", turnID: "u"))
+        send("message.delta", ["text": "\n\nSecond part."])
+        // Codex reports the whole native turn, text from before the steer included.
+        send("message.complete", ["text": "First part.\n\nSecond part.", "status": "complete"])
+        XCTAssertEqual(replies, ["First part.", "Second part."])
+        XCTAssertNotNil(model.sessions[0].turnEndedAt["steer"], "The end belongs to the block the turn finished in")
+        XCTAssertNil(model.sessions[0].turnEndedAt["u"])
+    }
+
+    func testAWakeTurnEndingLikeTheLastAnswerStillGetsItsOwn() {
+        send("message.start")
+        send("message.delta", ["text": "Tests pass. Done."])
+        send("message.complete", ["text": "Tests pass. Done.", "status": "complete"])
+        // A delegation wake shares the turn ID but starts a new native turn that streams nothing.
+        model.sessions[0].messages.append(ChatMessage(id: "wake", role: "user", text: "Delegated task finished.", turnID: "u",
+                                                      kind: ChatMessage.delegationResult))
+        send("message.start")
+        send("message.complete", ["text": "Done.", "status": "complete"])
+        XCTAssertEqual(replies, ["Tests pass. Done.", "Done."])
+    }
+
+    func testTurnEndIsRecordedAndRoundTrips() throws {
+        streamCommentaryToolAndAnswer()
+        send("message.complete", ["text": "All green.", "status": "complete"])
+        let ended = try XCTUnwrap(model.sessions[0].turnEndedAt["u"])
+        XCTAssertGreaterThanOrEqual(ended, model.sessions[0].tools[0].startedAt)
+        let data = try JSONEncoder().encode(model.sessions[0])
+        XCTAssertEqual(try JSONDecoder().decode(CompanionSession.self, from: data).turnEndedAt, model.sessions[0].turnEndedAt)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        legacy.removeValue(forKey: "turnEndedAt")
+        XCTAssertEqual(try JSONDecoder().decode(CompanionSession.self, from: JSONSerialization.data(withJSONObject: legacy)).turnEndedAt, [:])
+        model.sessions[0].messages.append(ChatMessage(id: "u2", role: "user", text: "Again", turnID: "u2"))
+        send("error", ["message": "The provider is unavailable."])
+        XCTAssertNotNil(model.sessions[0].turnEndedAt["u2"], "A failure ends its turn too")
+    }
+
+    // MARK: Native history splits where live text split
+
+    func testCodexHistorySplitsRepliesAtToolItemsWithUniqueIDs() {
+        let rows = CodexProtocolState.history(["turns": [["id": "turn", "items": [
+            ["type": "userMessage", "id": "u", "content": [["type": "text", "text": "Fix it"]]],
+            ["type": "agentMessage", "id": "m1", "text": "Looking."],
+            ["type": "commandExecution", "id": "c1", "command": "swift test"],
+            ["type": "agentMessage", "id": "m2", "text": "Found it."],
+            ["type": "agentMessage", "id": "m3", "text": "Fixed."]
+        ]]]])
+        XCTAssertEqual(rows.map { $0["text"] as? String }, ["Fix it", "Looking.", "Found it.\n\nFixed."])
+        XCTAssertEqual(rows.map { $0["row_id"] as? String }, ["u", "turn", "turn:m2"], "The first reply keeps the turn's ID")
+    }
+
+    func testOpenCodeHistoryJoinsConsecutiveRepliesAndSplitsAtTools() {
+        func row(_ id: String, _ role: String, _ parts: [[String: Any]]) -> [String: Any] { ["info": ["id": id, "role": role], "parts": parts] }
+        let native = [row("msg_u", "user", [["type": "text", "text": "Fix it"]]),
+                      row("a1", "assistant", [["type": "text", "text": "Looking."], ["type": "tool", "id": "p1"], ["type": "text", "text": "Found it."]]),
+                      row("a2", "assistant", [["type": "text", "text": "Fixed."]])]
+        let rows = OpenCodeClient.history(native)
+        XCTAssertEqual(rows.map { $0["text"] as? String }, ["Fix it", "Looking.", "Found it.\n\nFixed."])
+        XCTAssertEqual(rows.map { $0["row_id"] as? String }, ["msg_u", "a1", "a1:2"])
+        XCTAssertEqual(rows.first?["client_id"] as? String, "u")
+        XCTAssertEqual(OpenCodeClient.currentText(native), "Looking.\n\nFound it.\n\nFixed.", "Live delivery text is unchanged")
+    }
+
+    func testACPReplayJoinsAgentChunksUntilAToolCall() {
+        var state = ACPProtocolState()
+        state.owned = ["s"]; state.loading = ["s"]
+        func update(_ kind: String, _ fields: [String: Any]) {
+            _ = state.notification("session/update", ["sessionId": "s", "update": fields.merging(["sessionUpdate": kind]) { old, _ in old }])
+        }
+        update("user_message_chunk", ["messageId": "u", "content": ["text": "Fix it"]])
+        update("agent_message_chunk", ["messageId": "m1", "content": ["text": "Looking."]])
+        update("tool_call", ["toolCallId": "t1", "title": "Run tests"])
+        update("agent_message_chunk", ["messageId": "m1", "content": ["text": "Found it."]])
+        update("agent_message_chunk", ["messageId": "m2", "content": ["text": " Fixed."]])
+        XCTAssertEqual(state.history["s"]?.map { $0["text"] as? String }, ["Fix it", "Looking.", "Found it. Fixed."])
+        XCTAssertEqual(state.history["s"]?.map { $0["row_id"] as? String }, ["u", "m1", "m1-2"])
+    }
+}
+
+@MainActor private final class SegmentTransport: RuntimeTransport {
+    var onEvent: ((String, [String: Any]) -> Void)?
+    var onConnectionChange: ((Bool, String?) -> Void)?
+    func connect() async throws {}
+    func disconnect() {}
+    func request(_ method: String, params: [String: Any]) async throws -> [String: Any] { [:] }
+}

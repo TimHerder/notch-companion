@@ -246,6 +246,9 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var changes: [TurnChanges] = []
     /// Tokens each companion turn used, as the runtime reported them; absent is unknown.
     var turnTokens: [String: Int] = [:]
+    /// When each turn ended (completed, failed or stopped), keyed by its visible user row:
+    /// steering and wakes share a turn ID but each starts its own block.
+    var turnEndedAt: [String: Date] = [:]
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
     var draft: String = ""
@@ -380,7 +383,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -419,6 +422,7 @@ extension CompanionSession {
         permissionMode = try? values.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
         fullAccessConfirmed = try values.decodeIfPresent(Bool.self, forKey: .fullAccessConfirmed) ?? false
         turnTokens = try values.decodeIfPresent([String: Int].self, forKey: .turnTokens) ?? [:]
+        turnEndedAt = try values.decodeIfPresent([String: Date].self, forKey: .turnEndedAt) ?? [:]
         runtimeInfo = try values.decodeIfPresent(RuntimeSessionInfo.self, forKey: .runtimeInfo)
         trustedProjectPath = try values.decodeIfPresent(String.self, forKey: .trustedProjectPath)
         nativeActivityUnverified = try values.decodeIfPresent(String.self, forKey: .nativeActivityUnverified)
@@ -762,6 +766,7 @@ enum SessionHistory {
         var roleOrdinals: [String: Int] = [:]
         var priorCursor = 0
         var currentTurnID: String?
+        var previousDate: Date?
         return visibleRows.map { row in
             let role = row["role"] as? String ?? ""
             let rawText = row["text"] as? String ?? ""
@@ -787,8 +792,13 @@ enum SessionHistory {
             if let matchingIndex { priorCursor = matchingIndex + 1 }
             let id = prior?.id ?? backendID ?? UUID().uuidString
             if role == "user" { currentTurnID = prior?.turnID ?? prior?.id ?? id }
+            // An unmatched reply without a native time stays at its turn's start, not
+            // after that turn's tools: it inherits the previous row's time.
+            let createdAt = prior?.createdAt ?? (row["timestamp"] as? Double).map(Date.init(timeIntervalSince1970:))
+                ?? (role == "assistant" ? previousDate : nil) ?? Date()
+            previousDate = createdAt
             return ChatMessage(id: id, role: role, text: role == "user" ? prior?.text ?? text : text,
-                               createdAt: prior?.createdAt ?? (row["timestamp"] as? Double).map(Date.init(timeIntervalSince1970:)) ?? Date(),
+                               createdAt: createdAt,
                                turnID: prior?.turnID ?? currentTurnID,
                                questions: role == "assistant" ? AsyncQuestion.decode(row["questions"]) ?? prior?.questions : nil,
                                kind: prior?.kind)

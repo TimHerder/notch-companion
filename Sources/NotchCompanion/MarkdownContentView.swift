@@ -41,13 +41,19 @@ private struct MarkdownBlocksView: View {
     }
 }
 
+extension EnvironmentValues {
+    /// Prose size: 13 for answers, a step smaller for commentary between tool calls.
+    @Entry var markdownBodySize: CGFloat = 13
+}
+
 private struct MarkdownBlockView: View {
     let block: MarkdownBlock
+    @Environment(\.markdownBodySize) private var bodySize
 
     var body: some View {
         switch block.content {
         case .paragraph(let text):
-            inline(text).font(.system(size: 13)).lineSpacing(4)
+            inline(text).font(.system(size: bodySize)).lineSpacing(bodySize < 13 ? 3 : 4)
                 .fixedSize(horizontal: false, vertical: true)
         case .heading(let level, let text):
             inline(text).font(.system(size: headingSize(level), weight: PanelTheme.pick(.semibold, .bold, .semibold))).lineSpacing(3)
@@ -67,7 +73,7 @@ private struct MarkdownBlockView: View {
                                         .padding(.top, 1.5)
                                 } else {
                                     Text("\(item.number ?? 1).")
-                                        .font(.system(size: 13).monospacedDigit())
+                                        .font(.system(size: bodySize).monospacedDigit())
                                 }
                             } else {
                                 switch PanelTheme.current {

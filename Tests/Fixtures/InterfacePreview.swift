@@ -421,8 +421,12 @@ import ImageIO
         model.sessions[0].runtime = .codex
         model.sessions[0].title = "Add a welcome message"
         model.sessions[0].workspacePath = summary.workspace
-        model.sessions[0].messages = [ChatMessage(id: "turn", role: "user", text: "Add a welcome message.", turnID: "turn"),
-            ChatMessage(role: "assistant", text: "Added the welcome message and its tests.", turnID: "turn")]
+        let asked = Date().addingTimeInterval(-120)
+        model.sessions[0].messages = [ChatMessage(id: "turn", role: "user", text: "Add a welcome message.", createdAt: asked, turnID: "turn"),
+            ChatMessage(role: "assistant", text: "Added the welcome message and its tests.", createdAt: asked.addingTimeInterval(47), turnID: "turn")]
+        model.sessions[0].tools = [ToolActivity(id: "edit", name: "edit_file", detail: "Sources/Companion.swift", state: .finished,
+                                                startedAt: asked.addingTimeInterval(9), finishedAt: asked.addingTimeInterval(10), turnID: "turn")]
+        model.sessions[0].turnEndedAt = ["turn": asked.addingTimeInterval(48)]
         model.sessions[0].state = .finished
         model.sessions[0].changes = [summary]
         model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1920, height: 1080), topInset: 0, leftArea: nil, rightArea: nil)
@@ -431,6 +435,77 @@ import ImageIO
         model.reducedMotion = true
         try render(UnifiedNotchView(model: model), size: model.geometry!.expandedFrame.size, name: "changes-compact", output: output)
         try render(FullSessionView(model: model), size: NSSize(width: 900, height: 660), name: "changes-full", output: output)
+    }
+
+    /// A finished turn whose commentary and tool calls fold above its answer and
+    /// changes, collapsed and unfolded, and the same turn live, text and calls interleaved.
+    @MainActor static func renderWork(output: URL, temporary: URL, preferences: UserDefaults) throws {
+        let model = AppModel(storageURL: temporary.appendingPathComponent("work.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
+        defer { model.shutdown() }
+        func turn(startedAgo: TimeInterval) {
+            let start = Date().addingTimeInterval(-startedAgo)
+            func at(_ second: Double) -> Date { start.addingTimeInterval(second) }
+            func reply(_ id: String, _ second: Double, _ text: String) -> ChatMessage {
+                ChatMessage(id: id, role: "assistant", text: text, createdAt: at(second), turnID: "fix")
+            }
+            func call(_ id: String, _ name: String, _ detail: String, _ from: Double, _ to: Double) -> ToolActivity {
+                ToolActivity(id: id, name: name, detail: detail, state: .finished, startedAt: at(from), finishedAt: at(to), turnID: "fix")
+            }
+            model.sessions[0].messages = [
+                ChatMessage(id: "fix", role: "user", text: "NotchControlsTests fails on CI about one run in five. Find out why and fix it.",
+                            createdAt: at(0), turnID: "fix"),
+                reply("look", 2, "I'll read the test and the hover code first."),
+                reply("found", 31, "The test sleeps for a real 150 ms while the hover delay runs on the animation clock, so a slow runner still sees the panel closed. I'll inject the clock."),
+                reply("answer", 128, """
+                Fixed. The hover test no longer depends on wall-clock timing.
+
+                - `NotchControls` takes its hover delay from an injected clock.
+                - The test advances that clock instead of sleeping.
+
+                The suite passed 50 runs in a row locally.
+                """)]
+            model.sessions[0].tools = [
+                call("read", "read_file", "Tests/NotchCompanionTests/NotchControlsTests.swift", 4, 4.3),
+                call("grep", "grep", "hoverDelay Sources/NotchCompanion", 6, 6.4),
+                call("log", "terminal", "gh run view 4182 --log-failed", 9, 27),
+                call("edit", "edit_file", "Sources/NotchCompanion/NotchControls.swift", 40, 40.6),
+                call("edit-test", "edit_file", "Tests/NotchCompanionTests/NotchControlsTests.swift", 44, 44.5),
+                call("test", "terminal", "for i in $(seq 50); do swift test --filter NotchControlsTests || break; done", 50, 126)]
+            model.sessions[0].turnEndedAt = ["fix": at(134)]
+        }
+        turn(startedAgo: 900)
+        model.sessions[0].runtime = .codex
+        model.sessions[0].title = "Fix the flaky hover test"
+        model.sessions[0].workspacePath = "/tmp/Notch"
+        model.sessions[0].changes = [TurnChanges(id: "fix", workspace: "/tmp/Notch", source: .agent, files: [
+            ChangedFile(path: "Sources/NotchCompanion/NotchControls.swift", additions: 18, deletions: 7),
+            ChangedFile(path: "Tests/NotchCompanionTests/NotchControlsTests.swift", additions: 6, deletions: 2)])]
+        model.sessions[0].state = .finished
+        model.connection = true
+        model.reducedMotion = true
+        model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1920, height: 1080), topInset: 0, leftArea: nil, rightArea: nil)
+        model.notchPresentation = .expanded(model.geometry!)
+        model.expanded = true
+        let compact = model.geometry!.expandedFrame.size, full = NSSize(width: 900, height: 660)
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-worked-collapsed", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-worked-collapsed", output: output)
+        model.expandedWork = ["work:\(model.sessions[0].id):fix"]
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-worked-expanded", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-worked-expanded", output: output)
+        // Live, 42 seconds in: the earlier run folds into a row, the newest shows its calls.
+        model.expandedWork = []
+        turn(startedAgo: 42)
+        model.sessions[0].messages.removeLast()
+        model.sessions[0].tools.removeLast()
+        model.sessions[0].tools[4].state = .working
+        model.sessions[0].tools[4].finishedAt = nil
+        model.sessions[0].turnEndedAt = [:]
+        model.sessions[0].changes = []
+        model.sessions[0].runtimeID = "preview"
+        model.sessions[0].state = .working
+        model.sessions[0].parentTurnComplete = false
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-worked-live", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-worked-live", output: output)
     }
 
     /// A Claude parent with a native subagent and an app-owned Codex child, the
@@ -564,6 +639,10 @@ import ImageIO
             try renderDelegation(output: output, temporary: temporary, preferences: preferences)
             return
         }
+        if CommandLine.arguments.contains("--work-only") {
+            try renderWork(output: output, temporary: temporary, preferences: preferences)
+            return
+        }
         let model = AppModel(storageURL: temporary.appendingPathComponent("sessions.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
         defer { model.shutdown() }
         let user = ChatMessage(id: "turn", role: "user", text: "Review the plan and suggest next steps.", turnID: "turn")
@@ -661,6 +740,7 @@ import ImageIO
         try render(FullSessionView(model: model), size: NSSize(width: 1440, height: 900), name: "full-conversation-wide", output: output)
         try render(FullSessionView(model: model, tab: "Activity"), size: full, name: "full-activity", output: output)
         try render(FullSessionView(model: model, tab: "Team"), size: full, name: "full-team-empty", output: output)
+        try renderWork(output: output, temporary: temporary, preferences: preferences)
         let sending = AppModel(storageURL: temporary.appendingPathComponent("sending.json"), playsSounds: false,
                                client: PreviewTransport(), preferences: preferences)
         defer { sending.shutdown() }
@@ -702,10 +782,13 @@ import ImageIO
         model.sessions[0].modelOverride = nil
         model.sessions[0].state = .working
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-busy-draft", output: output)
-        // A working turn's tool calls: older ones fold away, the latest three stay live.
+        // A working turn's tool calls in order around its commentary: older calls fold
+        // away, the newest run's latest three stay live.
         let (toolMessages, savedTools) = (model.sessions[0].messages, model.sessions[0].tools)
         let toolStart = Date().addingTimeInterval(-40)
-        model.sessions[0].messages = [ChatMessage(id: "tools-turn", role: "user", text: "Run the tests and fix what fails.", turnID: "tools-turn")]
+        model.sessions[0].messages = [ChatMessage(id: "tools-turn", role: "user", text: "Run the tests and fix what fails.", createdAt: toolStart, turnID: "tools-turn"),
+            ChatMessage(role: "assistant", text: "The build is clean. One control test fails; fixing the edit and rerunning it.",
+                        createdAt: toolStart.addingTimeInterval(26.5), turnID: "tools-turn")]
         model.sessions[0].tools = [
             ToolActivity(id: "read", name: "read_file", detail: "Sources/NotchCompanion/Views.swift", state: .finished,
                          startedAt: toolStart, finishedAt: toolStart.addingTimeInterval(0.4), turnID: "tools-turn"),

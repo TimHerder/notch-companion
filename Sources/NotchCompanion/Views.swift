@@ -628,35 +628,40 @@ struct ToolRow: View {
         let status = tool.state == .working ? "Running" : (tool.state == .failed ? "Failed" : (tool.state == .interrupted ? "Stopped" : "Done"))
         switch PanelTheme.current {
         case .refined:
-            // Only work that needs a look carries colour; finished calls stay quiet.
+            // One line; only work that needs a look carries colour, finished calls stay quiet.
             let tint = tool.state == .working || tool.state == .failed ? CompanionStyle.color(tool.state) : CompanionStyle.tertiary
             HStack(spacing: 8) {
-                Image(systemName: tool.state == .working ? "ellipsis" : (tool.state == .failed ? "exclamationmark.circle" : "checkmark"))
-                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(tint).frame(width: 16)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(tool.displayName).font(CompanionStyle.callout).lineLimit(1)
-                    if !tool.detail.isEmpty { Text(tool.detail).font(CompanionStyle.caption).foregroundStyle(CompanionStyle.tertiary).lineLimit(1) }
+                Image(systemName: tool.state == .working ? "ellipsis" : tool.state == .failed ? "exclamationmark.circle" : tool.state == .interrupted ? "minus" : "checkmark")
+                    .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(tint).frame(width: 14)
+                Text(tool.displayName).font(CompanionStyle.callout)
+                    .foregroundStyle(tool.state == .working ? CompanionStyle.text : CompanionStyle.secondary).lineLimit(1).layoutPriority(1)
+                if !tool.detail.isEmpty {
+                    Text(SessionDigest.oneLine(tool.detail)).font(.system(size: 11, design: .monospaced)).foregroundStyle(CompanionStyle.tertiary)
+                        .lineLimit(1).truncationMode(.middle)
                 }
-                Spacer(minLength: 8)
-                Text(status).font(CompanionStyle.caption).foregroundStyle(CompanionStyle.tertiary)
-            }.frame(minHeight: 32).help(tool.detail.isEmpty ? tool.displayName : tool.detail)
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: 24).help(tool.detail.isEmpty ? tool.displayName : tool.detail)
+            .accessibilityElement(children: .combine).accessibilityValue(status)
         case .tahoe:
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Group {
                     if tool.state == .working { ProgressView().controlSize(.mini) }
                     else {
                         Image(systemName: tool.state == .failed ? "exclamationmark.circle.fill" : tool.state == .interrupted ? "stop.circle" : "checkmark.circle.fill")
-                            .font(.system(size: 13)).symbolRenderingMode(.hierarchical)
+                            .font(.system(size: 12)).symbolRenderingMode(.hierarchical)
                             .foregroundStyle(tool.state == .interrupted ? CompanionStyle.secondary : CompanionStyle.color(tool.state))
                     }
                 }.frame(width: 16)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(tool.displayName).font(.system(size: 12.5)).lineLimit(1)
-                    if !tool.detail.isEmpty { Text(tool.detail).font(.system(size: 11, design: .monospaced)).foregroundStyle(CompanionStyle.secondary).lineLimit(1) }
+                Text(tool.displayName).font(.system(size: 12)).lineLimit(1).layoutPriority(1)
+                if !tool.detail.isEmpty {
+                    Text(SessionDigest.oneLine(tool.detail)).font(.system(size: 11, design: .monospaced)).foregroundStyle(CompanionStyle.secondary)
+                        .lineLimit(1).truncationMode(.middle)
                 }
-                Spacer(minLength: 5)
-                Text(status).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
-            }.frame(minHeight: 32).help(tool.detail.isEmpty ? tool.displayName : tool.detail)
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: 24).help(tool.detail.isEmpty ? tool.displayName : tool.detail)
+            .accessibilityElement(children: .combine).accessibilityValue(status)
         case .instrument:
             let tag = tool.state == .working ? "RUN" : (tool.state == .failed ? "ERR" : (tool.state == .interrupted ? "STOP" : "OK"))
             HStack(alignment: .firstTextBaseline, spacing: 8) {

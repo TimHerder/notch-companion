@@ -451,12 +451,35 @@ The notch is a complete place to read the conversation, not a preview.
   the full content region without the composer, its destination controls or
   attachment strip, and links to the full-session window. Returning restores
   the composer with draft and attachments. Detail views keep Back.
-- Show the full conversation. Earlier turns have expandable tool groups.
-- **Live current-turn cap:** the latest three tool calls, newest at the bottom;
-  new calls roll rows upward. Stable tool identities update rows in place. The
-  cap limits only the live summary, never history.
-- Persist turn IDs with messages and tool metadata so groups stay correct after
-  reconnect or resume.
+- Show the full conversation in true order: a turn's text and tool calls appear
+  in the order they began. Text the agent writes between calls is commentary,
+  one step smaller and quieter, with no header or Copy. Consecutive calls form
+  a run of single-line rows (status icon, name, middle-truncated detail; the
+  status word is spoken, not shown) with no card in Refined and Tahoe and log
+  lines in Instrument; a finished run outside a fold reads “N tool calls”.
+- **Live current-turn cap:** only the newest run shows its latest three calls,
+  newest at the bottom, with older calls behind “N earlier tool calls”; new
+  calls roll rows upward. Stable tool identities update rows in place. The cap
+  limits only the live summary, never history. A footer under the newest
+  content reads “Working for 0:42”, ticking for the whole turn while text
+  streams (“Waiting for your reply…” while the agent waits on you), followed by
+  any delegated agents still working.
+- **Finished turns** read: your message, a **Worked for 2:14** fold (collapsed
+  by default), the answer, then its changes. The answer is the last text the
+  turn wrote; it keeps the full body style and Copy on hover, and ordinary
+  replies carry no harness-name header (relayed messages keep their label). The
+  fold holds the commentary and runs in order, indented on a thin leading rule;
+  unfolding it stops transcript following. With nothing to fold, the duration
+  is a quiet line; a turn saved without its end reads “Worked · N steps”.
+  Durations read 8s, 2:14, 1:02:10.
+- A turn that ended before writing any text has no answer: its work stays open
+  under its header. The latest turn's own failure or stop names it, “Failed after
+  1:03” or “Stopped after 0:12”, on that header or on the fold above whatever
+  text it wrote (a failed delegated child does not). A steer or wake starts its
+  own block; blocks split from a running turn stay open until the turn ends, and
+  a block without its own end ends when the next one in its turn begins.
+- Persist turn IDs and end times with messages and tool metadata so blocks stay
+  correct after reconnect or resume.
 - Long tool labels truncate with a way to see the full text.
 - Streaming updates within the existing region, never resizing the notch.
 - Input and approval requests never rotate out with ordinary activity rows.
@@ -466,8 +489,9 @@ The notch is a complete place to read the conversation, not a preview.
 
 ## Change summaries
 
-Each coding turn can show a collapsed **Changes · N files · +A −D** row after
-its answer, in the notch and full-session window. Expanding lists paths, change
+Each coding turn can show a collapsed **Changes · N files · +A −D** row directly
+under its final answer (below the turn's folded work), in the notch and
+full-session window. Expanding lists paths, change
 kinds and per-file line counts; clicking a file opens its selectable unified
 diff below it (green additions, red removals) in a bounded, independently
 scrolling viewport. Binary files show a Binary label, not line counts.
