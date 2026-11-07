@@ -224,6 +224,8 @@ struct PendingRequest: Identifiable, Equatable {
     var allowsFreeText: Bool = true
     /// Native option descriptions, shown under their choice.
     var choiceDetails: [String: String] = [:]
+    /// The turn's native plan approval (Claude `ExitPlanMode`, Cursor `create_plan`).
+    var isPlan: Bool = false
 }
 
 struct Attachment: Identifiable, Codable, Equatable {
@@ -298,6 +300,10 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var parentSessionID: String? = nil
     var delegation: DelegationRecord? = nil
     var queuedSends: [QueuedSend] = []
+    /// The mode in use when Plan was chosen, for Plan ready's Implement; nil is Default permissions.
+    var prePlanPermissionMode: PermissionMode? = nil
+    /// The turn whose Plan ready banner Keep planning set aside.
+    var planReadyDismissedTurnID: String? = nil
     var latestResponse: String { messages.last(where: { $0.role == "assistant" })?.text ?? "" }
     var isBusy: Bool { nativeActivityUnverified != nil || state == .working || state == .waiting || agents.contains { $0.state == .working || $0.state == .waiting } }
     /// Its own turn or native children are working; app-owned children are not counted.
@@ -444,7 +450,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, prePlanPermissionMode, planReadyDismissedTurnID
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -493,6 +499,8 @@ extension CompanionSession {
         queuedSends = try values.decodeIfPresent([QueuedSend].self, forKey: .queuedSends) ?? []
         lastSeenAt = try values.decodeIfPresent(Date.self, forKey: .lastSeenAt)
         snoozedUntil = try values.decodeIfPresent(Date.self, forKey: .snoozedUntil)
+        prePlanPermissionMode = try? values.decodeIfPresent(PermissionMode.self, forKey: .prePlanPermissionMode)
+        planReadyDismissedTurnID = try values.decodeIfPresent(String.self, forKey: .planReadyDismissedTurnID)
         // Assign legacy children to the current restored turn once, so future
         // prompts do not inherit an old child's failure.
         for index in agents.indices where agents[index].turnID == nil {

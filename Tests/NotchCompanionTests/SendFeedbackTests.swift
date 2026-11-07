@@ -2,7 +2,7 @@ import XCTest
 import SwiftUI
 @testable import NotchCompanion
 
-private struct SendComposerFixture: View {
+struct SendComposerFixture: View {
     @ObservedObject var model: AppModel
     var compact: Bool
     @FocusState private var focused: Bool

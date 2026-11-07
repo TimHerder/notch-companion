@@ -211,7 +211,7 @@ struct ACPProtocolState {
             requests[key] = Interaction(id: id, session: sid, method: method, options: ["once": "accepted"], childID: childID)
             let detail = ["Start with this plan?", params["name"] as? String, params["overview"] as? String, plan]
                 .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
-            return (childEvents + [event("approval.request", sid, ["request_id": key, "choices": ["once", "deny"], "command": detail])], nil)
+            return (childEvents + [event("approval.request", sid, ["request_id": key, "choices": ["once", "deny"], "command": detail, "plan": true])], nil)
         }
         let message = "The runtime requested an unsupported interaction (\(method)); it was declined. Use the native interface for this feature."
         let reply = method == "elicitation/create" ? Self.reply(id, ["action": "decline"])

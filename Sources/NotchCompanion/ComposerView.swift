@@ -23,6 +23,12 @@ struct ComposerView: View {
         submissionNotice ?? (checksLastSend ? "Check the last send before sending another message." : nil)
     }
     private var busyHint: String { model.current?.busyInputHint ?? "⌘↩ to queue for later" }
+    /// While working, a typed draft gets a key of its own (steer or queue) and Stop steps aside.
+    private var takesDraftWhileBusy: Bool {
+        busy && !checksLastSend && model.current?.nativeActivityUnverified == nil
+            && !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    private var queued: [QueuedSend] { model.current?.queuedSends.filter(\.isUserMessage) ?? [] }
     private var draftBinding: Binding<String> {
         let sessionID = model.currentID
         return Binding(get: { model.sessions.first { $0.id == sessionID }?.draft ?? "" },
@@ -38,8 +44,8 @@ struct ComposerView: View {
     var body: some View {
         let refined = PanelTheme.current == .refined
         VStack(alignment: .leading, spacing: refined ? 6 : 5) {
-            if let session = model.current, session.queuedSends.contains(where: \.isUserMessage) {
-                let queued = session.queuedSends.filter(\.isUserMessage)
+            if let session = model.current, session.planReadyTurnID != nil { planReady(session) }
+            if let session = model.current, !queued.isEmpty {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 5) {
                         ForEach(queued, id: \.id) { send in
@@ -48,8 +54,7 @@ struct ComposerView: View {
                                 Text("\(send.paused == true ? "Paused" : "Queued"): \(send.text)")
                                     .lineLimit(1).help(send.text + (send.attachments?.isEmpty == false ? "\nFiles: " + send.attachments!.map(\.name).joined(separator: ", ") : ""))
                                 Spacer(minLength: 0)
-                                QuietIconButton(symbol: "xmark", label: "Cancel queued message") { model.cancelQueuedSend(send.id) }
-                                    .disabled(model.isSubmitting(session.id))
+                                queueActions(send, session: session)
                             }
                         }
                     }
@@ -98,6 +103,54 @@ struct ComposerView: View {
         }
         .onChange(of: model.currentID) { _, _ in submissionNotice = nil }
         .onChange(of: busy) { _, _ in submissionNotice = nil }
+    }
+
+    /// Plan ready, above the field: Implement leaves Plan and asks for the
+    /// work; Keep planning hides it for this turn.
+    @ViewBuilder private func planReady(_ session: CompanionSession) -> some View {
+        let theme = PanelTheme.current
+        let row = HStack(spacing: 8) {
+            Group {
+                switch theme {
+                case .refined: Image(systemName: "list.bullet.clipboard")
+                case .tahoe: Image(systemName: "list.bullet.clipboard.fill").foregroundStyle(CompanionStyle.accent)
+                case .instrument: LED(color: CompanionStyle.text, size: 5)
+                }
+            }.accessibilityHidden(true)
+            Text("Plan ready").lineLimit(1)
+            Spacer(minLength: 0)
+            Button("Keep planning") { model.keepPlanning(session.id) }
+                .buttonStyle(NotchPillButtonStyle(small: true))
+                .help("Stay in Plan; this returns with the next plan")
+            Button("Implement") { Task { await model.implementPlan(session.id) } }
+                .buttonStyle(NotchPillButtonStyle(prominent: true, small: true))
+                .disabled(model.submitting || !model.canAttemptSend)
+                .help("Switch to \(session.prePlanPermissionMode?.title ?? "Default permissions") and send “\(AppModel.implementPlanMessage)”")
+        }
+        if theme == .refined {
+            row.foregroundStyle(CompanionStyle.accent).panelNotice(CompanionStyle.accent).padding(.bottom, -6)
+        } else {
+            row.font(.system(size: PanelTheme.pick(11, 12, 11.5), weight: .medium)).padding(.vertical, 3)
+        }
+    }
+
+    /// Steer now (when the running turn can take it), Edit (into an empty
+    /// composer) and Cancel.
+    @ViewBuilder private func queueActions(_ send: QueuedSend, session: CompanionSession) -> some View {
+        let sending = model.isSubmitting(session.id)
+        if session.canSteer(send.attachments ?? []) {
+            QuietIconButton(symbol: "arrow.turn.up.right", label: "Steer now") { Task { await model.steerQueuedSend(send.id) } }
+                .disabled(sending || model.submitting)
+        }
+        let free = model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && session.attachments.isEmpty
+        Button { model.editQueuedSend(send.id) } label: { Image(systemName: "pencil") }
+            .buttonStyle(NotchIconButtonStyle(size: 28))
+            .disabled(!free || sending)
+            .help(free ? "Edit queued message" : "Send or clear your draft first")
+            .accessibilityLabel("Edit queued message")
+            .accessibilityHint(free ? "" : "Send or clear your draft first")
+        QuietIconButton(symbol: "xmark", label: "Cancel queued message") { model.cancelQueuedSend(send.id) }
+            .disabled(sending)
     }
 
     /// One field in every design: files and the editor on top, one bar along its
@@ -153,6 +206,11 @@ struct ComposerView: View {
             if (!isCompact || model.page == .session) && (model.showModelPicker || model.showContextUsage || model.showPermissionModes) {
                 ModelControlsView(model: model).padding(.trailing, 4)
             }
+            if takesDraftWhileBusy {
+                Button { Task { await model.interrupt() } } label: { Image(systemName: "stop.fill").font(.system(size: 9, weight: .bold)) }
+                    .buttonStyle(NotchIconButtonStyle(size: 28))
+                    .help("Stop this session; keep your draft").accessibilityLabel("Stop this session")
+            }
             sendButton
         }
     }
@@ -193,7 +251,13 @@ struct ComposerView: View {
             }
             NativeComposerEditor(text: draftBinding, focused: focused, height: $editorHeight,
                                  accessibilityLabel: "Message \(runtimeTitle)",
-                                 accessibilityHint: busy ? busyHint : hint ?? "", onSubmit: { submit() }, onQueue: { submit(queue: true) })
+                                 accessibilityHint: busy ? busyHint : hint ?? "", onSubmit: { submit() }, onQueue: { submit(queue: true) },
+                                 onEditQueued: { queued.last.map { model.editQueuedSend($0.id) } ?? false },
+                                 onSteerQueued: {
+                                     guard let first = queued.first, model.current?.canSteer(first.attachments ?? []) == true else { return false }
+                                     Task { await model.steerQueuedSend(first.id) }
+                                     return true
+                                 })
                 .id(model.currentID)
                 .frame(height: editorHeight)
           }
@@ -205,25 +269,34 @@ struct ComposerView: View {
     }
 
     /// Send turns into Stop in place while the session works; Instrument lights
-    /// Stop as a white key instead of the signal.
+    /// Stop as a white key instead of the signal. A draft typed meanwhile turns
+    /// it into the key for what Return does: Steer message or Queue message.
     private var sendButton: some View {
-        let stopKey = PanelTheme.current == .instrument && busy
+        let draftKey = takesDraftWhileBusy
+        let stops = busy && !draftKey
+        let steers = model.current?.canSteer == true
+        let stopKey = PanelTheme.current == .instrument && stops
+        let queues = draftKey && !steers
+        let symbol = stops ? "stop.fill" : draftKey ? (steers ? "arrow.turn.up.right" : "text.append")
+            : checksLastSend ? "magnifyingglass" : "arrow.up"
         return Button {
-            if busy { Task { await model.interrupt() } } else { submit() }
+            if stops { Task { await model.interrupt() } } else { submit(queue: queues) }
         } label: {
             if model.submitting && !busy { ProgressView().controlSize(.mini) }
             else {
-                Image(systemName: busy ? "stop.fill" : checksLastSend ? "magnifyingglass" : "arrow.up")
-                    .font(.system(size: busy ? 10 : PanelTheme.pick(13, 13.5, 13), weight: .bold))
+                Image(systemName: symbol)
+                    .font(.system(size: stops ? 10 : queues ? 11.5 : PanelTheme.pick(13, 13.5, 13), weight: .bold))
                     .contentTransition(.symbolEffect(.replace))
-                    .animation(model.reducedMotion ? nil : .smooth(duration: 0.25), value: busy)
+                    .animation(model.reducedMotion ? nil : .smooth(duration: 0.25), value: symbol)
             }
         }
         .buttonStyle(NotchIconButtonStyle(size: 28, selected: stopKey, prominent: !stopKey))
         .disabled(!busy && !canSend)
-        .help(busy ? "Stop this session; keep your draft"
+        .help(stops ? "Stop this session; keep your draft"
+              : draftKey ? (steers ? "Steer message · Return" : "Queue message · Command-Return")
               : checksLastSend ? "Check the last send in \(runtimeTitle) history" : "Send · Return or Command-Return")
-        .accessibilityLabel(busy ? "Stop this session" : checksLastSend ? "Check last send" : "Send message")
+        .accessibilityLabel(stops ? "Stop this session" : draftKey ? (model.current?.busySendLabel ?? "Queue message")
+                            : checksLastSend ? "Check last send" : "Send message")
     }
 
     private func submit(queue: Bool = false) {
@@ -250,6 +323,10 @@ struct NativeComposerEditor: NSViewRepresentable {
     var accessibilityHint: String
     var onSubmit: () -> Void
     var onQueue: (() -> Void)? = nil
+    /// In an empty composer: Option–Up edits the newest queued message, Command–Shift–Return
+    /// steers the oldest. Each returns whether it acted.
+    var onEditQueued: (() -> Bool)? = nil
+    var onSteerQueued: (() -> Bool)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -294,6 +371,8 @@ struct NativeComposerEditor: NSViewRepresentable {
             guard let parent = coordinator?.parent else { return }
             (parent.onQueue ?? parent.onSubmit)()
         }
+        editor.onEditQueued = { [weak coordinator = context.coordinator] in coordinator?.parent.onEditQueued?() ?? false }
+        editor.onSteerQueued = { [weak coordinator = context.coordinator] in coordinator?.parent.onSteerQueued?() ?? false }
         editor.onFocusChanged = { [weak coordinator = context.coordinator] value in
             DispatchQueue.main.async { coordinator?.parent.focused.wrappedValue = value }
         }
@@ -311,9 +390,10 @@ struct NativeComposerEditor: NSViewRepresentable {
         editor.setAccessibilityHelp(accessibilityHint)
         // Do not destroy marked text while an input method is composing.
         if !editor.hasMarkedText(), editor.string != text {
-            let selection = editor.selectedRange()
+            // Text restored into an empty composer (a queued message's Edit) keeps typing after it.
+            let location = editor.string.isEmpty ? (text as NSString).length : min(editor.selectedRange().location, (text as NSString).length)
             editor.string = text
-            editor.setSelectedRange(NSRange(location: min(selection.location, (text as NSString).length), length: 0))
+            editor.setSelectedRange(NSRange(location: location, length: 0))
         }
         context.coordinator.updateHeight()
         if focused.wrappedValue, editor.window?.firstResponder !== editor {
@@ -355,6 +435,8 @@ final class ComposerTextView: NSTextView {
     static let maximumLines = 4
     var onSubmit: (() -> Void)?
     var onQueue: (() -> Void)?
+    var onEditQueued: (() -> Bool)?
+    var onSteerQueued: (() -> Bool)?
     var onFocusChanged: ((Bool) -> Void)?
     var onLayoutChanged: (() -> Void)?
 
@@ -381,6 +463,11 @@ final class ComposerTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        // Only an empty composer reaches the queue; otherwise these keys keep their usual meaning.
+        if string.isEmpty, !hasMarkedText(),
+           (event.keyCode == 126 && modifiers == .option && onEditQueued?() == true)
+            || ([UInt16(36), UInt16(76)].contains(event.keyCode) && modifiers == [.command, .shift] && onSteerQueued?() == true) { return }
         if [UInt16(36), UInt16(76)].contains(event.keyCode), !hasMarkedText() {
             if event.modifierFlags.contains(.shift), !event.modifierFlags.contains(.command) {
                 insertNewline(nil)

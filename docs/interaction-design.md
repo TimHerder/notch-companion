@@ -796,14 +796,35 @@ identify selection.
   on children show a queue-only hint; Return then keeps the draft and explains
   Command–Return, never silently substituting interruption or queuing.
   [Runtime compatibility](backend-runtime.md#composer-steering-and-queuing)
-  decides the hint in both surfaces and all designs.
-- **Queue.** Queued messages appear above the field in order with cancel, three
-  visible rows then scrolling; hover shows the full text and file names. Text
-  and attachments are saved before the composer clears. Queues wait for parent
+  decides the hint in both surfaces and all designs. While working, Send is
+  Stop; a typed draft turns it into the key for what Return does, by the same
+  rule as the hint: **Steer message** (↩) or **Queue message** (⌘↩ only) in its
+  symbol, help and VoiceOver label, with a quiet Stop beside it.
+- **Queue.** Queued messages appear above the field in order, three visible
+  rows then scrolling; hover shows the full text and file names. Each row
+  offers **Steer now** while the running turn can be steered (the steering path
+  and its protections; a refusal returns it to its place in the queue, never
+  over the draft), **Edit** (its text and files move back into the composer and
+  out of the queue; disabled with “Send or clear your draft first” unless the
+  draft and files are empty) and Cancel. In an empty composer Option–↑ edits
+  the newest queued message and Command–Shift–Return steers the oldest; the
+  caret lands after the restored text. Text
+  and attachments are saved before the composer clears, and before an edit
+  leaves the queue. Queues wait for parent
   and child work. Stop, a failed turn, a disconnected frontend or restart pauses
   them until **Resume queued messages**. A refused queued send keeps its one
   saved copy and pauses the rest. Unconfirmed sends keep **Check last send**
   protection. A normal idle send works while the queue is paused.
+- **Plan ready.** When a turn finishes in Plan, a banner above the composer
+  reads **Plan ready** with **Keep planning** and **Implement**. Implement
+  returns to the permission mode used before Plan was chosen (Default
+  permissions when there was none) and sends “Implement the plan.” through the
+  normal send path, leaving the draft alone; when nothing could start it stays
+  in Plan and the banner returns. Keep planning hides it for that turn, across
+  restarts. It is not shown while busy, after a failure or Stop, for a turn
+  that ran before Plan was chosen, or once that turn's native plan approval
+  (Claude `ExitPlanMode`, Cursor `create_plan`) was answered, allowed or
+  denied. The island tiers are unchanged.
 - **Sending.** After validation, text and files leave the composer immediately
   while setup continues. The message enters the transcript with an 8-point
   upward arrival and fade over 180 ms (immediate under Reduce Motion), with a
@@ -869,7 +890,8 @@ identify selection.
   - Rows are about 34 points: status glyph (spinning arc, pulsing
     question, green check or red mark while unread; a quiet mark for a read
     failure; Instrument uses its lamps), title (dimmed once read), the runtime
-    (notch only) and a compact age, or the ticking turn timer while working.
+    (notch only; a quiet **Plan ready** instead while a plan waits unread) and
+    a compact age, or the ticking turn timer while working.
     The notch keeps each row to one line; the full-session sidebar wraps a
     title to two lines, with the glyph, age and ellipsis on its first line,
     and leaves out Instrument's row numbers.

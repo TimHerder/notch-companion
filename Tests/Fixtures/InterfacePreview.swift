@@ -816,6 +816,38 @@ import ImageIO
         model.sessions[0].modelOverride = nil
         model.sessions[0].state = .working
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-busy-draft", output: output)
+        // Queued messages offer Steer now, Edit and Cancel; a typed draft disables Edit and takes the steer key.
+        let (busyRuntime, busyDraft) = (model.sessions[0].runtime, model.draft)
+        model.sessions[0].runtime = .codex
+        model.sessions[0].parentTurnComplete = false
+        model.sessions[0].queuedSends = [
+            QueuedSend(id: "queue-1", text: "Then run the full test suite and fix anything that fails.", attachments: []),
+            QueuedSend(id: "queue-2", text: "Summarize what changed for the release notes.", attachments: [Attachment(url: URL(fileURLWithPath: "/tmp/notes.md"))])]
+        model.draft = ""
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-queue-actions", output: output)
+        model.draft = "Keep the public API unchanged."
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-queue-actions-draft", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-queue-actions-draft", output: output)
+        // A finished turn in Plan: Plan ready above the composer, and on the unread row.
+        model.sessions[0].queuedSends = []
+        model.sessions[0].parentTurnComplete = true
+        model.sessions[0].state = .finished
+        model.sessions[0].permissionMode = .plan
+        model.sessions[0].prePlanPermissionMode = .autoEdit
+        model.sessions[0].turnOutcome["turn"] = .finished
+        model.showPermissionModes = true
+        model.draft = ""
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-plan-ready", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-plan-ready", output: output)
+        model.page = .sessions
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-plan-ready-sessions", output: output)
+        model.page = .session
+        model.showPermissionModes = false
+        (model.sessions[0].permissionMode, model.sessions[0].prePlanPermissionMode) = (nil, nil)
+        model.sessions[0].turnOutcome = [:]
+        model.sessions[0].state = .working
+        model.sessions[0].runtime = busyRuntime
+        model.draft = busyDraft
         // A working turn's tool calls in order around its commentary: older calls fold
         // away, the newest run's latest three stay live.
         let (toolMessages, savedTools) = (model.sessions[0].messages, model.sessions[0].tools)

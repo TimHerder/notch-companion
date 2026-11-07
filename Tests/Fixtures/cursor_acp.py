@@ -42,6 +42,9 @@ for line in sys.stdin:
         assert authenticated
         reply(wire_id, dict(sessionId="cursor-chat", modes=dict(currentModeId="agent", availableModes=[
               dict(id="agent", name="Agent"), dict(id="plan", name="Plan"), dict(id="ask", name="Ask")])))
+    elif method == "session/set_mode":
+        assert params["modeId"] in ("agent", "plan", "ask")
+        reply(wire_id, {})
     elif method == "session/prompt":
         prompt_id = wire_id
         text = params["prompt"][0]["text"]
