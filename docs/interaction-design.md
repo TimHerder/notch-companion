@@ -846,7 +846,8 @@ identify selection.
 - **Plan ready.** When a turn finishes in Plan, the composer field gains a
   slim first row on its own surface, above a hairline: **Plan ·** and the
   plan's name, the first heading of the turn's last answer (as plain text,
-  without a leading “Plan:”), or **Plan ready** when it has none; then **Keep
+  without a leading “Plan:” or “Plan – ”; a hyphen counts only with a space
+  after it, so “Plan-B rollout” keeps its name), or **Plan ready** when it has none; then **Keep
   planning** as quiet text and **Implement** as its one action (Refined's
   neutral pill, so sage stays with Send; the accent key in Tahoe; the lit
   white key, like Send, in Instrument). It is never a separate band or tint. Implement
@@ -855,7 +856,8 @@ identify selection.
   normal send path, leaving the draft alone; when nothing could start it stays
   in Plan and the row returns. Keep planning hides it for that turn, across
   restarts. It is not shown while busy, after a failure or Stop, for a turn
-  that ran before Plan was chosen, or once that turn's native plan approval
+  that ran before Plan was chosen (switching away from Plan and back keeps
+  a plan whose turn ran in Plan), or once that turn's native plan approval
   (Claude `ExitPlanMode`, Cursor `create_plan`) was answered, allowed or
   denied. The island tiers are unchanged.
 - **Sending.** After validation, text and files leave the composer immediately
@@ -915,7 +917,7 @@ identify selection.
     `snoozedUntil` and the read receipt, so it returns unread and needs a read
     before it can auto-archive again, unless its conversation is on screen;
     a session without a result restarts its auto-archive clock instead.
-    Sending from its composer also ends the snooze, and New session never
+    Sending, steering or queueing from its composer also ends the snooze, and New session never
     reuses a snoozed draft. While snoozed, its completion makes no sound or announcement, its
     unread result stays out of the dots, glance and unread counts, and it
     never auto-archives. Its work, busy tracking, quit protection, receipts,
@@ -939,7 +941,11 @@ identify selection.
 - **Questions.** A pending question replaces the composer. Choices stay unsent
   until Reply. Free-text alternatives, progress, per-question state and
   duplicate protection are shared across windows; failed submissions keep the
-  answer.
+  answer. Refined and Tahoe size the card to its question up to a cap;
+  Instrument keeps a fixed card. While its question area has more below the
+  edge, **More ⌄** at the end of the action row scrolls to the rest (no edge
+  fade, which would dim a whole visible choice), and the scroller flashes when
+  the card appears, so a choice past the edge is never hidden without a cue.
 - **Failed delegated work** gives its parent red attention and a Review action.
   Child turn ownership keeps old failures from changing a later turn's outcome.
 - **Quit and Reconnect** check all app-owned work, including submissions and
@@ -1013,7 +1019,8 @@ in Refined and Instrument, whose placeholder hides behind a draft or the busy
 hint; Tahoe drops it (the placeholder “Ask Codex…” and the editor's spoken label
 name the harness), and Legacy Hermes keeps its label everywhere. The folder chip
 stops at 150 points on one line. When the bar is tight the model's effort drops
-first, then the model name truncates, down to about a dozen characters, and the
+first, then a model name longer than a dozen characters truncates, down to about a
+dozen (a shorter name and **Runtime default** stay whole), and the
 permission mode shows only its glyph (its name stays in help and VoiceOver);
 then the session name, the harness label, **Continue in Hermes…** and the folder
 chip share what is left, truncating rather than pushing the field past the
@@ -1023,7 +1030,8 @@ and Send keep their size.
 The model label shows the runtime's display name for the selected, reported or
 default model (the ID only when unnamed; **Runtime default** when none is
 known), no “Next:” prefix, then the effort when the model has efforts (`xhigh`
-reads **Extra high**), no chevron. It truncates within the bar.
+reads **Extra high**) one step quieter than the name, no chevron. A long name truncates within the bar; it
+never collapses to a lone “…”.
 
 The model picker is a bounded overlay rising from the bar with an inset **Search
 models…** field, refresh and Close. Search filters by name or ID without

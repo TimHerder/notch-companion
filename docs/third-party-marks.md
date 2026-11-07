@@ -13,6 +13,15 @@ recoloured, tinted, cropped or stretched (`.gitattributes` keeps git from
 touching them). The app may scale a mark optically to offset padding built into
 the file.
 
+The Antigravity mark is the exception: its official SVG draws its gradient with
+SVG filters (`feGaussianBlur`), which AppKit's SVG renderer ignores, so the app
+would show hard-edged colour blocks. It ships as `antigravity.png`, the
+official SVG rasterized unmodified by WebKit at 256 × 256 pixels on a
+transparent background (the full 180 × 180 view box, so its built-in padding
+and optical scale are unchanged); headless Chrome renders the same image. A
+bundled SVG may not use filters, `foreignObject`, scripts or remote references
+(`RuntimeChoiceTests` checks this), and each runtime ships one file.
+
 | Agent | File | Owner | Source |
 | --- | --- | --- | --- |
 | Claude Code | `claude.svg` | Anthropic | https://claude.ai/favicon.svg |
@@ -21,7 +30,7 @@ the file.
 | Pi | `pi.svg` | Pi maintainers (earendil-works) | `favicon.svg` square badge, [pi.dev](https://pi.dev) press kit |
 | OpenClaw | `openclaw.svg` | OpenClaw maintainers | `openclaw-mascot.svg`, brand kit in [github.com/openclaw/carapace](https://github.com/openclaw/carapace) |
 | DeepSeek Harness | `deepseek.svg` | DeepSeek (deepseek-ai) | `apps/web/public/favicon-dark.svg`, [github.com/deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) |
-| Antigravity CLI | `antigravity.svg` | Google | `antigravity-icon__full-color.svg`, [antigravity.google/press](https://antigravity.google/press) |
+| Antigravity CLI | `antigravity.png` | Google | `antigravity-icon__full-color.svg`, [antigravity.google/press](https://antigravity.google/press), rasterized unmodified |
 | Cursor CLI | `cursor.svg` | Anysphere | `marketing-static/favicon.svg`, [cursor.com](https://cursor.com) |
 | Hermes Agent | `hermes.svg` | Nous Research | `assets/nous-girl-white.svg`, [github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) |
 
@@ -33,4 +42,5 @@ shows the same line at the bottom of Settings.
 The marks haven't had a rights review; each vendor publishes its own rules
 (see [verification](verification.md)). To add an agent's
 mark, record it here with its source, add the unmodified file under its runtime
-identifier, and keep the `RuntimeChoiceTests` logo check passing.
+identifier (a PNG rasterized from the official SVG only when AppKit cannot draw
+the SVG), and keep the `RuntimeChoiceTests` logo checks passing.

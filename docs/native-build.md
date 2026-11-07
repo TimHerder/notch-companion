@@ -39,9 +39,11 @@ delegated child is idle.
 `LSUIElement` keeps the companion out of the Dock. Bundled resources include
 the original interaction sounds, app icon, the app's bridge resources and the
 agents' unmodified SVG marks (`Resources/AgentLogos/<runtime>.svg`, flattened
-into the bundle; see [third-party marks](third-party-marks.md)). macOS draws them
-with `NSImage` directly; release verification checks each byte for byte like
-every other resource.
+into the bundle; Antigravity's is `antigravity.png`, its official SVG rasterized
+unmodified because AppKit ignores SVG filters; see
+[third-party marks](third-party-marks.md)). macOS draws them with `NSImage`
+directly; release verification checks each byte for byte like every other
+resource.
 No sound is downloaded at runtime. The original icon is a native vector drawing
 of the existing left-side cream eyes within one matte black notch silhouette,
 on a soft cream tile. It includes standard and Retina icon sizes.

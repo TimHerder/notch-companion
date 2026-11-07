@@ -786,7 +786,7 @@ extension AppModel {
             let asker = sessions.first { $0.id == next.questionSessionID }?.runtimeID
             return !requests.contains { ($0.requestID ?? $0.id) == request && $0.sessionID == asker }
         } ?? false
-        if answered || session.messages.contains(where: { $0.id == next.id }) {
+        if answered || session.wasDelivered(next.id) {
             update(id) { $0.queuedSends.removeAll { $0.id == next.id } }
             save()
             processDelegationWakes()

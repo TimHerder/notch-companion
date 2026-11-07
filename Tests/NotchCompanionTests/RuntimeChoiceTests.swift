@@ -162,4 +162,22 @@ import XCTest
         }
         XCTAssertNil(RuntimeKind(rawValue: "future-agent")?.logo)
     }
+
+    /// AppKit draws a bundled SVG without filters, embedded HTML, scripts or remote
+    /// references, so a mark that needs them ships as a PNG rasterized from it instead.
+    func testBundledAgentSVGsUseOnlyWhatAppKitDraws() throws {
+        let bundle = CompanionResources.bundle
+        func url(_ runtime: RuntimeKind, _ ext: String) -> URL? {
+            bundle.url(forResource: runtime.rawValue, withExtension: ext)
+                ?? bundle.url(forResource: runtime.rawValue, withExtension: ext, subdirectory: "AgentLogos")
+        }
+        for runtime in RuntimeKind.allCases {
+            XCTAssertEqual([url(runtime, "svg"), url(runtime, "png")].compactMap { $0 }.count, 1, "\(runtime.title) ships one mark")
+            guard let svg = url(runtime, "svg") else { continue }
+            let text = try String(contentsOf: svg, encoding: .utf8)
+            for unsupported in ["<filter", "<foreignObject", "<script", "href=\"http"] {
+                XCTAssertFalse(text.localizedCaseInsensitiveContains(unsupported), "\(runtime.title)'s SVG uses \(unsupported)")
+            }
+        }
+    }
 }

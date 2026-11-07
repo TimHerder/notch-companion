@@ -92,6 +92,9 @@ private struct RequestAnswerForm: View {
     @State private var submitting = false
     /// Refined and Tahoe measure the details so the card hugs short ones.
     @State private var detailsHeight = CGFloat.infinity
+    /// Instrument: the fixed question area has more below its edge, and More scrolls to it.
+    @State private var moreBelow = false
+    @State private var questionScroll = ScrollPosition()
 
     /// Refined: the question scrolls past this height; shorter ones hug their content.
     private static let bodyCap: CGFloat = 132
@@ -203,7 +206,13 @@ private struct RequestAnswerForm: View {
                     ScrollView { requestBody }.frame(maxWidth: .infinity, maxHeight: 112, alignment: .topLeading)
                 }
             } else {
-                ScrollView { requestBody }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                // While more is below, More in the action row says so wherever a row falls at the
+                // edge (no fade: a row ends flush with it, so any fade dims a whole visible choice).
+                ScrollView { requestBody }
+                    .scrollPosition($questionScroll)
+                    .onScrollGeometryChange(for: Bool.self) { $0.visibleRect.maxY < $0.contentSize.height - 1 } action: { moreBelow = $1 }
+                    .scrollIndicatorsFlash(onAppear: true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
     }
@@ -302,6 +311,13 @@ private struct RequestAnswerForm: View {
                 }
                 if isSubmitting { ProgressView().controlSize(.mini).accessibilityLabel("Sending response") }
                 Spacer(minLength: 0)
+                if moreBelow {
+                    Button { questionScroll.scrollTo(edge: .bottom) } label: {
+                        HStack(spacing: 4) { Text("More"); Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)) }
+                    }
+                    .buttonStyle(NotchTextButtonStyle()).font(.system(size: 11.5)).foregroundStyle(CompanionStyle.secondary)
+                    .help("Show the rest of the question").accessibilityLabel("Show the rest of the question")
+                }
             }
         }
     }

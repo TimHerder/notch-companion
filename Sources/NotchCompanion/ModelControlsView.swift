@@ -36,8 +36,10 @@ struct ModelControlsView: View {
             } ?? "The runtime has not reported context usage yet. Send a message to receive a report."
             let modes = session.capabilities.supportedPermissionModes
             let theme = PanelTheme.current
-            // A long name truncates first but keeps about a dozen characters before the folder gives way.
-            let modelMinWidth: CGFloat? = (modelTitle?.count ?? 0) > 12 ? 84 : nil
+            // The label never collapses to "…": Runtime default and a name of a dozen characters or fewer
+            // stay whole; a longer name truncates first but keeps about a dozen before the folder gives way.
+            let modelLabel = modelTitle ?? "Runtime default"
+            let shortModel = modelTitle == nil || modelLabel.count <= 12
             // Model, permissions, context: the trailing group of the composer's bar.
             HStack(spacing: 4) {
                 if model.showModelPicker {
@@ -48,7 +50,7 @@ struct ModelControlsView: View {
                         switch theme {
                         case .refined:
                             // In a tight bar the effort goes first, then the name truncates.
-                            let name = Text(modelTitle ?? "Runtime default").lineLimit(1).truncationMode(.middle)
+                            let name = Text(modelLabel).lineLimit(1).truncationMode(.middle)
                             ViewThatFits(in: .horizontal) {
                                 HStack(spacing: 5) {
                                     name
@@ -56,22 +58,20 @@ struct ModelControlsView: View {
                                         Text(RuntimeModelOption.effortTitle(effort)).foregroundStyle(CompanionStyle.tertiary).lineLimit(1)
                                     }
                                 }
-                                name.frame(minWidth: modelMinWidth)
+                                if shortModel { name.fixedSize() } else { name.frame(minWidth: 84) }
                             }
                         case .tahoe, .instrument:
-                            // Instrument keeps the bar quiet, like Refined: the draft and Send lead.
-                            let instrument = theme == .instrument
-                            let name = Text(modelTitle ?? "Runtime default").foregroundStyle(instrument ? CompanionStyle.secondary : CompanionStyle.text)
-                                .lineLimit(1).truncationMode(.middle)
+                            // The name is one step brighter than its effort, so the two never read as one name.
+                            let name = Text(modelLabel).foregroundStyle(CompanionStyle.text).lineLimit(1).truncationMode(.middle)
                             ViewThatFits(in: .horizontal) {
-                                HStack(spacing: instrument ? 6 : 5) {
+                                HStack(spacing: theme == .instrument ? 6 : 5) {
                                     name
                                     if let effort {
-                                        Text(RuntimeModelOption.effortTitle(effort)).lineLimit(1)
-                                            .foregroundStyle(instrument ? CompanionStyle.faint : CompanionStyle.secondary)
+                                        // Not faint: that fails AA contrast on the Glass and Smoked bodies.
+                                        Text(RuntimeModelOption.effortTitle(effort)).lineLimit(1).foregroundStyle(CompanionStyle.secondary)
                                     }
                                 }
-                                name.frame(minWidth: modelMinWidth)
+                                if shortModel { name.fixedSize() } else { name.frame(minWidth: 84) }
                             }
                         }
                     }

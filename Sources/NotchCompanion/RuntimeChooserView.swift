@@ -138,14 +138,17 @@ extension RuntimeKind {
     }
     var installationFound: Bool { installationPath != nil }
 
-    /// The agent's official mark, bundled unmodified (docs/third-party-marks.md);
-    /// nil keeps the name-only presentation.
+    /// The agent's official mark, bundled unmodified (docs/third-party-marks.md): its SVG, or
+    /// a PNG rasterized from it where AppKit cannot draw the SVG faithfully. Nil keeps the
+    /// name-only presentation.
     var logo: NSImage? { Self.logos[rawValue] }
     private static let logos: [String: NSImage] = allCases.reduce(into: [:]) { logos, runtime in
         let bundle = CompanionResources.bundle
-        if let url = bundle.url(forResource: runtime.rawValue, withExtension: "svg")
-            ?? bundle.url(forResource: runtime.rawValue, withExtension: "svg", subdirectory: "AgentLogos"),
-           let image = NSImage(contentsOf: url) { logos[runtime.rawValue] = image }
+        let url = ["svg", "png"].lazy.compactMap {
+            bundle.url(forResource: runtime.rawValue, withExtension: $0)
+                ?? bundle.url(forResource: runtime.rawValue, withExtension: $0, subdirectory: "AgentLogos")
+        }.first
+        if let url, let image = NSImage(contentsOf: url) { logos[runtime.rawValue] = image }
     }
 }
 

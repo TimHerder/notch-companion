@@ -328,6 +328,13 @@ final class AppModel: ObservableObject {
                     if copy.queuedSends.contains(where: { $0.id == copy.stagedSubmission?.message.id }) { copy.stagedSubmission = nil }
                     else { copy.restoreStagedSubmission() }
                 }
+                // Delivered before the quit, or an unconfirmed send whose staged copy holds its text for Check last send.
+                // Without staged text (an agent's message, a notice, an older registry's entry) it waits for Check last send.
+                copy.queuedSends.removeAll { queued in
+                    session.pendingSubmission?.id == queued.id
+                        ? session.stagedSubmission?.message.id == queued.id && session.stagedSubmission?.draft != nil
+                        : session.messages.contains { $0.id == queued.id }
+                }
                 if copy.runtime == .opencode, !["opencode-http-v1", "opencode-http-v2"].contains(copy.runtimeInfo?.nativeInterface ?? ""),
                    copy.isBusy, copy.nativeActivityUnverified == nil {
                     copy.nativeActivityUnverified = "OpenCode was active when this frontend ended. Its ACP interface cannot verify background child completion. Continue the exact session in native OpenCode."
@@ -534,8 +541,9 @@ final class AppModel: ObservableObject {
         update(id) { target in
             if mode == .plan, target.permissionMode != .plan {
                 target.prePlanPermissionMode = target.permissionMode
-                // The turn before Plan was chosen made no plan to implement.
-                target.planReadyDismissedTurnID = target.messages.last { $0.role == "user" && SessionHistory.isVisibleConversation($0) }?.id
+                // The turn before Plan was chosen made no plan to implement, unless it ran in Plan itself.
+                let latest = target.messages.last { $0.role == "user" && SessionHistory.isVisibleConversation($0) }
+                if latest.map({ ($0.turnID ?? $0.id) != target.planTurnID }) ?? true { target.planReadyDismissedTurnID = latest?.id }
             }
             target.permissionMode = mode
             if mode == .fullAccess { target.fullAccessConfirmed = true }
@@ -1255,9 +1263,13 @@ final class AppModel: ObservableObject {
         let text = session.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         let queued = QueuedSend(id: UUID().uuidString, text: text, attachments: session.attachments)
-        update(session.id) { $0.queuedSends.append(queued); $0.draft = ""; $0.attachments = [] }
+        // Sending from its composer ends a snooze, so the reply is not hidden.
+        update(session.id) { $0.queuedSends.append(queued); $0.draft = ""; $0.attachments = []; $0.snoozedUntil = nil }
         guard save() else {
-            update(session.id) { $0.queuedSends.removeAll { $0.id == queued.id }; $0.draft = session.draft; $0.attachments = session.attachments }
+            update(session.id) {
+                $0.queuedSends.removeAll { $0.id == queued.id }; $0.draft = session.draft; $0.attachments = session.attachments
+                $0.snoozedUntil = session.snoozedUntil
+            }
             return
         }
         play(.send)
@@ -1276,7 +1288,7 @@ final class AppModel: ObservableObject {
     @discardableResult
     func editQueuedSend(_ id: String) -> Bool {
         guard let session = current, !isSubmitting(session.id), session.attachments.isEmpty,
-              session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !session.wasDelivered(id),
               let send = session.queuedSends.first(where: { $0.id == id && $0.isUserMessage }) else { return false }
         update(session.id) { $0.queuedSends.removeAll { $0.id == id }; $0.draft = send.text; $0.attachments = send.attachments ?? [] }
         guard save() else { update(session.id) { $0.queuedSends = session.queuedSends; $0.draft = session.draft; $0.attachments = [] }; return false }
@@ -1311,7 +1323,7 @@ final class AppModel: ObservableObject {
         guard let session = current, !isSubmitting(session.id), !submitting else { return }
         let queuedIndex = queuedID.flatMap { id in session.queuedSends.firstIndex { $0.id == id && $0.isUserMessage } }
         let queued = queuedIndex.map { session.queuedSends[$0] }
-        guard queuedID == nil || queued != nil else { return }
+        guard queuedID.map({ queued != nil && !session.wasDelivered($0) }) ?? true else { return }
         let (draft, files) = queued.map { ($0.text, $0.attachments ?? []) } ?? (session.draft, session.attachments)
         guard session.canSteer(files), let sid = session.runtimeID else {
             errorMessage = "This session cannot accept steering now. Use Command–Return to queue your message."
@@ -1334,6 +1346,7 @@ final class AppModel: ObservableObject {
         update(session.id) {
             $0.stagedSubmission = StagedSubmission(message: message, draft: draft, attachments: files)
             if queued != nil { $0.queuedSends.removeAll { $0.id == id } } else { $0.draft = ""; $0.attachments = [] }
+            $0.snoozedUntil = nil
         }
         guard save() else { update(session.id, giveBack); return }
         var requested = false
@@ -1510,6 +1523,7 @@ final class AppModel: ObservableObject {
                 target.completionID = nil
                 appendedTurnID = turnID
                 target.messages.append(message)
+                if target.permissionMode == .plan { target.planTurnID = turnID }
                 target.changes.append(changes)
                 if target.title == "New session" { target.title = String(text.prefix(64)) }
                 target.updatedAt = Date()
