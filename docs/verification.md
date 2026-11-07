@@ -76,6 +76,12 @@ private development hasn't been re-run against this source snapshot. Known limit
 - The island update, stage, "Worked for" fold, context bubble and session list
   are covered by offscreen fixtures in all three designs. No physical-notch,
   live-hover or VoiceOver acceptance has been done for them.
+- The panel header and one-bar composer, Changes open by default, snooze, queued
+  Edit/Steer, the Plan ready row, agent logos and the quieter Instrument design
+  are covered by offline tests and offscreen fixtures in all three designs. Not
+  yet checked live: hover and pressed states of Instrument's white keys, the
+  question card's More button and scroller flash, keyboard shortcuts for queued
+  messages, and a snooze waking on a real question or approval.
 
 **Not yet done**
 
