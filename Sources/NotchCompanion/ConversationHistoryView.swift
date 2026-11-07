@@ -18,14 +18,16 @@ struct ConversationHistoryView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
+        let items = timeline
+        let latestChanges = session.map { ChangeSummaryView.latestFinished(in: items, session: $0) } ?? []
         VStack(spacing: 0) {
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: PanelTheme.pick(16, 18, 19)) {
-                    if timeline.isEmpty {
+                    if items.isEmpty {
                         let needsSetup = session.map { model.canChangeRuntime($0.id) } == true && model.readyRuntimes.isEmpty
                         emptyState(needsSetup: needsSetup)
                     }
-                    ForEach(timeline) { item in
+                    ForEach(items) { item in
                         switch item {
                         case .message(let message) where message.delegationSummary != nil:
                             let childID = message.delegationChildID.flatMap { id in model.sessions.contains { $0.id == id } ? id : nil }
@@ -60,10 +62,13 @@ struct ConversationHistoryView: View {
                                 }
                             }
                         case .changes(let summary):
+                            let key = "\(session?.id ?? ""):\(summary.id)"
+                            let shows = model.changeDisclosure[key] ?? latestChanges.contains(summary.id)
                             ChangeSummaryView(summary: summary, editorName: model.codeEditorName,
                                               open: { model.openInCodeEditor($0) },
                                               chooseEditor: { model.openInCodeEditor($0, choose: true) },
-                                              onInspect: scrolling.stopFollowing)
+                                              onInspect: scrolling.stopFollowing,
+                                              showsFiles: shows, toggle: { model.changeDisclosure[key] = !shows })
                         }
                     }
                     .animation(model.reducedMotion ? nil : .easeOut(duration: 0.18),

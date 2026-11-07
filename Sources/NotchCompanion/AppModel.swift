@@ -78,6 +78,8 @@ final class AppModel: ObservableObject {
     @Published var projectTrustSessionID: String?
     /// Finished turns whose work the user unfolded, shared by the notch and full window.
     @Published var expandedWork: Set<String> = []
+    /// Change cards the user opened or closed ("session:turn"), for this run; others follow the default.
+    @Published var changeDisclosure: [String: Bool] = [:]
     @Published var defaultRuntime: RuntimeKind = .hermes {
         didSet { preferences.set(defaultRuntime.rawValue, forKey: "runtime.default") }
     }

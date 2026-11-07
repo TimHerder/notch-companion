@@ -6,8 +6,13 @@ struct ChangeSummaryView: View {
     var open: (URL) -> Void
     var chooseEditor: (URL) -> Void
     var onInspect: () -> Void
-    @State var showsFiles = false
+    /// The user's choice for this turn, else open for the latest finished turn.
+    var showsFiles: Bool
+    var toggle: () -> Void
+    @State var showsAllFiles = false
     @State var selectedPath: String?
+    /// An open card lists this many files, then "N more files".
+    static let fileLimit = 6
 
     private var project: URL { URL(fileURLWithPath: summary.workspace, isDirectory: true) }
     /// Instrument: monochrome diff, additions read white, removals grey.
@@ -25,8 +30,8 @@ struct ChangeSummaryView: View {
         let added = all.compactMap(\.additions).reduce(0, +), removed = all.compactMap(\.deletions).reduce(0, +)
         VStack(alignment: .leading, spacing: 10) {
             Button {
-                showsFiles.toggle()
-                if showsFiles { onInspect() }
+                if !showsFiles { onInspect() }
+                toggle()
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "chevron.right").rotationEffect(.degrees(showsFiles ? 90 : 0))
@@ -58,12 +63,15 @@ struct ChangeSummaryView: View {
                 }.frame(minHeight: theme == .refined ? 22 : nil).contentShape(Rectangle())
             }
             .buttonStyle(.plain).pressableCursor()
+            .help(showsFiles ? "Hide the changed files" : "Show the changed files")
             .accessibilityLabel("\(showsFiles ? "Collapse" : "Expand") \(title.lowercased()), \(all.count) files, \(added) lines added, \(removed) lines removed")
 
             if showsFiles {
+                let shown = Self.shownCounts([summary.ownFiles.count] + groups.map(\.files.count), showsAll: showsAllFiles)
+                let hidden = all.count - shown.compactMap { $0 }.reduce(0, +)
                 if let notice = summary.notice { Text(notice).foregroundStyle(CompanionStyle.secondary).fixedSize(horizontal: false, vertical: true) }
-                fileRows(summary.ownFiles, workspace: summary.workspace, key: "")
-                ForEach(groups) { group in
+                fileRows(Array(summary.ownFiles.prefix(shown[0] ?? 0)), workspace: summary.workspace, key: "")
+                ForEach(zip(groups, shown.dropFirst()).compactMap { group, count in count.map { (group, $0) } }, id: \.0.id) { group, count in
                     HStack(spacing: PanelTheme.pick(8, 7, 7)) {
                         let label = Label(group.label ?? "Delegated", systemImage: "arrow.triangle.branch").lineLimit(1).truncationMode(.tail)
                         switch theme {
@@ -78,7 +86,26 @@ struct ChangeSummaryView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Delegated to \(group.label ?? "a child"), \(group.files.count) files")
                     if let notice = group.notice { Text(notice).foregroundStyle(CompanionStyle.secondary).fixedSize(horizontal: false, vertical: true) }
-                    fileRows(group.files, workspace: group.workspace, key: group.id + "\u{0}")
+                    fileRows(Array(group.files.prefix(count)), workspace: group.workspace, key: group.id + "\u{0}")
+                }
+                if hidden > 0 {
+                    Button {
+                        showsAllFiles = true
+                        onInspect()
+                    } label: {
+                        // Laid out like a file row: the chevron in the icons' column, the label under the paths.
+                        HStack(spacing: 8) {
+                            Image(systemName: "chevron.right").font(.system(size: PanelTheme.pick(10, 10, 8), weight: .bold))
+                                .frame(width: PanelTheme.pick(16, 15, 14))
+                            let label = Text("\(hidden) more \(hidden == 1 ? "file" : "files")")
+                            if theme == .instrument { label.microLabel(9.5, tracking: 0.7) } else { label }
+                        }
+                        .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.secondary))
+                        .frame(minHeight: 20).padding(.horizontal, PanelTheme.pick(0, 7, 7)).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).pressableCursor()
+                    .help("Show all \(all.count) files")
+                    .accessibilityLabel("Show \(hidden) more \(hidden == 1 ? "file" : "files")")
                 }
                 if hasOwnSnapshot {
                     if summary.source == .workspace {
@@ -105,6 +132,41 @@ struct ChangeSummaryView: View {
         .onChange(of: rowKeys) { _, keys in
             if let selectedPath, !keys.contains(selectedPath) { self.selectedPath = nil }
         }
+    }
+
+    /// Per list (own files, then each child group's): how many files show, or nil
+    /// for a group hidden past the limit. Over the limit only the first files show.
+    static func shownCounts(_ counts: [Int], showsAll: Bool) -> [Int?] {
+        var left = showsAll || counts.reduce(0, +) <= fileLimit ? Int.max : fileLimit
+        return counts.map { count in
+            guard left > 0 else { return nil }
+            let shown = min(count, left)
+            left -= shown
+            return shown
+        }
+    }
+
+    /// The change cards of the latest finished turn, which start open; older ones
+    /// start collapsed. A running turn (with its steers) and a message still
+    /// sending are not finished, so the turn before them stays the latest.
+    static func latestFinished(in timeline: [ConversationTimelineItem], session: CompanionSession) -> Set<String> {
+        var end = timeline.endIndex
+        var live: String?
+        for index in timeline.indices.reversed() {
+            guard case .message(let message) = timeline[index], message.role == "user" else { continue }
+            let turn = message.turnID ?? message.id
+            if message.id == session.stagedSubmission?.message.id { end = index; continue }
+            guard session.isBusy, live == nil || live == turn else { break }
+            live = turn
+            end = index
+        }
+        // A block's change cards come last in it.
+        var result = Set<String>()
+        for item in timeline[..<end].reversed() {
+            guard case .changes(let changes) = item else { break }
+            result.insert(changes.id)
+        }
+        return result
     }
 
     private var cardShape: RoundedRectangle {

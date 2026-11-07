@@ -86,6 +86,37 @@ final class ChangeSummaryTests: XCTestCase {
         XCTAssertTrue(try JSONDecoder().decode(CompanionSession.self, from: JSONSerialization.data(withJSONObject: legacy)).changes.isEmpty)
     }
 
+    @MainActor func testOnlyTheLatestFinishedTurnsCardsStartOpen() {
+        let edit = [ChangedFile(path: "a.txt", additions: 1, deletions: 0)]
+        func turn(_ id: String, answer: Bool = true) -> [ChatMessage] {
+            [ChatMessage(id: id, role: "user", text: id, turnID: id)] + (answer ? [ChatMessage(role: "assistant", text: "Done", turnID: id)] : [])
+        }
+        var session = CompanionSession()
+        session.messages = turn("u1") + turn("u2")
+        session.changes = ["u1", "u2"].map { TurnChanges(id: $0, workspace: "/p", source: .agent, files: edit) }
+        func open() -> Set<String> { ChangeSummaryView.latestFinished(in: ConversationTimeline.build(session: session), session: session) }
+        XCTAssertEqual(open(), ["u2"], "Older turns start collapsed")
+        // A running turn, its steer and its live aggregate are not finished: the turn before stays open.
+        session.messages += turn("u3", answer: false) + [ChatMessage(id: "steer", role: "user", text: "Also", turnID: "u3")]
+        session.changes.append(TurnChanges(id: "u3", workspace: "/p", source: .agent, files: edit))
+        session.state = .working
+        XCTAssertEqual(open(), ["u2"])
+        session.state = .finished
+        XCTAssertEqual(open(), ["u3"])
+        session.stagedSubmission = StagedSubmission(message: turn("u4")[0], draft: nil, attachments: [])
+        XCTAssertEqual(open(), ["u3"], "A message still sending does not close it")
+        session.stagedSubmission = nil
+        session.messages += turn("u4")
+        XCTAssertEqual(open(), [], "The latest finished turn changed nothing")
+    }
+
+    @MainActor func testAnOpenCardListsSixFilesThenTheRest() {
+        XCTAssertEqual(ChangeSummaryView.shownCounts([3, 0, 5, 2], showsAll: false), [3, 0, 3, nil])
+        XCTAssertEqual(ChangeSummaryView.shownCounts([3, 0, 5, 2], showsAll: true), [3, 0, 5, 2])
+        XCTAssertEqual(ChangeSummaryView.shownCounts([6, 0], showsAll: false), [6, 0], "At the limit nothing hides")
+        XCTAssertEqual(ChangeSummaryView.shownCounts([6, 0, 1], showsAll: false), [6, nil, nil])
+    }
+
     func testDelegatedGroupsListEachFileOnceUnderItsChildAndRoundTrip() throws {
         let files = { (paths: [String]) in paths.map { ChangedFile(path: $0, additions: 1, deletions: 0) } }
         let now = Date()
