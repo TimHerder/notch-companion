@@ -66,8 +66,9 @@ answers the session's open requests as cancelled after `session/cancel`. A
 turn's 30-minute deadline restarts while it waits on the user and after each
 answer. Expiry sends `session/cancel` for that turn only, with a notice, and
 keeps it busy for a 45-second grace: the agent's answer, a result or an
-error, settles it as failed without a definitive rejection, and only a missing
-answer restarts the shared process, leaving the send unconfirmed. A process exit or lost acknowledgement never implies a successful
+error, settles it as failed and never as a definitive rejection (an error
+before any output leaves the send unconfirmed); only a missing answer restarts
+the shared process, also leaving the send unconfirmed. A process exit or lost acknowledgement never implies a successful
 turn. Native provider/tool environment is kept; inherited host-chat session
 IDs, frontend IPC and unrelated runtime identity are removed
 (`RuntimeEnvironment.native`). Finder launches get
