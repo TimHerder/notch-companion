@@ -259,10 +259,11 @@ final class ACPRuntimeClient: RuntimeTransport {
                         self.emit(self.state.finish(sid, stopReason: result["stopReason"] as? String ?? "unknown", error: self.overdue.removeValue(forKey: sid)))
                     } catch {
                         guard self.generation == run else { return }
-                        self.overdue.removeValue(forKey: sid)
-                        if self.state.started.contains(sid) { self.emit(self.state.finish(sid, stopReason: "error", error: error.localizedDescription)) }
+                        // An overdue turn the agent ends with an error was still held for the whole period: never a definitive rejection.
+                        let reported: Error = self.overdue.removeValue(forKey: sid).map { ACPClientError.unavailable($0) } ?? error
+                        if self.state.started.contains(sid) { self.emit(self.state.finish(sid, stopReason: "error", error: reported.localizedDescription)) }
                         else { self.state.active.remove(sid) }
-                        self.submissions.removeValue(forKey: sid)?.resume(throwing: error)
+                        self.submissions.removeValue(forKey: sid)?.resume(throwing: reported)
                     }
                 }
             }

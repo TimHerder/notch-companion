@@ -250,10 +250,14 @@ final class RuntimeIntegrationTests: XCTestCase {
         XCTAssertTrue(model.hasActiveWork, "Reading cannot certify native delivery or allow a silent reload")
         let saved = try JSONDecoder().decode([CompanionSession].self, from: Data(contentsOf: file))
         XCTAssertNotNil(saved.first?.pendingSubmission)
+        // A relaunch or disconnect records a provisional outcome for the unconfirmed turn.
+        let row = try XCTUnwrap(model.current?.messages.last { $0.role == "user" })
+        model.sessions[0].turnOutcome[row.id] = .interrupted
         await model.send()
         XCTAssertEqual(transport.calls.filter { $0.0 == "prompt.submit" }.count, 1)
         XCTAssertNil(model.current?.pendingSubmission)
         XCTAssertEqual(model.current?.state, .finished)
+        XCTAssertEqual(model.current?.turnOutcome[row.id], .finished, "The runtime's terminal status replaces a provisional outcome")
         XCTAssertTrue(model.current?.hasUnreadCompletion == true)
         XCTAssertTrue(model.draft.isEmpty)
         XCTAssertEqual(model.current?.messages.filter { $0.role == "user" }.count, 1)

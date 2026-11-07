@@ -169,7 +169,7 @@ import XCTest
         let reset = RuntimeRateLimit(name: "Weekly", usedPercent: 42, resetsAt: now.addingTimeInterval(2 * 86_400))
         XCTAssertEqual(UsageView.resetText(reset, now: now, calendar: calendar(system: "de_DE")), "Resets Sun 12:00",
                        "An English weekday on a German system, keeping its 24-hour clock")
-        XCTAssertEqual(UsageView.day(now.addingTimeInterval(-3 * 86_400), calendar: calendar(system: "de_DE")).prefix(4), "Tue ")
+        XCTAssertEqual(UsageView.day(now.addingTimeInterval(-3 * 86_400), now: now, calendar: calendar(system: "de_DE")).prefix(4), "Tue ")
         let twelveHour = try XCTUnwrap(UsageView.resetText(reset, now: now, calendar: calendar(system: "de_DE@hours=h12")))
         XCTAssertTrue(twelveHour.hasPrefix("Resets Sun 12:00") && twelveHour.hasSuffix("PM"), "A 12-hour preference stays: \(twelveHour)")
         // The shared default takes the bundle's language and the system's region and clock.

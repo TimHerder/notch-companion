@@ -1772,6 +1772,7 @@ final class AppModel: ObservableObject {
                 target.state = terminal == "complete" ? (target.failedCurrentAgents.isEmpty ? .finished : .failed)
                     : (terminal == "interrupted" ? .interrupted : .failed)
                 if [.finished, .failed].contains(target.state) { target.completionID = UUID().uuidString }
+                target.recordReportedOutcome()
             }
         }
         if nativeBusy {
@@ -2074,10 +2075,7 @@ final class AppModel: ObservableObject {
     private func endTurn(_ index: Int) {
         guard let boundary = sessions[index].messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) }) else { return }
         sessions[index].turnEndedAt[boundary.id] = Date()
-        // A failed child is not the turn's own failure; children still at work leave it finished.
-        let state = sessions[index].state
-        sessions[index].turnOutcome[boundary.id] = state == .interrupted || state == .failed && sessions[index].failedCurrentAgents.isEmpty
-            ? state : .finished
+        sessions[index].recordReportedOutcome()
     }
 
     private func receiveChanges(_ diff: String, sessionID: String, turnID: String) {

@@ -659,7 +659,7 @@ struct AnnouncementLabel: View {
                 .lineLimit(1).truncationMode(.tail)
                 .layoutPriority(1)
             if announcement.bandShowsMessage {
-                Text(announcement.detail).font(.system(size: 11.5)).foregroundStyle(IslandStyle.secondary)
+                Text(announcement.lineDetail).font(.system(size: 11.5)).foregroundStyle(IslandStyle.secondary)
                     .lineLimit(1).truncationMode(.tail)
                     .padding(.leading, 1)
             }
@@ -724,7 +724,7 @@ struct PanelToastView: View {
                     .lineLimit(1).truncationMode(.tail)
                     .layoutPriority(1)
                 if Self.showsMessage(announcement) {
-                    Text(announcement.detail).font(.system(size: 12)).foregroundStyle(IslandStyle.secondary)
+                    Text(announcement.lineDetail).font(.system(size: 12)).foregroundStyle(IslandStyle.secondary)
                         .lineLimit(1).truncationMode(.tail)
                 }
                 Text("Open").font(.system(size: 11, weight: .medium)).foregroundStyle(IslandStyle.secondary)

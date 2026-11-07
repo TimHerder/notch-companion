@@ -515,8 +515,9 @@ drop opens its session).
   calls roll rows upward. Stable tool identities update rows in place. The cap
   limits only the live summary, never history. A footer under the newest
   content reads “Working for 42s”, ticking for the whole turn while text
-  streams (“Waiting for your reply…” beside a still question mark in the
-  needs-you colour, not the spinner, while the agent waits on you), followed by
+  streams (“Waiting for your reply…” while the agent waits on you, beside a
+  still question mark in the needs-you colour in Refined and Tahoe and a steady
+  signal LED in Instrument; never the spinner), followed by
   any delegated agents still working.
 - **Finished turns** read: your message, a **Worked for 2:14** fold (collapsed
   by default), the answer, then its changes. The answer is the last text the

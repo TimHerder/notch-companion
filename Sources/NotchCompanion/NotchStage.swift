@@ -279,7 +279,8 @@ struct NotchStageView: View {
     /// What an approval wants to run, monospaced: it wraps between any characters
     /// up to three lines and only then truncates at the tail, never in the middle.
     private func commandField(_ command: String, height: CGFloat) -> some View {
-        Text(StageContent.breakable(command))
+        // Three lines overflow long before this; it matches what bodyHeight measures.
+        Text(StageContent.breakable(String(command.prefix(400))))
             .font(Font(StageContent.commandFont))
             .foregroundStyle(IslandStyle.text.opacity(0.9))
             .lineLimit(StageContent.commandMaxLines).truncationMode(.tail)

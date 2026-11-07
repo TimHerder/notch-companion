@@ -850,7 +850,7 @@ struct SettingsContent: View {
                                               title: \.label, selection: $model.autoArchiveAfter, small: true)
                         NotchSegmentedControl(label: "Archive read sessions after", options: SessionAutoArchive.allCases,
                                               title: { $0.interval.map(SessionDigest.compactAge) ?? $0.label },
-                                              selection: $model.autoArchiveAfter, small: true)
+                                              selection: $model.autoArchiveAfter, small: true, spoken: \.label)
                     }
                         .help("Read, idle sessions move to Archived after this long without activity. Search and the Archived list still find them.")
                 }

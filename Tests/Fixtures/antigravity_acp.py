@@ -29,7 +29,7 @@ current = {}
 prompt_id = None
 prompt_sid = None
 asking = None
-deaf = work = False
+deaf = work = errs = False
 
 
 def send(value):
@@ -96,8 +96,9 @@ for line in sys.stdin:
             listed.append(prompt_sid)
             json.dump(listed, open(STORE, "w"))
         text = params["prompt"][0]["text"]
-        # "stuck" never answers session/cancel; "ask then work" keeps working after its answer.
-        deaf, work = text == "stuck", text == "ask then work"
+        # "stuck" never answers session/cancel; "cancel errors" answers it with an error;
+        # "ask then work" keeps working after its answer.
+        deaf, work, errs = text == "stuck", text == "ask then work", text == "cancel errors"
         if text in ("question", "ask then work"):
             update(prompt_sid, "tool_call", toolCallId="interaction_1", title="Running ask_question", status="in_progress")
             asking = "ask-1"
@@ -115,7 +116,7 @@ for line in sys.stdin:
                           dict(optionId="reject", name="Deny", kind="reject_once")])))
         elif text == "slow":
             update(prompt_sid, "agent_message_chunk", content=dict(type="text", text="Working"))
-        elif text in ("silent", "stuck"):
+        elif text in ("silent", "stuck", "cancel errors"):
             pass
         else:
             update(prompt_sid, "tool_call", toolCallId="call-1", title="Running delegate_task", status="completed",
@@ -123,7 +124,10 @@ for line in sys.stdin:
             finish("reply:" + current[prompt_sid])
     elif method == "session/cancel":
         # A turn waiting on the client ends only once that request is answered, as ACP requires of the client.
-        if prompt_id is not None and asking is None and not deaf:
+        if prompt_id is not None and asking is None and errs:
+            send(dict(id=prompt_id, error=dict(code=-32603, message="aborted")))
+            prompt_id = None
+        elif prompt_id is not None and asking is None and not deaf:
             finish("", "cancelled")
     elif method is None and wire_id in ("ask-1", "perm-1"):
         asking = None

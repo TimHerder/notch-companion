@@ -176,8 +176,9 @@ struct UsageView: View {
         return day.unreportedTurns > 0 && day.total != nil ? tokens + " · \(day.unreportedTurns) unreported" : tokens
     }
 
-    static func day(_ date: Date, calendar: Calendar = .app) -> String {
-        calendar.isDateInToday(date) ? "Today" : calendar.isDateInYesterday(date) ? "Yesterday"
+    static func day(_ date: Date, now: Date = Date(), calendar: Calendar = .app) -> String {
+        calendar.isDate(date, inSameDayAs: now) ? "Today"
+            : calendar.date(byAdding: .day, value: -1, to: now).map { calendar.isDate(date, inSameDayAs: $0) } == true ? "Yesterday"
             : date.formatted(Date.FormatStyle(locale: calendar.locale ?? .autoupdatingCurrent, calendar: calendar, timeZone: calendar.timeZone)
                 .weekday(.abbreviated).day().month(.abbreviated))
     }

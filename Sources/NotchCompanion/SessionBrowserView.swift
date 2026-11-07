@@ -307,15 +307,8 @@ struct SessionBrowserView: View {
         // Read rows recede; what is new or needs you keeps full contrast.
         let quiet = !entry.unread && !selected
         let archived = model.sessionFilter != .archived && (session.isArchived || model.isAutoArchived(session))
-        return HStack(alignment: compact ? .center : .firstTextBaseline, spacing: PanelTheme.pick(9, 8, 9)) {
-            // The 252-point sidebar has no room for the ordinal beside a readable title.
-            if theme == .instrument && compact {
-                Text(String(format: "%02d", index)).font(CompanionStyle.mono(10.5).monospacedDigit())
-                    .foregroundStyle(selected ? CompanionStyle.text : CompanionStyle.faint)
-                    .frame(width: 18, alignment: .leading)
-                    .accessibilityHidden(true)
-            }
-            statusMark(session, entry: entry)
+        let alignment: VerticalAlignment = compact ? .center : .firstTextBaseline, spacing: CGFloat = PanelTheme.pick(9, 8, 9)
+        let label = HStack(alignment: alignment, spacing: spacing) {
             Text(session.title)
                 .font(.system(size: 13, weight: PanelTheme.pick(.medium, .regular, .medium)))
                 .foregroundStyle(quiet ? CompanionStyle.secondary : CompanionStyle.text)
@@ -326,8 +319,23 @@ struct SessionBrowserView: View {
                     .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.faint, CompanionStyle.faint))
                     .help("Archived")
             }
-            // The sidebar gives the title every point the stack's spacing leaves.
-            Spacer(minLength: compact ? 8 : 0)
+        }
+        return HStack(alignment: alignment, spacing: spacing) {
+            // The 252-point sidebar has no room for the ordinal beside a readable title.
+            if theme == .instrument && compact {
+                Text(String(format: "%02d", index)).font(CompanionStyle.mono(10.5).monospacedDigit())
+                    .foregroundStyle(selected ? CompanionStyle.text : CompanionStyle.faint)
+                    .frame(width: 18, alignment: .leading)
+                    .accessibilityHidden(true)
+            }
+            statusMark(session, entry: entry)
+            if compact {
+                label
+                Spacer(minLength: 8)
+            } else {
+                // The sidebar gives the title every point but one gap before the age.
+                label.frame(maxWidth: .infinity, alignment: .leading)
+            }
             // The actions button takes the age's place on hover.
             trailing(session, entry: entry).opacity(hidesTrailing ? 0 : 1)
         }

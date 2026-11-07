@@ -317,6 +317,12 @@ struct CompanionSession: Identifiable, Codable, Equatable {
               turnOutcome[boundary.id] == nil else { return }
         turnOutcome[boundary.id] = state
     }
+    /// The runtime reported how the latest turn ended; that replaces any provisional
+    /// outcome. A failed child is not the turn's own failure.
+    mutating func recordReportedOutcome() {
+        guard let boundary = messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) }) else { return }
+        turnOutcome[boundary.id] = state == .interrupted || state == .failed && failedCurrentAgents.isEmpty ? state : .finished
+    }
     var displayState: WorkState {
         if nativeActivityUnverified != nil { return .waiting }
         // Delivery uncertainty is a readable warning, not a live question.

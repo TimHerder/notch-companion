@@ -301,7 +301,7 @@ final class ACPIntegrationTests: XCTestCase {
     func testAntigravityAnswerRestartsTheTurnDeadline() async throws {
         let (root, client) = try antigravityFixture()
         defer { client.disconnect(); try? FileManager.default.removeItem(at: root) }
-        client.promptTimeout = 1
+        client.promptTimeout = 2
         var events: [(String, [String: Any])] = []
         client.onEvent = { events.append(($0, $1)) }
         try await client.connect()
@@ -309,8 +309,9 @@ final class ACPIntegrationTests: XCTestCase {
         let sid = try XCTUnwrap(session["session_id"] as? String)
         _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "ask then work"])
         try await eventually { events.contains { $0.0 == "clarify.request" } }
-        // Answered 0.4 s before the re-armed deadline; agy then works 0.7 s, less than one period.
-        try await Task.sleep(for: .seconds(1.6))
+        // Answered 0.4 s before the re-armed deadline (t0+4); agy then works 0.7 s, so without
+        // the restart the cancel at t0+4 catches it, and with it the next deadline is t0+5.6.
+        try await Task.sleep(for: .seconds(3.6))
         _ = try await client.request("clarify.respond", params: ["session_id": sid, "request_id": "s:ask-1", "question_id": "interaction_1", "answer": "Ink"])
         try await eventually { events.contains { $0.0 == "message.complete" } }
         XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "complete", "The user's wait never counts against agy's working time")
@@ -322,7 +323,7 @@ final class ACPIntegrationTests: XCTestCase {
         let (root, client) = try antigravityFixture()
         defer { client.disconnect(); try? FileManager.default.removeItem(at: root) }
         client.promptTimeout = 0.3
-        client.promptGrace = 0.3
+        client.promptGrace = 3
         var events: [(String, [String: Any])] = []
         var disconnected = false
         client.onEvent = { events.append(($0, $1)) }
@@ -342,8 +343,23 @@ final class ACPIntegrationTests: XCTestCase {
         try await eventually { events.contains { $0.0 == "message.complete" } }
         XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "complete")
 
+        // agy answers the cancellation with an error: the turn was held all along, so still no definitive rejection.
+        do {
+            _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "cancel errors"])
+            XCTFail("An overdue turn that ends in an error cannot report success")
+        } catch {
+            if case ACPClientError.rpc = error { XCTFail("The send stays unconfirmed, not rejected: \(error)") }
+            XCTAssertTrue(error.localizedDescription.contains("Check the native conversation"))
+        }
+        XCTAssertFalse(disconnected)
+        events.removeAll()
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "ordinary"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "complete")
+
         // agy never confirms: busy holds through the grace period, then only a restart proves the turn stopped.
         events.removeAll()
+        client.promptGrace = 0.3
         let started = ContinuousClock.now
         do {
             _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "stuck"])
@@ -352,7 +368,7 @@ final class ACPIntegrationTests: XCTestCase {
             if case ACPClientError.rpc = error { XCTFail("The send stays unconfirmed, not rejected: \(error)") }
             XCTAssertTrue(error.localizedDescription.contains("Check the native conversation"))
         }
-        XCTAssertGreaterThanOrEqual(ContinuousClock.now - started, .seconds(0.6))
+        XCTAssertGreaterThanOrEqual(ContinuousClock.now - started, .seconds(client.promptTimeout + client.promptGrace))
         XCTAssertTrue(events.contains { ($0.1["message"] as? String)?.contains("asked to stop") == true })
         XCTAssertFalse(events.contains { $0.0 == "message.complete" })
         XCTAssertTrue(disconnected)

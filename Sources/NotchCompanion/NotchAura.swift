@@ -100,6 +100,8 @@ struct NotchAnnouncement: Identifiable, Equatable {
     }
 
     static let spokenLimit = 400
+    /// One line never shows more than this; it bounds layout for a long command.
+    var lineDetail: String { String(detail.prefix(Self.spokenLimit)) }
     static let iconWidth: CGFloat = 15
     static let titleFont = NSFont.systemFont(ofSize: 11.5, weight: .medium)
     static let detailFont = NSFont.systemFont(ofSize: 11.5)
@@ -117,7 +119,7 @@ struct NotchAnnouncement: Identifiable, Equatable {
     /// when it fits), so the band widens only as far as it needs, bounded so
     /// long text truncates.
     var labelWidth: CGFloat {
-        let message = bandShowsMessage ? 7 + Self.width(detail, font: Self.detailFont) : 0
+        let message = bandShowsMessage ? 7 + Self.width(lineDetail, font: Self.detailFont) : 0
         return min(Self.maxLabelWidth, max(120, ceil(titleRun + message + 2)))
     }
 

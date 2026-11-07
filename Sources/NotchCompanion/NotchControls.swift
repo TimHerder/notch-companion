@@ -495,6 +495,8 @@ struct NotchSegmentedControl<Value: Hashable>: View {
     var title: (Value) -> String
     @Binding var selection: Value
     var small = false
+    /// What VoiceOver reads when the visible titles are abbreviated.
+    var spoken: ((Value) -> String)? = nil
     @Namespace private var thumb
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -511,7 +513,7 @@ struct NotchSegmentedControl<Value: Hashable>: View {
         .fixedSize()
         .accessibilityRepresentation {
             Picker(label, selection: $selection) {
-                ForEach(options, id: \.self) { Text(title($0)).tag($0) }
+                ForEach(options, id: \.self) { Text((spoken ?? title)($0)).tag($0) }
             }.pickerStyle(.segmented)
         }
     }
