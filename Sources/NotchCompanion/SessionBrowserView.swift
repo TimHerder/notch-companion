@@ -34,7 +34,7 @@ struct SessionBrowserView: View {
                         ForEach(project.sessions) { session in row(session) }
                     }
                     if projects.isEmpty { emptyState }
-                    if showsArchivedFooter { archivedFooter.padding(.top, projects.isEmpty ? 0 : 10) }
+                    if showsFooters { footers.padding(.top, projects.isEmpty ? 0 : 10) }
                 }
                 .padding(.bottom, 12)
             }
@@ -55,7 +55,7 @@ struct SessionBrowserView: View {
                         .notchGroup()
                     }
                     if projects.isEmpty { emptyState }
-                    if showsArchivedFooter { archivedFooter.padding(3).notchGroup().padding(.top, projects.isEmpty ? 0 : 8) }
+                    if showsFooters { footers.notchGroup().padding(.top, projects.isEmpty ? 0 : 8) }
                 }.padding(.bottom, 6)
             }.softTopEdge(8, bottom: compact ? 14 : 0).accessibilityLabel("Sessions")
         case .instrument:
@@ -70,7 +70,7 @@ struct SessionBrowserView: View {
                         }
                     }
                     if projects.isEmpty { emptyState }
-                    if showsArchivedFooter { archivedFooter.padding(.top, projects.isEmpty ? 0 : 12) }
+                    if showsFooters { footers.padding(.top, projects.isEmpty ? 0 : 12) }
                 }
             }.accessibilityLabel("Sessions")
         }
@@ -78,21 +78,34 @@ struct SessionBrowserView: View {
 
     private var query: String { model.sessionSearch.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-    private var showsArchivedFooter: Bool { model.sessionFilter == .all && query.isEmpty && model.archivedCount > 0 }
+    private var showsFooters: Bool { model.sessionFilter == .all && query.isEmpty && model.archivedCount + model.snoozedCount > 0 }
 
-    /// Ends the default list: a quiet way into Archived, also when nothing is active.
-    private var archivedFooter: some View {
-        let count = model.archivedCount
-        return Button { model.sessionFilter = .archived } label: {
+    /// Ends the default list: quiet ways into Snoozed and Archived, also when nothing is active.
+    private var footers: some View {
+        VStack(spacing: PanelTheme.pick(2, 0, 0)) {
+            if model.snoozedCount > 0 {
+                footer(.snoozed, symbol: "moon.zzz", count: model.snoozedCount, help: "Show snoozed sessions")
+            }
+            if PanelTheme.current == .tahoe && model.snoozedCount > 0 && model.archivedCount > 0 {
+                Rectangle().fill(CompanionStyle.separator).frame(height: 0.5).padding(.leading, 38).padding(.trailing, 14)
+            }
+            if model.archivedCount > 0 {
+                footer(.archived, symbol: "archivebox", count: model.archivedCount, help: "Show read and archived sessions")
+            }
+        }
+    }
+
+    private func footer(_ filter: SessionFilter, symbol: String, count: Int, help: String) -> some View {
+        Button { model.sessionFilter = filter } label: {
             HStack(spacing: PanelTheme.pick(9, 8, 9)) {
                 switch PanelTheme.current {
                 case .refined, .tahoe:
-                    Image(systemName: "archivebox").font(.system(size: 11)).frame(width: 16)
-                    Text("Archived").font(.system(size: PanelTheme.pick(12, 13, 12)))
+                    Image(systemName: symbol).font(.system(size: 11)).frame(width: 16)
+                    Text(filter.title).font(.system(size: PanelTheme.pick(12, 13, 12)))
                     Text("\(count)").font(.system(size: PanelTheme.pick(11, 12, 11)).monospacedDigit())
                         .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.faint))
                 case .instrument:
-                    Text("Archived").microLabel(9.5, tracking: 0.8)
+                    Text(filter.title).microLabel(9.5, tracking: 0.8)
                     Text(String(format: "%02d", count)).font(CompanionStyle.mono(10).monospacedDigit())
                         .foregroundStyle(CompanionStyle.faint)
                 }
@@ -105,8 +118,9 @@ struct SessionBrowserView: View {
             .frame(height: PanelTheme.pick(30, 28, 30))
         }
         .buttonStyle(NotchRowButtonStyle(cornerRadius: PanelTheme.pick(10, 9, CompanionStyle.radius)))
-        .help("Show read and archived sessions")
-        .accessibilityLabel("Archived, \(count) \(count == 1 ? "session" : "sessions")")
+        .padding(PanelTheme.pick(0, 3, 0))
+        .help(help)
+        .accessibilityLabel("\(filter.title), \(count) \(count == 1 ? "session" : "sessions")")
     }
 
     @ViewBuilder private var emptyState: some View {
@@ -120,7 +134,8 @@ struct SessionBrowserView: View {
             .padding(.vertical, 18).padding(.horizontal, 12).frame(maxWidth: .infinity, alignment: .leading)
         case .tahoe:
             VStack(spacing: 6) {
-                Image(systemName: !query.isEmpty ? "magnifyingglass" : model.sessionFilter == .archived ? "archivebox" : "tray")
+                Image(systemName: !query.isEmpty ? "magnifyingglass" : model.sessionFilter == .archived ? "archivebox"
+                      : model.sessionFilter == .snoozed ? "moon.zzz" : "tray")
                     .font(.system(size: 28, weight: .light)).foregroundStyle(CompanionStyle.secondary)
                     .padding(.bottom, 6).accessibilityHidden(true)
                 Text(emptyTitle).font(.system(size: 15, weight: .semibold))
@@ -264,13 +279,20 @@ struct SessionBrowserView: View {
                 .accessibilityLabel(accessibilityLabel(session, entry: entry))
                 .accessibilityAddTraits(selected ? [.isSelected] : [])
                 .accessibilityValue(selected ? "Selected session" : "")
-                .contextMenu { actions(session) }
+                .contextMenu { actions(session, menu: true) }
                 if open {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 6) { actions(session) }
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 6) { manageActions(session) }
-                            if session.isLegacyPrivate { ContinueLegacySessionButton(model: model, session: session) }
+                    Group {
+                        if model.snoozeChoicesShown { snoozeChoices(session) } else {
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 6) { actions(session) }
+                                // The sidebar fits two short pills a row at most, and Wake now or Restore alone.
+                                VStack(alignment: .leading, spacing: 6) {
+                                    HStack(spacing: 6) { renameAction(session); snoozeOrWakeAction(session) }
+                                    archiveOrRestoreAction(session)
+                                    if session.isLegacyPrivate { ContinueLegacySessionButton(model: model, session: session) }
+                                }
+                                VStack(alignment: .leading, spacing: 6) { actions(session) }
+                            }
                         }
                     }
                     .buttonStyle(NotchPillButtonStyle(small: true))
@@ -307,6 +329,7 @@ struct SessionBrowserView: View {
         // Read rows recede; what is new or needs you keeps full contrast.
         let quiet = !entry.unread && !selected
         let archived = model.sessionFilter != .archived && (session.isArchived || model.isAutoArchived(session))
+        let snoozed = model.sessionFilter != .snoozed && session.snoozedUntil != nil
         let alignment: VerticalAlignment = compact ? .center : .firstTextBaseline, spacing: CGFloat = PanelTheme.pick(9, 8, 9)
         let label = HStack(alignment: alignment, spacing: spacing) {
             Text(session.title)
@@ -318,6 +341,11 @@ struct SessionBrowserView: View {
                 Image(systemName: "archivebox").font(.system(size: PanelTheme.pick(10.5, 11, 10)))
                     .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.faint, CompanionStyle.faint))
                     .help("Archived")
+            }
+            if snoozed {
+                Image(systemName: "moon.zzz").font(.system(size: PanelTheme.pick(10.5, 11, 10)))
+                    .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.faint, CompanionStyle.faint))
+                    .help("Snoozed")
             }
         }
         return HStack(alignment: alignment, spacing: spacing) {
@@ -371,6 +399,10 @@ struct SessionBrowserView: View {
                     Text(SessionDigest.elapsed(context.date.timeIntervalSince(entry.since)))
                         .foregroundStyle(theme == .instrument ? CompanionStyle.text : IslandStyle.indicatorColor(.running))
                 }
+            } else if let until = session.snoozedUntil {
+                // A snoozed row counts down to its wake instead of up from its last activity.
+                Text(SessionDigest.wakeLabel(until.timeIntervalSinceNow))
+                    .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.faint))
             } else {
                 Text(SessionDigest.compactAge(Date().timeIntervalSince(entry.since)))
                     .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.faint))
@@ -384,8 +416,9 @@ struct SessionBrowserView: View {
 
     private func accessibilityLabel(_ session: CompanionSession, entry: GlanceEntry) -> String {
         let archived = session.isArchived || model.isAutoArchived(session) ? " Archived." : ""
+        let snoozed = session.snoozedUntil.map { " Snoozed until \(SnoozeChoice.time($0))." } ?? ""
         let runtime = session.isLegacyPrivate ? "Legacy Hermes" : session.runtime.title
-        return "\(entry.accessibilityLabel) \(runtime).\(archived)"
+        return "\(entry.accessibilityLabel) \(runtime).\(archived)\(snoozed)"
     }
 
     private func renameEditor(_ session: CompanionSession) -> some View {
@@ -439,20 +472,49 @@ struct SessionBrowserView: View {
     }
 
     /// Shared by the inline actions and the right-click menu.
-    @ViewBuilder private func actions(_ session: CompanionSession) -> some View {
-        manageActions(session)
+    @ViewBuilder private func actions(_ session: CompanionSession, menu: Bool = false) -> some View {
+        renameAction(session)
+        snoozeOrWakeAction(session, menu: menu)
+        archiveOrRestoreAction(session)
         if session.isLegacyPrivate {
             ContinueLegacySessionButton(model: model, session: session)
         }
     }
 
-    @ViewBuilder private func manageActions(_ session: CompanionSession) -> some View {
+    private func renameAction(_ session: CompanionSession) -> some View {
         Button("Rename", systemImage: "pencil") {
             model.sessionActionsID = nil
             titleDraft = session.title
             renamingID = session.id
             renameFocused = true
         }
+    }
+
+    @ViewBuilder private func snoozeOrWakeAction(_ session: CompanionSession, menu: Bool = false) -> some View {
+        if let until = session.snoozedUntil {
+            Button("Wake now", systemImage: "sun.max") {
+                model.sessionActionsID = nil
+                model.wakeSession(session.id)
+            }
+            .help("Snoozed until \(SnoozeChoice.time(until)). Bring it back now")
+        } else if !(session.isArchived || model.isAutoArchived(session)) {
+            if menu {
+                Menu("Snooze", systemImage: "moon.zzz") {
+                    ForEach(SnoozeChoice.allCases) { choice in
+                        Button(choice.title) { model.snoozeSession(session.id, until: choice.until()) }
+                    }
+                }
+                .disabled(!model.canSnoozeSession(session.id))
+            } else {
+                Button("Snooze", systemImage: "moon.zzz") { model.snoozeChoicesShown = true }
+                    .disabled(!model.canSnoozeSession(session.id))
+                    .help(model.canSnoozeSession(session.id) ? "Hide it until later; a question or failure brings it back sooner"
+                          : "Answer its question first")
+            }
+        }
+    }
+
+    @ViewBuilder private func archiveOrRestoreAction(_ session: CompanionSession) -> some View {
         if session.isArchived || model.isAutoArchived(session) {
             Button("Restore to sessions", systemImage: "tray.and.arrow.up") {
                 model.sessionActionsID = nil
@@ -467,6 +529,28 @@ struct SessionBrowserView: View {
         }
     }
 
+    /// The open row's snooze choices; they wrap in the narrow sidebar.
+    private func snoozeChoices(_ session: CompanionSession) -> some View {
+        let choices = SnoozeChoice.allCases.map { choice in
+            Button(choice.title) {
+                model.sessionActionsID = nil
+                model.snoozeSession(session.id, until: choice.until())
+            }
+            .help(choice.help())
+        }
+        let cancel = Button("Cancel") { model.snoozeChoicesShown = false }.help("Keep \(session.title) in your sessions")
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) { ForEach(0..<4) { choices[$0] }; cancel }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) { ForEach(0..<2) { choices[$0] } }
+                HStack(spacing: 6) { ForEach(2..<4) { choices[$0] } }
+                cancel
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Snooze \(session.title)")
+    }
+
     private func finishRename(_ id: String) {
         guard !titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         model.renameSession(id, title: titleDraft)
@@ -476,10 +560,11 @@ struct SessionBrowserView: View {
     private var emptyTitle: String {
         if !query.isEmpty { return "No matching sessions" }
         switch model.sessionFilter {
-        case .all: return model.archivedCount > 0 ? "All caught up" : "A fresh start"
+        case .all: return model.archivedCount + model.snoozedCount > 0 ? "All caught up" : "A fresh start"
         case .needsYou: return "Nothing needs your attention"
         case .unread: return "You’re all caught up"
         case .archived: return "No archived sessions"
+        case .snoozed: return "No snoozed sessions"
         }
     }
 
@@ -487,12 +572,14 @@ struct SessionBrowserView: View {
         if !query.isEmpty { return "Try a different name or phrase." }
         switch model.sessionFilter {
         case .all: return model.archivedCount > 0 ? "Nothing is working or waiting. Read sessions rest in Archived."
+            : model.snoozedCount > 0 ? "Nothing is working or waiting. Snoozed sessions come back when it’s time."
             : "Start a new session with the plus button, or add a project folder."
         case .needsYou: return "Questions and failed tasks will appear here."
         case .unread: return "Responses and errors you haven’t read will appear here."
         case .archived:
             guard model.autoArchiveAfter != .never else { return "Archive a quiet session from its menu. You can restore it here later." }
             return "Read sessions move here after \(model.autoArchiveAfter.label) without activity. You can also archive one from its menu."
+        case .snoozed: return "Snooze a session from its menu. It comes back on time, or sooner if it needs you."
         }
     }
 }

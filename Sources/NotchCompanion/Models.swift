@@ -165,7 +165,7 @@ struct QueuedSend: Codable, Equatable {
 }
 
 enum SessionFilter: String, CaseIterable, Identifiable {
-    case all, needsYou, unread, archived
+    case all, needsYou, unread, archived, snoozed
     var id: Self { self }
     var title: String {
         switch self {
@@ -173,6 +173,7 @@ enum SessionFilter: String, CaseIterable, Identifiable {
         case .needsYou: return "Needs you"
         case .unread: return "Unread"
         case .archived: return "Archived"
+        case .snoozed: return "Snoozed"
         }
     }
 }
@@ -291,6 +292,8 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var completionID: String? = nil
     var acknowledgedCompletionID: String? = nil
     var isArchived: Bool = false
+    /// Hidden from the active list until then, or until it needs the user.
+    var snoozedUntil: Date? = nil
     /// An app-owned child lives inside this parent session only.
     var parentSessionID: String? = nil
     var delegation: DelegationRecord? = nil
@@ -354,9 +357,9 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     }
 
     /// Read, idle, with nothing pending or drafted, and untouched for `interval`:
-    /// it leaves the default list for Archived without an archive flag.
+    /// it leaves the default list for Archived without an archive flag. A snoozed one waits for its wake.
     func isDormant(after interval: TimeInterval?, now: Date = Date()) -> Bool {
-        guard let interval, !isArchived, CollapsedStatus.resolve(session: self) == .none, !isBusy,
+        guard let interval, !isArchived, snoozedUntil == nil, CollapsedStatus.resolve(session: self) == .none, !isBusy,
               pendingSubmission == nil, queuedSends.isEmpty, attachments.isEmpty,
               draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         return max(updatedAt, lastSeenAt ?? .distantPast) < now.addingTimeInterval(-interval)
@@ -441,7 +444,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -489,6 +492,7 @@ extension CompanionSession {
         delegation = try values.decodeIfPresent(DelegationRecord.self, forKey: .delegation)
         queuedSends = try values.decodeIfPresent([QueuedSend].self, forKey: .queuedSends) ?? []
         lastSeenAt = try values.decodeIfPresent(Date.self, forKey: .lastSeenAt)
+        snoozedUntil = try values.decodeIfPresent(Date.self, forKey: .snoozedUntil)
         // Assign legacy children to the current restored turn once, so future
         // prompts do not inherit an old child's failure.
         for index in agents.indices where agents[index].turnID == nil {

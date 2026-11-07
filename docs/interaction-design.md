@@ -122,6 +122,9 @@ children contribute to their parent instead of adding dots.
 | Unchecked finished session | Green. |
 | Idle, interrupted, or read finished/failed | Hidden. |
 
+A [snoozed](#conversation-usability-and-session-management) session keeps its
+working dot but shows no unread dot until it wakes.
+
 Dots are 5 points wide at 8-point spacing. A physical notch reserves at least
 24 points on the right and grows that shoulder to keep every dot outside the
 camera; a row wraps only at the screen edge. External mode fits dots inside the
@@ -158,9 +161,10 @@ centred like the panel, top-anchored, covering the band and camera.
   camera, a summary (“1 needs you · 2 working · 1 new”, symbol counts where
   words do not fit, or “All caught up”).
 - Below: up to three 44-point rows by priority (needs you, working, unread
-  failure, unread result, then recent; quiet archived or
-  [auto-archived](#conversation-usability-and-session-management) sessions and
-  untouched drafts skipped). Each has a status glyph (spinning orange arc;
+  failure, unread result, then recent; quiet archived,
+  [auto-archived](#conversation-usability-and-session-management) or snoozed
+  sessions and untouched drafts skipped; a snoozed session's unread result
+  counts as quiet). Each has a status glyph (spinning orange arc;
   solid discs with a dark mark for a pulsing amber question and, while unread,
   a green check or red warning, so the rows that need you are never the
   dimmest; quiet marks once read),
@@ -821,13 +825,15 @@ identify selection.
 - **Session browsers.** Both share search, rename, archive/restore and one
   **Archived** chip inside the search capsule in every state, typing included.
   With Archived on, the title reads **Archived** and Back (the notch header's
-  chevron; a chevron before the sidebar title) returns to the active list. The
-  Needs you and Unread filters remain in the model, not the interface.
+  chevron; a chevron before the sidebar title) returns to the active list; the
+  Snoozed page works the same way. The Needs you and Unread filters remain in
+  the model, not the interface.
   - The default list shows only active sessions: working, needs you, unread
     result or failure, unconfirmed send, a draft with text or files, the
-    selection, and read idle sessions not yet auto-archived. It ends with a
-    quiet **Archived · N** row; with nothing active it reads “All caught up”
-    above that row. Empty states start at the rows' content inset.
+    selection, and read idle sessions not yet auto-archived, never a snoozed
+    one. It ends with quiet **Snoozed · N** and **Archived · N** rows (each
+    only while it has sessions); with nothing active it reads “All caught up”
+    above them. Empty states start at the rows' content inset.
   - **Auto-archive** is derived, never a flag. A top-level session that is
     read, idle, not submitting, with no pending or queued send and an empty
     draft, lists under Archived once the later of its last activity and
@@ -839,7 +845,27 @@ identify selection.
     opening or Restore brings it back.
   - Archived lists manual and auto-archived sessions by project; archived
     attention and unread results keep their dots. A search query covers every
-    top-level session, titles and conversations, archived ones marked.
+    top-level session, titles and conversations, archived ones marked with
+    the archive box and snoozed ones with the moon.
+  - **Snooze** (`snoozedUntil`) hides a top-level session until a time: 1 hour,
+    3 hours, Tomorrow (9:00) or Next week (Monday 9:00) on the user's calendar
+    (`Calendar.app`). It is not offered on archived or auto-archived sessions
+    or while a question waits for an answer; archiving clears it. The Snoozed
+    page lists snoozed sessions by project, each counting down to its wake
+    (`45m`, `3h`, `2d`, rounded to the nearest unit) in place of the age; a
+    running turn keeps its timer. A snoozed row offers **Wake now**.
+  - A session wakes when its time passes (a timer while running, and at
+    launch for anything already due), or early when a new question, approval
+    or failure arrives, including one that launch restores (an unconfirmed
+    send, unverified native work); a completion does not wake it. Waking clears
+    `snoozedUntil` and the read receipt, so it returns unread and needs a read
+    before it can auto-archive again, unless its conversation is on screen;
+    a session without a result restarts its auto-archive clock instead.
+    Sending from its composer also ends the snooze, and New session never
+    reuses a snoozed draft. While snoozed, its completion makes no sound or announcement, its
+    unread result stays out of the dots, glance and unread counts, and it
+    never auto-archives. Its work, busy tracking, quit protection, receipts,
+    queued messages and delegated children are unchanged.
   - Rows are about 34 points: status glyph (spinning arc, pulsing
     question, green check or red mark while unread; a quiet mark for a read
     failure; Instrument uses its lamps), title (dimmed once read), the runtime
@@ -849,7 +875,10 @@ identify selection.
     and leaves out Instrument's row numbers.
     The latest message is the tooltip and part of the accessibility label.
     Hover, focus or open swaps the age for the ellipsis, which expands Rename,
-    Archive or Restore, and Continue in Hermes… (legacy only) inline.
+    Snooze or Wake now, Archive or Restore, and Continue in Hermes… (legacy
+    only) inline, wrapping onto further rows in the sidebar rather than
+    truncating. Snooze swaps those actions for its four choices and Cancel
+    (wrapping the same way); the right-click menu shows them as a submenu.
   - Order keeps the stable order used by the dots. Archiving keeps history,
     drafts, selection and receipts; active work cannot be archived. Sending
     restores an archived session.

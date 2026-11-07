@@ -313,8 +313,8 @@ struct NotchHeaderView: View {
                 else if case .runtimeChooser(let defaults) = model.page { model.page = defaults ? .settings : .session }
                 else if model.page.isRuntimeSetup { model.page = .settings }
                 else if model.page == .usage { model.page = .sessions }
-                // Archived steps back to the active list before leaving the page.
-                else if model.page == .sessions && model.sessionFilter == .archived { model.sessionFilter = .all }
+                // Archived and Snoozed step back to the active list before leaving the page.
+                else if model.page == .sessions && model.sessionFilter != .all { model.sessionFilter = .all }
                 else { model.page = .session }
             }.padding(.leading, -7)
         }
@@ -404,7 +404,7 @@ struct NotchHeaderView: View {
     }
 
     private var headerTitle: String {
-        switch model.page { case .sessions: return model.sessionFilter == .archived ? "Archived" : "Your sessions"; case .team: return "Delegated work"; case .agent: return "Agent details"; case .activity: return "Activity"; case .settings: return "Settings"; case .usage: return "Usage"; case .runtimeSetup(let runtime): return "Set up \(runtime.title)"; case .runtimeChooser(let defaults): return defaults ? "Default agent" : "Choose agent"; case .welcome: return "Welcome"; case .session: return model.current?.title ?? "New session" }
+        switch model.page { case .sessions: return model.sessionFilter == .all ? "Your sessions" : model.sessionFilter.title; case .team: return "Delegated work"; case .agent: return "Agent details"; case .activity: return "Activity"; case .settings: return "Settings"; case .usage: return "Usage"; case .runtimeSetup(let runtime): return "Set up \(runtime.title)"; case .runtimeChooser(let defaults): return defaults ? "Default agent" : "Choose agent"; case .welcome: return "Welcome"; case .session: return model.current?.title ?? "New session" }
     }
 
     private func teamButton(_ session: CompanionSession) -> some View {
@@ -1348,10 +1348,10 @@ struct FullSessionView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 5) {
-                if model.sessionFilter == .archived {
+                if model.sessionFilter != .all {
                     QuietIconButton(symbol: "chevron.left", label: "Back to your sessions") { model.sessionFilter = .all }.padding(.leading, -7)
                 }
-                Text(model.sessionFilter == .archived ? "Archived" : "Your sessions").font(.system(size: 14, weight: .semibold))
+                Text(model.sessionFilter == .all ? "Your sessions" : model.sessionFilter.title).font(.system(size: 14, weight: .semibold))
                 Spacer(minLength: 0)
                 MarkAllAsReadButton(model: model)
                 QuietIconButton(symbol: "folder.badge.plus", label: "New project") { model.addProject(showPanel: false) }

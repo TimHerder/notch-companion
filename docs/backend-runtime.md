@@ -208,9 +208,10 @@ cannot bypass them.
 
 Each registry entry stores runtime, canonical profile path, native `storedID`,
 working folder, local conversation ID, drafts, attachment references, read
-receipts and `lastSeenAt` (optional; older entries decode without it), which
-only drives the derived auto-archive and never reaches a runtime. `runtimeID`
-is a connection-local alias cleared on restart. Native IDs are never rewritten
+receipts, `lastSeenAt` (optional; older entries decode without it), which
+only drives the derived auto-archive, and `snoozedUntil` (optional, likewise),
+which only hides the entry from the active list until it wakes. Neither reaches
+a runtime. `runtimeID` is a connection-local alias cleared on restart. Native IDs are never rewritten
 into another profile's IDs. The router isolates identical
 live and request IDs across runtimes/profiles; a connection failure interrupts
 only that route, and an unavailable installation does not disable others.
