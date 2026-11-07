@@ -85,7 +85,7 @@ struct ConversationHistoryView: View {
                                 Text("Sending…").font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
                                     .frame(maxWidth: .infinity, alignment: .trailing)
                             case .instrument:
-                                Text("Sending…").microLabel(9.5, tracking: 0.7).foregroundStyle(CompanionStyle.secondary)
+                                Text("Sending…").font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
                             }
                         }
                         .accessibilityLabel("Sending message")
@@ -163,13 +163,13 @@ struct ConversationHistoryView: View {
         case .instrument:
             VStack(alignment: .leading, spacing: 10) {
                 RuleLabel(needsSetup ? "No harness" : "Standby · \(session?.runtime.title ?? model.defaultRuntime.title)",
-                          color: needsSetup ? CompanionStyle.signal : CompanionStyle.secondary)
+                          color: needsSetup ? CompanionStyle.amber : CompanionStyle.secondary)
                     .padding(.bottom, 8)
                 Text(needsSetup ? "Connect a harness to get started." : "Ready when you are.")
                     .font(.system(size: 24, weight: .semibold)).tracking(-0.5)
                 Text(needsSetup ? "Set up your preferred harness in Settings. Your draft and files stay here." : "A question, a project, a little rabbit hole.").font(.system(size: 13)).foregroundStyle(CompanionStyle.secondary)
-                Label("Drop a file onto the notch to attach it", systemImage: "arrow.down.to.line")
-                    .microLabel(9.5, weight: .regular, tracking: 0.6).foregroundStyle(CompanionStyle.faint).padding(.top, 14)
+                Label("Drop a file onto the notch to attach it.", systemImage: "arrow.down.to.line")
+                    .font(.system(size: 11.5)).foregroundStyle(CompanionStyle.faint).padding(.top, 14)
             }.padding(.top, 26).padding(.bottom, 32).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -425,11 +425,10 @@ private struct TranscriptMessageView: View {
             // Each entry opens on a ruled log header: who, then when.
             HStack(spacing: 8) {
                 if let label = message.agentLabel {
-                    Label(label, systemImage: "arrow.triangle.branch").microLabel(10, weight: .semibold)
+                    Label(label, systemImage: "arrow.triangle.branch").font(.system(size: 11.5, weight: .semibold))
                         .foregroundStyle(CompanionStyle.text)
                 } else if user {
-                    Text("› You").microLabel(10, weight: .semibold).foregroundStyle(CompanionStyle.secondary)
-                        .accessibilityLabel("You")
+                    Text("You").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(CompanionStyle.secondary)
                 } else {
                     // The answer's mark; the session already names its harness.
                     Rectangle().fill(CompanionStyle.text).frame(width: 5, height: 5)
@@ -437,14 +436,14 @@ private struct TranscriptMessageView: View {
                 }
                 Rectangle().fill(CompanionStyle.rule).frame(height: 0.5)
                 Text(message.createdAt, format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
-                    .font(CompanionStyle.mono(10).monospacedDigit()).foregroundStyle(CompanionStyle.faint)
+                    .font(.system(size: 11).monospacedDigit()).foregroundStyle(CompanionStyle.faint)
                 copyButton.padding(.vertical, -4)
             }
             messageBody(content, interpretsMarkdown: message.role != "user" || message.agentLabel != nil, questionGap: 3)
         }
         .padding(.horizontal, user ? 12 : 0).padding(.vertical, user ? 10 : 0)
         .background {
-            // Your words sit in an inset readout; the agent's answer stands on the grid.
+            // Your words sit in an inset readout; the agent's answer stands on the panel.
             if user {
                 let shape = RoundedRectangle(cornerRadius: CompanionStyle.cardRadius, style: .continuous)
                 shape.fill(Color(white: 0.06)).overlay(shape.strokeBorder(CompanionStyle.rule, lineWidth: 0.5))
@@ -498,16 +497,16 @@ private struct DelegationResultRow: View {
             Button { open?() } label: {
                 HStack(spacing: 9) {
                     Image(systemName: failed ? "exclamationmark.triangle" : "arrow.triangle.branch").font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(failed ? CompanionStyle.signal : CompanionStyle.secondary).frame(width: 14)
+                        .foregroundStyle(failed ? CompanionStyle.error : CompanionStyle.secondary).frame(width: 14)
                     Text(summary).font(CompanionStyle.mono(11)).lineLimit(1).truncationMode(.middle)
                     Spacer(minLength: 5)
                     Text(failed ? "ERR" : "DONE").microLabel(9.5, weight: .semibold, tracking: 0.6)
-                        .foregroundStyle(failed ? CompanionStyle.signal : CompanionStyle.faint).accessibilityHidden(true)
+                        .foregroundStyle(failed ? CompanionStyle.error : CompanionStyle.faint).accessibilityHidden(true)
                     if open != nil { Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).foregroundStyle(CompanionStyle.faint) }
                 }.frame(height: 30).padding(.horizontal, 10).contentShape(Rectangle())
             }
             .buttonStyle(NotchRowButtonStyle()).disabled(open == nil)
-            .overlay(shape.strokeBorder(failed ? CompanionStyle.signal.opacity(0.55) : CompanionStyle.rule, lineWidth: 0.5))
+            .overlay(shape.strokeBorder(failed ? CompanionStyle.error.opacity(0.55) : CompanionStyle.rule, lineWidth: 0.5))
         }
     }
 }
@@ -583,7 +582,7 @@ private struct DisclosureLine: View {
             switch theme {
             case .refined: Text(title).font(CompanionStyle.callout.monospacedDigit())
             case .tahoe: Text(title).font(.system(size: 12, weight: .medium).monospacedDigit())
-            case .instrument: Text(title).microLabel(9.5, tracking: 0.7)
+            case .instrument: Text(title).font(.system(size: 11.5, weight: .medium).monospacedDigit())
             }
             if rule {
                 Rectangle().fill(PanelTheme.pick(CompanionStyle.hairline, CompanionStyle.separator, CompanionStyle.rule))
@@ -656,7 +655,7 @@ private struct LiveTurnFooter: View {
                 } else {
                     ProgressView().controlSize(.mini)
                 }
-            case .instrument: LED(color: waiting ? CompanionStyle.signal : CompanionStyle.text, pulsing: !waiting, size: 5)
+            case .instrument: LED(color: waiting ? CompanionStyle.amber : CompanionStyle.signal, pulsing: !waiting, size: 5)
             }
             Group {
                 if waiting {
@@ -669,7 +668,7 @@ private struct LiveTurnFooter: View {
                     }
                 }
             }
-            .foregroundStyle(theme == .instrument && waiting ? CompanionStyle.signal : CompanionStyle.secondary)
+            .foregroundStyle(theme == .instrument && waiting ? CompanionStyle.amber : CompanionStyle.secondary)
             if let hint {
                 Text(hint).foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.faint, CompanionStyle.faint))
                     .lineLimit(1).truncationMode(.tail)
@@ -685,7 +684,7 @@ private struct LiveTurnFooter: View {
             switch PanelTheme.current {
             case .refined: content.font(CompanionStyle.callout.monospacedDigit())
             case .tahoe: content.font(.system(size: 12.5).monospacedDigit())
-            case .instrument: content.microLabel(9.5, tracking: 0.7)
+            case .instrument: content.font(.system(size: 11.5).monospacedDigit())
             }
         }
     }

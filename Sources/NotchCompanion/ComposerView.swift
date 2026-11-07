@@ -107,7 +107,8 @@ struct ComposerView: View {
     /// Plan ready is the field's own first row, above a hairline: the plan's
     /// name, Keep planning as quiet text (hidden for this turn) and Implement
     /// (leaves Plan and asks for the work). Refined keeps its sage for Send, so
-    /// Implement is the neutral pill there and the accent key elsewhere.
+    /// Implement is the neutral pill there and the accent key elsewhere
+    /// (Instrument's lit white key, like Send).
     private func planHeader(_ session: CompanionSession) -> some View {
         let theme = PanelTheme.current
         let refined = theme == .refined
@@ -115,12 +116,10 @@ struct ComposerView: View {
             HStack(spacing: 4) {
                 planName(session.planReadyTitle)
                 Spacer(minLength: 8)
-                Button { model.keepPlanning(session.id) } label: {
-                    if theme == .instrument { Text("Keep planning").microLabel(10, tracking: 0.6) } else { Text("Keep planning") }
-                }
-                .buttonStyle(NotchToolbarButtonStyle(height: theme == .instrument ? 22 : 24))
-                .fixedSize() // A long plan name truncates first.
-                .help("Stay in Plan; this returns with the next plan")
+                Button("Keep planning") { model.keepPlanning(session.id) }
+                    .buttonStyle(NotchToolbarButtonStyle(height: theme == .instrument ? 22 : 24))
+                    .fixedSize() // A long plan name truncates first.
+                    .help("Stay in Plan; this returns with the next plan")
                 Button("Implement") { Task { await model.implementPlan(session.id) } }
                     .buttonStyle(NotchPillButtonStyle(prominent: !refined, small: !refined, height: refined ? 24 : nil))
                     .fixedSize()
@@ -135,28 +134,18 @@ struct ComposerView: View {
     }
 
     /// `Plan · Ready for review`, from the answer's first heading; Instrument
-    /// labels it like the bar's destination, behind a lamp.
+    /// puts a lamp before it.
     private func planName(_ title: String?) -> some View {
-        Group {
-            if PanelTheme.current == .instrument {
-                HStack(spacing: 6) {
-                    LED(color: CompanionStyle.text, size: 5)
-                    Text(title == nil ? "Plan ready" : "Plan").microLabel(9.5)
-                        .foregroundStyle(title == nil ? CompanionStyle.secondary : CompanionStyle.faint)
-                    if let title { Text(title).font(.system(size: 11.5)).foregroundStyle(CompanionStyle.text) }
-                }
-            } else {
-                HStack(spacing: 5) {
-                    Text(title == nil ? "Plan ready" : "Plan").fontWeight(title == nil ? .medium : .regular)
-                        .foregroundStyle(title == nil ? CompanionStyle.text : CompanionStyle.secondary)
-                    if let title {
-                        Text("·").foregroundStyle(CompanionStyle.faint)
-                        Text(title).foregroundStyle(CompanionStyle.text)
-                    }
-                }
-                .font(.system(size: 12, weight: .medium))
+        HStack(spacing: 5) {
+            if PanelTheme.current == .instrument { LED(color: CompanionStyle.text, size: 5).padding(.trailing, 1) }
+            Text(title == nil ? "Plan ready" : "Plan").fontWeight(title == nil ? .medium : .regular)
+                .foregroundStyle(title == nil ? CompanionStyle.text : CompanionStyle.secondary)
+            if let title {
+                Text("·").foregroundStyle(CompanionStyle.faint)
+                Text(title).foregroundStyle(CompanionStyle.text)
             }
         }
+        .font(.system(size: 12, weight: .medium))
         .lineLimit(1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title.map { "Plan ready: \($0)" } ?? "Plan ready")
@@ -298,14 +287,13 @@ struct ComposerView: View {
         }
     }
 
-    /// Send turns into Stop in place while the session works; Instrument lights
-    /// Stop as a white key instead of the signal. A draft typed meanwhile turns
-    /// it into the key for what Return does: Steer message or Queue message.
+    /// Send turns into Stop in place while the session works (Instrument lights
+    /// both as a white key). A draft typed meanwhile turns it into the key for
+    /// what Return does: Steer message or Queue message.
     private var sendButton: some View {
         let draftKey = takesDraftWhileBusy
         let stops = busy && !draftKey
         let steers = model.current?.canSteer == true
-        let stopKey = PanelTheme.current == .instrument && stops
         let queues = draftKey && !steers
         let symbol = stops ? "stop.fill" : draftKey ? (steers ? "arrow.turn.up.right" : "text.append")
             : checksLastSend ? "magnifyingglass" : "arrow.up"
@@ -320,7 +308,7 @@ struct ComposerView: View {
                     .animation(model.reducedMotion ? nil : .smooth(duration: 0.25), value: symbol)
             }
         }
-        .buttonStyle(NotchIconButtonStyle(size: 28, selected: stopKey, prominent: !stopKey))
+        .buttonStyle(NotchIconButtonStyle(size: 28, prominent: true))
         .disabled(!busy && !canSend)
         .help(stops ? "Stop this session; keep your draft"
               : draftKey ? (steers ? "Steer message · Return" : "Queue message · Command-Return")

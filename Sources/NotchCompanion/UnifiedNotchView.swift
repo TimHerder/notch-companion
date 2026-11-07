@@ -112,7 +112,7 @@ struct UnifiedNotchView: View {
                         .zIndex(2)
                 }
                 if choosingFiles {
-                    // Instrument: deep enough that the signal-orange Send key does not glow around the tray.
+                    // Instrument: deep enough that the lit white Send key does not glow around the tray.
                     Color.black.opacity(PanelTheme.pick(0.42, 0.42, 0.62))
                         .frame(width: bodyWidth, height: bodyHeight)
                         .padding(.top, presentation.bandHeight)

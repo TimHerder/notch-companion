@@ -193,7 +193,7 @@ struct StateLabel: View {
                 LED(color: showsDot ? dotColor ?? CompanionStyle.color(state) : CompanionStyle.faint,
                     lit: showsDot, pulsing: showsDot && state == .working, size: 5)
                 Text(label ?? CompanionStyle.label(state)).microLabel(9.5, tracking: 0.7)
-            }.foregroundStyle(attention ? CompanionStyle.signal : CompanionStyle.secondary)
+            }.foregroundStyle(attention ? CompanionStyle.color(state) : CompanionStyle.secondary)
         }
     }
 }
@@ -268,7 +268,7 @@ struct NotchHeaderView: View {
         .foregroundStyle(CompanionStyle.text)
         .background(alignment: .topLeading) {
             if theme == .refined { eyeBloom }
-            // Instrument: a viewfinder frames the eyes, the one living thing on the grid.
+            // Instrument: a viewfinder frames the eyes, its one decoration besides the ruled scale.
             if theme == .instrument && !model.mascotEnabled {
                 // Centered where the open eyes rest: they look a little right and down, toward the content.
                 Reticle()
@@ -418,7 +418,7 @@ struct NotchHeaderView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "person.2")
                     Text("Team")
-                    Text(String(format: "%02d", session.agents.count)).foregroundStyle(CompanionStyle.secondary)
+                    Text("\(session.agents.count)").foregroundStyle(CompanionStyle.secondary)
                     Image(systemName: "chevron.right").font(.system(size: 7.5, weight: .bold))
                 }
             }
@@ -427,14 +427,10 @@ struct NotchHeaderView: View {
 
 }
 
-/// The welcome's Skip: plain text (Refined, Tahoe) or a micro-label (Instrument).
+/// The welcome's Skip: plain secondary text.
 private struct SkipLabelStyle: ViewModifier {
     func body(content: Content) -> some View {
-        switch PanelTheme.current {
-        case .refined: content.font(.system(size: 12, weight: .medium)).foregroundStyle(CompanionStyle.secondary)
-        case .tahoe: content.font(.system(size: 12.5, weight: .medium)).foregroundStyle(CompanionStyle.secondary)
-        case .instrument: content.microLabel(10.5, tracking: 0.8).foregroundStyle(CompanionStyle.secondary)
-        }
+        content.font(.system(size: PanelTheme.pick(12, 12.5, 12), weight: .medium)).foregroundStyle(CompanionStyle.secondary)
     }
 }
 
@@ -459,14 +455,11 @@ struct CompactPanelView: View {
         VStack(spacing: 0) {
             if model.page == .session, let word = NotchHeaderView.actionWord(model.current) {
                 // A subtitle under the title, beside a mascot when one stands in the header.
-                Group {
-                    if theme == .instrument { Text(word).microLabel(9.5, tracking: 0.7) }
-                    else { Text(word).font(.system(size: 11.5, weight: .medium)) }
-                }
-                .foregroundStyle(CompanionStyle.amber).lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, model.mascotEnabled ? NotchHeaderView.mascotColumn - 20 : 0)
-                .padding(.bottom, 2)
+                Text(word).font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(CompanionStyle.amber).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, model.mascotEnabled ? NotchHeaderView.mascotColumn - 20 : 0)
+                    .padding(.bottom, 2)
             }
             if !model.connection && model.connectionMessage != "Connects when you send a message." && !model.page.isRuntimeSetup
                 && model.current.map({ model.canChangeRuntime($0.id) }) != true {
@@ -503,7 +496,6 @@ struct CompactPanelView: View {
         // the transcript's own inset and fade give it air.
         .padding(.horizontal, 20).padding(.top, theme == .instrument ? 4 : 0).padding(.bottom, theme == .refined ? 12 : 14)
         .frame(width: model.geometry?.panelWidth ?? 560, height: model.geometry?.bodyHeight ?? 480, alignment: .top)
-        .background { if theme == .instrument && !model.page.isWelcome { InstrumentGrid() } }
         .foregroundStyle(CompanionStyle.text)
         .environment(\.colorScheme, .dark)
         .onChange(of: model.composerFocusRequest) { _, _ in
@@ -535,11 +527,11 @@ struct CompactPanelView: View {
             }.padding(.vertical, 7)
         case .instrument:
             HStack(spacing: 10) {
-                LED(color: CompanionStyle.signal, size: 5)
+                LED(color: CompanionStyle.amber, size: 5)
                 Text(model.connectionMessage).font(.system(size: 11.5)).foregroundStyle(CompanionStyle.secondary).lineLimit(2)
                 Spacer()
                 buttons
-            }.padding(.vertical, 7)
+            }.padding(.vertical, 7).instrumentBanner()
         }
     }
 
@@ -562,14 +554,15 @@ struct CompactPanelView: View {
             }.foregroundStyle(CompanionStyle.amber).padding(.vertical, 8)
         case .instrument:
             HStack(alignment: .top, spacing: 8) {
-                // The tag and rule carry the signal; the message itself stays readable white.
-                Text("ERR").microLabel(9.5, weight: .semibold).foregroundStyle(CompanionStyle.signal).padding(.top, 2)
+                // The tag and rule carry the color; the message itself stays readable white.
+                Text("ERR").microLabel(9.5, weight: .semibold).foregroundStyle(CompanionStyle.error).padding(.top, 2)
                 Text(error).font(.system(size: 12)).foregroundStyle(CompanionStyle.text).lineLimit(3).help(error)
                 Spacer(minLength: 0)
                 dismiss.padding(.top, -3)
             }
             .padding(.vertical, 7).padding(.leading, 10)
-            .overlay(alignment: .leading) { Rectangle().fill(CompanionStyle.signal).frame(width: 2) }
+            .overlay(alignment: .leading) { Rectangle().fill(CompanionStyle.error).frame(width: 2) }
+            .instrumentBanner()
         }
     }
 
@@ -644,15 +637,15 @@ struct ToolRow: View {
             let tag = tool.state == .working ? "RUN" : (tool.state == .failed ? "ERR" : (tool.state == .interrupted ? "STOP" : "OK"))
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Group {
-                    if tool.state == .working { LED(color: CompanionStyle.text, pulsing: true, size: 5).alignmentGuide(.firstTextBaseline) { $0[.bottom] } }
-                    else { Text("›").foregroundStyle(tool.state == .failed ? CompanionStyle.signal : CompanionStyle.faint) }
+                    if tool.state == .working { LED(color: CompanionStyle.signal, pulsing: true, size: 5).alignmentGuide(.firstTextBaseline) { $0[.bottom] } }
+                    else { Text("›").foregroundStyle(tool.state == .failed ? CompanionStyle.error : CompanionStyle.faint) }
                 }.frame(width: 9)
                 Text(tool.displayName).foregroundStyle(CompanionStyle.text).lineLimit(1).layoutPriority(1)
                 if !tool.detail.isEmpty { Text(tool.detail).foregroundStyle(CompanionStyle.secondary).lineLimit(1).truncationMode(.middle) }
                 Spacer(minLength: 6)
                 if let duration = Self.duration(tool) { Text(duration).foregroundStyle(CompanionStyle.faint).fixedSize() }
                 Text(tag).microLabel(9.5, weight: .semibold, tracking: 0.6)
-                    .foregroundStyle(tool.state == .failed ? CompanionStyle.signal : tool.state == .working ? CompanionStyle.text : CompanionStyle.faint)
+                    .foregroundStyle(tool.state == .failed ? CompanionStyle.error : tool.state == .working ? CompanionStyle.text : CompanionStyle.faint)
                     .frame(width: 30, alignment: .trailing)
                     .accessibilityLabel(status)
             }
@@ -726,14 +719,13 @@ struct TeamContent: View {
         case .instrument:
             ScrollView { VStack(alignment: .leading, spacing: 0) {
                 RuleLabel(summary).padding(.top, 10).padding(.bottom, 6)
-                ForEach(Array(agents.enumerated()), id: \.element.id) { index, agent in
+                ForEach(agents) { agent in
                     Button { open(agent) } label: {
                         HStack(spacing: 10) {
-                            Text(String(format: "%02d", index + 1)).font(CompanionStyle.mono(10.5)).foregroundStyle(CompanionStyle.faint)
                             Image(systemName: agent.sessionID == nil ? "person.crop.circle" : "arrow.triangle.branch").font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(agent.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                                if let detail = agent.delegationDetail { Text(detail).microLabel(9.5, weight: .regular, tracking: 0.5).foregroundStyle(CompanionStyle.secondary).lineLimit(1) }
+                                if let detail = agent.delegationDetail { Text(detail).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary).lineLimit(1) }
                             }
                             Spacer(); StateLabel(state: agent.state); Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).foregroundStyle(CompanionStyle.faint)
                         }
@@ -789,7 +781,7 @@ struct AttachmentStrip: View {
                         switch theme {
                         case .refined: Text(attachment.name).font(CompanionStyle.callout).lineLimit(1).truncationMode(.middle).frame(maxWidth: 160)
                         case .tahoe: Text(attachment.name).font(.system(size: 11.5)).lineLimit(1).frame(maxWidth: 140)
-                        case .instrument: Text(attachment.name).font(CompanionStyle.mono(10.5)).lineLimit(1).truncationMode(.middle).frame(maxWidth: 150)
+                        case .instrument: Text(attachment.name).font(.system(size: 11.5)).lineLimit(1).truncationMode(.middle).frame(maxWidth: 150)
                         }
                     }
                     Button { model.removeAttachment(attachment.id) } label: { Image(systemName: "xmark") }
@@ -941,7 +933,7 @@ struct SettingsContent: View {
                             }
                         }
                     }
-                        .help("Refined is the quiet default; Tahoe follows macOS and its accent color; Instrument is monochrome with one orange signal.")
+                        .help("Refined is the quiet default; Tahoe follows macOS and its accent color; Instrument is monochrome with an orange signal for live work.")
                 }
                 SettingsRow("Status effects", symbol: "sparkles", tint: .yellow, divider: true) {
                     HStack(spacing: 10) {
@@ -1006,7 +998,7 @@ struct SettingsContent: View {
                     switch PanelTheme.current {
                     case .refined: footer.font(CompanionStyle.caption).foregroundStyle(CompanionStyle.tertiary).lineLimit(1)
                     case .tahoe: footer.font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary).lineLimit(1)
-                    case .instrument: footer.microLabel(9.5, weight: .regular, tracking: 0.6).foregroundStyle(CompanionStyle.faint).lineLimit(1)
+                    case .instrument: footer.font(.system(size: 11)).foregroundStyle(CompanionStyle.faint).lineLimit(1)
                     }
                 }
                 Spacer(minLength: 8)
@@ -1075,11 +1067,11 @@ struct SettingsContent: View {
         case .instrument:
             HStack(spacing: 7) {
                 // Connected is lit, ready is an unlit lamp, and setup needs you.
-                LED(color: status.connected || ready ? CompanionStyle.text : CompanionStyle.signal,
+                LED(color: status.connected ? CompanionStyle.color(.finished) : ready ? CompanionStyle.text : CompanionStyle.amber,
                     lit: status.connected || !ready, size: 5)
                 Text(text)
-                    .microLabel(9.5, tracking: 0.6)
-                    .foregroundStyle(status.connected || ready ? CompanionStyle.secondary : CompanionStyle.signal)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(status.connected || ready ? CompanionStyle.secondary : CompanionStyle.amber)
                 setUp.padding(.leading, 3)
             }
             .foregroundStyle(CompanionStyle.secondary)

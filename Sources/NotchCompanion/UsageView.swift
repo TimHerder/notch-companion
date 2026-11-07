@@ -80,7 +80,7 @@ struct UsageView: View {
         switch PanelTheme.current {
         case .refined: Text(text).font(CompanionStyle.callout).foregroundStyle(CompanionStyle.tertiary)
         case .tahoe: Text(text).foregroundStyle(CompanionStyle.secondary)
-        case .instrument: Text(text).microLabel(9.5, weight: .regular, tracking: 0.6).foregroundStyle(CompanionStyle.faint)
+        case .instrument: Text(text).font(.system(size: 11)).foregroundStyle(CompanionStyle.faint)
         }
     }
 
@@ -213,7 +213,7 @@ extension Calendar {
 struct UsageLimitRow: View {
     var limit: RuntimeRateLimit
 
-    static var captionFont: Font { PanelTheme.pick(CompanionStyle.caption, .system(size: 11), CompanionStyle.mono(10)) }
+    static var captionFont: Font { PanelTheme.pick(CompanionStyle.caption, .system(size: 11), .system(size: 11)) }
     static var captionColor: Color { PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.faint) }
 
     var body: some View {

@@ -69,17 +69,16 @@ struct RuntimeChooserView: View {
                         }
                     }.notchGroup()
                 case .instrument:
-                    ForEach(Array(ordered.enumerated()), id: \.element) { index, runtime in
+                    ForEach(ordered, id: \.self) { runtime in
                         HStack(spacing: 10) {
                             choose(runtime) {
                                 HStack(spacing: 10) {
-                                    Text(String(format: "%02d", index + 1)).font(CompanionStyle.mono(10.5)).foregroundStyle(CompanionStyle.faint)
                                     ChoiceMark(selected: selected == runtime, round: true)
                                     AgentLogo(runtime: runtime)
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(runtime.title).font(.system(size: 13, weight: .medium))
                                         Text(detail(runtime))
-                                            .microLabel(9.5, weight: .regular, tracking: 0.6)
+                                            .font(.system(size: 11))
                                             .foregroundStyle(installed.contains(runtime) ? CompanionStyle.secondary : CompanionStyle.faint)
                                     }
                                     Spacer(minLength: 0)
@@ -209,9 +208,9 @@ struct ProjectTrustView: View {
             let content = VStack(alignment: .leading, spacing: 9) {
                 if instrument {
                     HStack(spacing: 8) {
-                        LED(color: CompanionStyle.signal, pulsing: true, size: 6)
-                        Text("Project trust").microLabel(10.5, weight: .semibold).foregroundStyle(CompanionStyle.signal)
-                        Rectangle().fill(CompanionStyle.signal.opacity(0.35)).frame(height: 0.5)
+                        LED(color: CompanionStyle.amber, pulsing: true, size: 6)
+                        Text("Project trust").microLabel(10.5, weight: .semibold).foregroundStyle(CompanionStyle.amber)
+                        Rectangle().fill(CompanionStyle.amber.opacity(0.35)).frame(height: 0.5)
                     }
                 }
                 Text(question).font(.system(size: instrument ? 14 : 13, weight: .semibold))
@@ -230,7 +229,7 @@ struct ProjectTrustView: View {
             if instrument {
                 content
                     .padding(.vertical, 8).padding(.leading, 12)
-                    .overlay(alignment: .leading) { Rectangle().fill(CompanionStyle.signal).frame(width: 2) }
+                    .overlay(alignment: .leading) { Rectangle().fill(CompanionStyle.amber).frame(width: 2) }
             } else {
                 content.padding(14).notchGroup(cornerRadius: 18)
             }

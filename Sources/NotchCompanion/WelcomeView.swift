@@ -17,10 +17,6 @@ struct WelcomeView: View {
             // Each step is one composition, centred a little above the middle.
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
-                if PanelTheme.current == .instrument {
-                    Text(String(format: "%02d / %02d", step + 1, Self.steps)).microLabel(10, tracking: 1.2)
-                        .foregroundStyle(CompanionStyle.faint).padding(.bottom, 10)
-                }
                 Text(title).font(.system(size: PanelTheme.pick(20, 22, 22), weight: PanelTheme.pick(Font.Weight.semibold, .bold, .semibold)))
                     .tracking(PanelTheme.pick(-0.2, -0.3, -0.4))
                 Text(subtitle).font(.system(size: PanelTheme.pick(13, 13, 12.5))).foregroundStyle(CompanionStyle.secondary)
@@ -243,11 +239,7 @@ struct WelcomeView: View {
                 art().frame(maxWidth: .infinity).frame(height: artHeight).clipped()
                 VStack(spacing: PanelTheme.pick(2, 2, 4)) {
                     Text(name).font(.system(size: 13, weight: .semibold)).foregroundStyle(CompanionStyle.text)
-                    if PanelTheme.current == .instrument {
-                        Text(detail).microLabel(8.5, weight: .regular, tracking: 0.5).foregroundStyle(CompanionStyle.secondary).lineLimit(1)
-                    } else {
-                        Text(detail).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary).lineLimit(1)
-                    }
+                    Text(detail).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary).lineLimit(1)
                 }
                 .padding(.vertical, 10)
             }
@@ -278,18 +270,10 @@ struct WelcomeView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Step \(step + 1) of \(Self.steps)")
             Spacer(minLength: 0)
-            Group {
-                if PanelTheme.current == .instrument {
-                    Button("Back") { model.page = .welcome(step: step - 1) }
-                        .buttonStyle(NotchTextButtonStyle())
-                        .microLabel(10.5, tracking: 0.8)
-                } else {
-                    Button("Back") { model.page = .welcome(step: step - 1) }
-                        .buttonStyle(NotchTextButtonStyle())
-                        .font(.system(size: 13, weight: .medium))
-                }
-            }
-            .foregroundStyle(CompanionStyle.secondary)
+            Button("Back") { model.page = .welcome(step: step - 1) }
+                .buttonStyle(NotchTextButtonStyle())
+                .font(.system(size: PanelTheme.pick(13, 13, 12.5), weight: .medium))
+                .foregroundStyle(CompanionStyle.secondary)
             .opacity(step > 0 ? 1 : 0).disabled(step == 0)
             Button { next() } label: { Text(step == Self.steps - 1 ? "Done" : "Continue").frame(minWidth: PanelTheme.pick(72, 84, 72)) }
                 .buttonStyle(NotchPillButtonStyle(prominent: true, height: PanelTheme.pick(30, 32, 30)))
@@ -347,7 +331,6 @@ private struct WelcomeTileBody: View {
                         .padding(-4)
                 }
             }
-            .overlay(alignment: .topLeading) { if selected && theme == .instrument { Reticle(arm: 7).padding(6).opacity(0.9) } }
             .contentShape(shape)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .animation(reduceMotion ? nil : CompanionStyle.press, value: configuration.isPressed)

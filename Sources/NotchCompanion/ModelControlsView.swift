@@ -59,16 +59,20 @@ struct ModelControlsView: View {
                                 name.frame(minWidth: modelMinWidth)
                             }
                         case .tahoe, .instrument:
-                            let name = Text(modelTitle ?? "Runtime default").foregroundStyle(CompanionStyle.text)
+                            // Instrument keeps the bar quiet, like Refined: the draft and Send lead.
+                            let instrument = theme == .instrument
+                            let name = Text(modelTitle ?? "Runtime default").foregroundStyle(instrument ? CompanionStyle.secondary : CompanionStyle.text)
                                 .lineLimit(1).truncationMode(.middle)
                             ViewThatFits(in: .horizontal) {
-                                HStack(spacing: theme == .instrument ? 7 : 5) {
+                                HStack(spacing: instrument ? 6 : 5) {
                                     name
-                                    if let effort { Text(RuntimeModelOption.effortTitle(effort)).lineLimit(1) }
+                                    if let effort {
+                                        Text(RuntimeModelOption.effortTitle(effort)).lineLimit(1)
+                                            .foregroundStyle(instrument ? CompanionStyle.faint : CompanionStyle.secondary)
+                                    }
                                 }
                                 name.frame(minWidth: modelMinWidth)
                             }
-                            .modifier(InstrumentMicroLabel(active: theme == .instrument))
                         }
                     }
                     .sessionControlStyle()
@@ -107,7 +111,7 @@ struct ModelControlsView: View {
                             case .instrument:
                                 let small = glyph.font(.system(size: 10))
                                 ViewThatFits(in: .horizontal) {
-                                    HStack(spacing: 6) { small; Text(permissionTitle).microLabel(10, tracking: 0.6).lineLimit(1) }
+                                    HStack(spacing: 6) { small; Text(permissionTitle).lineLimit(1) }
                                     small
                                 }
                             }
@@ -133,7 +137,7 @@ struct ModelControlsView: View {
                     Group {
                         if theme == .instrument {
                             Button(action: toggle) {
-                                // A level meter: ten segments, the signal near the limit.
+                                // A level meter: ten segments, amber near the limit.
                                 HStack(spacing: 6) {
                                     SegmentMeter(fraction: context?.fraction)
                                     Text(percentage ?? "—%").font(CompanionStyle.mono(10).monospacedDigit())
@@ -169,7 +173,7 @@ struct ModelControlsView: View {
                     .background(PopupDismissalRegion(monitor: popupDismissal))
                 }
             }
-            .font(PanelTheme.pick(CompanionStyle.caption, .system(size: 11.5), CompanionStyle.mono(10.5))).foregroundStyle(CompanionStyle.secondary)
+            .font(PanelTheme.pick(CompanionStyle.caption, .system(size: 11.5), .system(size: 11.5))).foregroundStyle(CompanionStyle.secondary)
             .frame(height: 22)
             .overlay(alignment: .bottomTrailing) {
                 if showingContext && model.showContextUsage {
@@ -388,14 +392,13 @@ struct ModelControlsView: View {
                     QuietIconButton(symbol: "xmark", label: "Close permission modes", size: 22) { choosingPermissions = false }
                 }
                 .padding(.bottom, 4)
-                ForEach(Array(options.enumerated()), id: \.element) { index, mode in
+                ForEach(options, id: \.self) { mode in
                     let chosen = session.permissionMode == mode
                     Button {
                         model.setPermissionMode(mode, for: session.id)
                         choosingPermissions = false
                     } label: {
                         HStack(spacing: 10) {
-                            Text(String(format: "%02d", index + 1)).font(CompanionStyle.mono(10)).foregroundStyle(CompanionStyle.faint)
                             Image(systemName: mode?.symbol ?? "shield").frame(width: 14)
                                 .foregroundStyle(mode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
                             VStack(alignment: .leading, spacing: 2) {
@@ -437,15 +440,15 @@ struct ModelControlsView: View {
                 LazyVStack(alignment: .leading, spacing: PanelTheme.pick(2, 0, 2)) {
                     let listsDefault = catalog?.defaultModel != nil && search.isEmpty
                     if let defaultModel = catalog?.defaultModel, listsDefault {
-                        choiceRow(index: 1, title: "Use runtime default", detail: catalog?.title(for: defaultModel),
+                        choiceRow(title: "Use runtime default", detail: catalog?.title(for: defaultModel),
                                   selected: session.modelOverride == nil && session.runtimeInfo?.model == nil) {
                             model.setModel(session.storedID == nil ? nil : defaultModel, for: session.id)
                             choosingModel = false
                         }
                     }
                     let options = catalog?.matchingModels(search) ?? []
-                    ForEach(Array(options.enumerated()), id: \.element.id) { offset, option in
-                        choiceRow(index: offset + (listsDefault ? 2 : 1), title: option.title, detail: option.choice.provider,
+                    ForEach(options) { option in
+                        choiceRow(title: option.title, detail: option.choice.provider,
                                   selected: session.modelOverride?.id == option.choice.id || (session.modelOverride == nil && session.runtimeInfo?.model == option.choice.model)) {
                             var choice = option.choice
                             if let effort = session.modelOverride?.reasoningEffort, option.reasoningEfforts.contains(effort) {
@@ -549,8 +552,7 @@ struct ModelControlsView: View {
         }
     }
 
-    /// `index` numbers the row in Instrument's chooser.
-    private func choiceRow(index: Int, title: String, detail: String?, selected: Bool, action: @escaping () -> Void) -> some View {
+    private func choiceRow(title: String, detail: String?, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Group {
                 switch PanelTheme.current {
@@ -572,8 +574,6 @@ struct ModelControlsView: View {
                     .padding(.horizontal, 9).frame(height: 30)
                 case .instrument:
                     HStack(spacing: 9) {
-                        Text(String(format: "%02d", index)).font(CompanionStyle.mono(10)).foregroundStyle(CompanionStyle.faint)
-                            .accessibilityHidden(true)
                         Text(title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(CompanionStyle.text)
                             .lineLimit(1).truncationMode(.middle).layoutPriority(1)
                         if let detail { Text(detail).font(CompanionStyle.mono(10)).foregroundStyle(CompanionStyle.secondary).lineLimit(1).truncationMode(.middle) }
@@ -604,7 +604,7 @@ struct RuntimeDefaultModelView: View {
                     switch PanelTheme.current {
                     case .refined: Text("Default model").font(CompanionStyle.caption).foregroundStyle(CompanionStyle.tertiary)
                     case .tahoe: Text("Default model").font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
-                    case .instrument: Text("Default model").microLabel(9.5).foregroundStyle(CompanionStyle.faint)
+                    case .instrument: Text("Default model").font(.system(size: 11)).foregroundStyle(CompanionStyle.faint)
                     }
                     let value = Text(catalog.flatMap { $0.defaultModel.map($0.title(for:)) } ?? (model.loadingModelCatalogs.contains(key) ? "Loading…" : "Not reported"))
                         .font(.system(size: 12, weight: .medium))
@@ -632,14 +632,6 @@ struct RuntimeDefaultModelView: View {
         .foregroundStyle(PanelTheme.current == .refined ? CompanionStyle.tertiary : CompanionStyle.secondary)
         .padding(.horizontal, PanelTheme.pick(14, 12, 12)).padding(.bottom, 12)
         .task(id: key) { if model.connectionStatus(for: runtime).connected { await model.loadModels(for: key) } }
-    }
-}
-
-/// Instrument's model label: tracked SF Mono capitals.
-private struct InstrumentMicroLabel: ViewModifier {
-    let active: Bool
-    func body(content: Content) -> some View {
-        if active { content.microLabel(10, tracking: 0.6) } else { content }
     }
 }
 

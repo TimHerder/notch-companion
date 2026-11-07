@@ -282,7 +282,7 @@ struct RuntimeSetupView: View {
             Label(model.runtimeSettingsPending.contains(runtime) ? "Reconnect to apply changes"
                   : status.connected ? "Connected" : "Connect on demand",
                   systemImage: status.connected && !model.runtimeSettingsPending.contains(runtime) ? "checkmark.circle" : "info.circle")
-                .microLabel(11, weight: .semibold)
+                .font(.system(size: 13, weight: .semibold))
             if !model.runtimeSettingsPending.contains(runtime) {
                 Text(status.message).foregroundStyle(CompanionStyle.secondary).textSelection(.enabled)
             }
@@ -305,7 +305,7 @@ struct RuntimeSetupView: View {
         if runtime == .openclaw {
             VStack(alignment: .leading, spacing: 8) {
                 if let installationError { Text(installationError).foregroundStyle(CompanionStyle.amber).fixedSize(horizontal: false, vertical: true) }
-                Text("Configured agent").microLabel(10, weight: .semibold)
+                Text("Configured agent").microLabel(10, weight: .semibold).foregroundStyle(CompanionStyle.secondary)
                 let selected = RuntimeProfileIdentity.decodeOpenClaw(RuntimeRoute.defaultProfile(.openclaw)).agent
                 ForEach(configuredAgents, id: \.self) { agent in
                     Button { model.setOpenClawAgent(agent) } label: {
@@ -327,7 +327,7 @@ struct RuntimeSetupView: View {
         VStack(alignment: .leading, spacing: 8) {
             Rectangle().fill(CompanionStyle.rule).frame(height: 0.5)
             HStack {
-                Text(setting.title).microLabel(10, weight: .semibold)
+                Text(setting.title).microLabel(10, weight: .semibold).foregroundStyle(CompanionStyle.secondary)
                 Spacer()
                 if setting.saved() != nil {
                     Button("Automatic") { model.resetRuntimeLocation(setting) }
