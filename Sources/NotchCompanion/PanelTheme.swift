@@ -214,12 +214,15 @@ enum CompanionStyle {
 
 extension View {
     /// Refined: scrolling content softens as it passes under the header and
-    /// into the composer instead of being cut at a hard edge.
+    /// into the composer instead of being cut at a hard edge. The ramp eases in,
+    /// so a line cut by the edge dissolves rather than showing its lower half.
     func scrollEdgeFade(top: CGFloat = 8, bottom: CGFloat = 12) -> some View {
-        mask(VStack(spacing: 0) {
-            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: top)
+        let ramp: [Gradient.Stop] = [.init(color: .clear, location: 0), .init(color: .black.opacity(0.3), location: 0.5),
+                                     .init(color: .black, location: 1)]
+        return mask(VStack(spacing: 0) {
+            LinearGradient(stops: ramp, startPoint: .top, endPoint: .bottom).frame(height: top)
             Color.black
-            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: bottom)
+            LinearGradient(stops: ramp, startPoint: .bottom, endPoint: .top).frame(height: bottom)
         })
     }
 
@@ -242,12 +245,13 @@ extension View {
     }
 }
 
-/// A status lamp. Lit lamps glow faintly; `pulsing` breathes for live work.
+/// A status lamp. Lit lamps glow faintly (a flat dot without `glows`); `pulsing` breathes for live work.
 struct LED: View {
     var color: Color
     var lit = true
     var pulsing = false
     var size: CGFloat = 6
+    var glows = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -256,7 +260,7 @@ struct LED: View {
             let level = pulsing && !reduceMotion ? 0.45 + 0.55 * (0.5 + 0.5 * cos(phase * 2 * .pi)) : 1
             Group {
                 if lit {
-                    Circle().fill(color).shadow(color: color.opacity(0.7), radius: 2.5)
+                    Circle().fill(color).shadow(color: color.opacity(glows ? 0.7 : 0), radius: 2.5)
                 } else {
                     Circle().strokeBorder(color, lineWidth: 1)
                 }

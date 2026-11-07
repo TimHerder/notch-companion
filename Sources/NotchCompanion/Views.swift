@@ -210,17 +210,18 @@ struct MarkAllAsReadButton: View {
 }
 
 /// The merged header. Its top row is the notch band: MascotView draws the eyes
-/// at the left with the live status beside them, and icon controls sit at the
-/// right, all on the resting eyes' centerline. The page title row follows below,
-/// on the 20-point content margin, so no text ever sits behind a camera.
+/// at the left and icon controls sit at the right, on the resting eyes'
+/// centerline, with no text a camera could split. The page title row follows
+/// below on the 20-point content margin, the session's status dot after its title.
 struct NotchHeaderView: View {
     /// Control circles leave 6 points above them in the top row (the eyes have about 8).
     static let control: CGFloat = 24
+    /// 16 points after the eyes' right edge: where text starts beside a mascot.
+    static let mascotColumn: CGFloat = 20 + 18 * EyesDrawing.expandedScale + 16
     @ObservedObject var model: AppModel
 
     var body: some View {
-        // The status starts 16 points after the eyes' right edge.
-        let statusX = 20 + 18 * EyesDrawing.expandedScale + 16
+        let statusX = Self.mascotColumn
         let theme = PanelTheme.current
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
@@ -234,9 +235,6 @@ struct NotchHeaderView: View {
                             .help("Keep the defaults and close")
                     }
                 } else {
-                    statusText
-                        .frame(maxWidth: model.geometry?.expandedCameraMinX.map { max(0, $0 - 8 - statusX) } ?? .infinity,
-                               alignment: .leading)
                     Spacer(minLength: 0)
                     if model.page == .sessions { MarkAllAsReadButton(model: model, size: Self.control, filled: true) }
                     QuietIconButton(symbol: "plus", label: "New session", size: Self.control, filled: true) {
@@ -282,7 +280,7 @@ struct NotchHeaderView: View {
             if theme == .instrument && !model.page.isWelcome {
                 HeaderRule().padding(.horizontal, 20)
                     // A mascot stands in the header's left column, over the rule's start.
-                    .padding(.leading, model.mascotEnabled ? 20 + 18 * EyesDrawing.expandedScale + 16 - 20 : 0)
+                    .padding(.leading, model.mascotEnabled ? statusX - 20 : 0)
             }
         }
     }
@@ -328,12 +326,16 @@ struct NotchHeaderView: View {
                 let title = Text(headerTitle).font(.system(size: 15, weight: .semibold))
                 (PanelTheme.current == .instrument ? title.tracking(-0.2) : title).lineLimit(1)
                 if model.page == .session {
+                    statusDot
                     Image(systemName: "chevron.down")
                         .font(.system(size: PanelTheme.pick(10, 10, 8.5), weight: PanelTheme.pick(.semibold, .bold, .bold)))
                         .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.faint))
                 }
             }
-        }.buttonStyle(NotchTextButtonStyle())
+        }
+        .buttonStyle(NotchTextButtonStyle())
+        // The word the status dot stands for is spoken with the title.
+        .accessibilityValue(sessionStatus?.text ?? "")
     }
 
     /// Refined: a faint light the open eyes cast on the black, so they read as
@@ -341,7 +343,8 @@ struct NotchHeaderView: View {
     @ViewBuilder private var eyeBloom: some View {
         if !model.mascotEnabled {
             // An ellipse that hugs the pair of eyes rather than a round smudge.
-            EllipticalGradient(colors: [Color.white.opacity(0.09), Color.white.opacity(0)], center: .center,
+            // Softened (was 9%) now that no status word sits beside the eyes.
+            EllipticalGradient(colors: [Color.white.opacity(0.065), Color.white.opacity(0)], center: .center,
                                startRadiusFraction: 0.12, endRadiusFraction: 0.5)
                 .frame(width: 84, height: 52)
                 .position(x: NotchGeometry.expandedEyeX, y: (model.geometry?.expandedTopRowHeight ?? 36) / 2)
@@ -350,36 +353,36 @@ struct NotchHeaderView: View {
         }
     }
 
-    private var statusText: some View {
-        let state = model.page == .session ? (model.current?.displayState ?? .idle) : model.overallState
-        let session = model.page == .session ? model.current : nil
-        let status = Self.status(state: state, session: session, waitingOnChild: session.map { model.delegationWaits[$0.id] != nil } ?? false)
+    /// The open session's status word and color, and whether its work is live.
+    private var sessionStatus: (text: String, color: Color, working: Bool)? {
+        guard model.page == .session, let session = model.current else { return nil }
+        let state = session.displayState
+        let status = Self.status(state: state, session: session, waitingOnChild: model.delegationWaits[session.id] != nil)
         let working = [.thinking, .working, .answering].contains(CompanionMood.resolve(overall: state, current: session))
-        let lit = working || status.color != CompanionStyle.secondary
-        // Status changes resolve through a blur rather than snapping.
-        return HStack(spacing: 7) {
-            if PanelTheme.current == .instrument {
-                LED(color: status.color == CompanionStyle.secondary ? (lit ? CompanionStyle.text : CompanionStyle.faint) : status.color,
-                    lit: lit, pulsing: working, size: 6)
-            }
-            ZStack(alignment: .leading) {
-                Group {
-                    switch PanelTheme.current {
-                    case .refined: Text(status.text).font(.system(size: 12, weight: .medium))
-                    case .tahoe: Text(status.text).font(.system(size: 12.5, weight: .semibold))
-                    case .instrument: Text(status.text).microLabel(10.5, tracking: 1)
-                    }
-                }
-                    .foregroundStyle(status.color).lineLimit(1)
-                    .workingShimmer(working, reducedMotion: model.reducedMotion)
-                    .id(status.text)
-                    .transition(model.reducedMotion ? AnyTransition.opacity : AnyTransition(.blurReplace))
-            }
-        }
-        .animation(model.reducedMotion ? nil : .smooth(duration: 0.32), value: status.text)
+        return (status.text, status.color, working)
     }
 
-    /// Live status in words, colored like the session's indicator dot.
+    /// A dot after the title (a lit LED in Instrument) in the session's status
+    /// color: it breathes while work runs and hides when nothing is live or
+    /// unread. Its word is the tooltip and the title's spoken value.
+    @ViewBuilder private var statusDot: some View {
+        if let status = sessionStatus, status.working || status.color != CompanionStyle.secondary {
+            let instrument = PanelTheme.current == .instrument
+            LED(color: status.color == CompanionStyle.secondary ? CompanionStyle.text : status.color,
+                pulsing: status.working && !model.reducedMotion, size: instrument ? 6 : 6.5, glows: instrument)
+                .help(status.text)
+        }
+    }
+
+    /// States the user has to act on keep their word, as a subtitle under the title.
+    static func actionWord(_ session: CompanionSession?) -> String? {
+        guard let session else { return nil }
+        if session.nativeActivityUnverified != nil { return "Check native work" }
+        if session.pendingSubmission != nil && !session.isBusy { return "Send unconfirmed" }
+        return nil
+    }
+
+    /// The status dot's word (its tooltip and spoken value) and color, like the session's indicator dot.
     static func status(state: WorkState, session: CompanionSession?, waitingOnChild: Bool = false) -> (text: String, color: Color) {
         if session?.nativeActivityUnverified != nil { return ("Check native work", CompanionStyle.amber) }
         let collapsed = session.map { CollapsedStatus.resolve(session: $0) } ?? .none
@@ -454,6 +457,17 @@ struct CompactPanelView: View {
     var body: some View {
         let theme = PanelTheme.current
         VStack(spacing: 0) {
+            if model.page == .session, let word = NotchHeaderView.actionWord(model.current) {
+                // A subtitle under the title, beside a mascot when one stands in the header.
+                Group {
+                    if theme == .instrument { Text(word).microLabel(9.5, tracking: 0.7) }
+                    else { Text(word).font(.system(size: 11.5, weight: .medium)) }
+                }
+                .foregroundStyle(CompanionStyle.amber).lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, model.mascotEnabled ? NotchHeaderView.mascotColumn - 20 : 0)
+                .padding(.bottom, 2)
+            }
             if !model.connection && model.connectionMessage != "Connects when you send a message." && !model.page.isRuntimeSetup
                 && model.current.map({ model.canChangeRuntime($0.id) }) != true {
                 connectionNotice
@@ -479,23 +493,15 @@ struct CompactPanelView: View {
                         .frame(height: request.kind == .approval ? nil : 190).padding(.top, 8)
                 }
             } else if model.page != .settings && model.page != .sessions && !model.page.isRuntimeSetup && !model.page.isWelcome {
-                if theme == .refined {
-                    ComposerView(model: model, focused: $focused, showsTitle: model.page != .session)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 8)
-                        .zIndex(1)
-                } else {
-                    ComposerDestinationView(model: model, showsTitle: model.page != .session)
-                        .padding(.top, 8).padding(.bottom, 5).zIndex(0.5)
-                    if model.current?.attachments.isEmpty == false {
-                        AttachmentStrip(model: model).frame(height: 28).padding(.bottom, 4)
-                    }
-                    ComposerView(model: model, focused: $focused).fixedSize(horizontal: false, vertical: true)
-                        .zIndex(1)
-                }
+                ComposerView(model: model, focused: $focused, showsTitle: model.page != .session)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
+                    .zIndex(1)
             }
         }
-        .padding(.horizontal, 20).padding(.top, theme == .refined ? 4 : 6).padding(.bottom, theme == .refined ? 12 : 14)
+        // Content starts right under the title row (Instrument: just clear of its ruled scale);
+        // the transcript's own inset and fade give it air.
+        .padding(.horizontal, 20).padding(.top, theme == .instrument ? 4 : 0).padding(.bottom, theme == .refined ? 12 : 14)
         .frame(width: model.geometry?.panelWidth ?? 560, height: model.geometry?.bodyHeight ?? 480, alignment: .top)
         .background { if theme == .instrument && !model.page.isWelcome { InstrumentGrid() } }
         .foregroundStyle(CompanionStyle.text)
@@ -1304,6 +1310,41 @@ struct FullSessionView: View {
         page == .settings || page == .usage ? page : nil
     }
 
+    /// The session header's real state, so it never contradicts the transcript:
+    /// what needs you, the running turn's clock, a connection problem, or when
+    /// the last turn ended. "Connects when you send" is left for a session that
+    /// has no connection and has not run a turn yet.
+    static func subtitle(_ session: CompanionSession?, needsSetup: Bool, connected: Bool,
+                         connectionMessage: String, now: Date = Date()) -> String {
+        if needsSetup { return "Connect a harness in Settings." }
+        guard let session else { return connectionMessage }
+        let runtime = session.isLegacyPrivate ? "Legacy Hermes" : session.runtime.title
+        if let word = NotchHeaderView.actionWord(session) { return "\(runtime) · \(word)" }
+        switch session.displayState {
+        case .waiting: return "\(runtime) · Needs your answer"
+        case .working:
+            let start = SessionDigest.turnStart(session) ?? session.updatedAt
+            return "\(runtime) · Working for \(SessionDigest.elapsed(now.timeIntervalSince(start)))"
+        default: break
+        }
+        let idle = "Connects when you send a message."
+        if !connected && connectionMessage != idle { return connectionMessage }
+        if let boundary = session.messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) }) {
+            let verb = switch session.turnOutcome[boundary.id] { case .failed: "Failed"; case .interrupted: "Stopped"; default: "Worked" }
+            return "\(runtime) · \(verb) \(ago(now.timeIntervalSince(session.turnEndedAt[boundary.id] ?? session.updatedAt)))"
+        }
+        return connected ? connectionMessage : idle
+    }
+
+    /// "just now", "4 min ago", "2 h ago", "3 d ago".
+    static func ago(_ interval: TimeInterval) -> String {
+        let seconds = max(0, Int(interval))
+        if seconds < 60 { return "just now" }
+        if seconds < 3_600 { return "\(seconds / 60) min ago" }
+        if seconds < 86_400 { return "\(seconds / 3_600) h ago" }
+        return "\(seconds / 86_400) d ago"
+    }
+
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 5) {
@@ -1352,10 +1393,14 @@ struct FullSessionView: View {
     }
 
     @ViewBuilder private var sessionPane: some View {
-        header(model.current?.title ?? "New session",
-               subtitle: model.currentDraftNeedsSetup ? "Connect a harness in Settings." : model.connectionMessage,
-               session: model.current) {
-            NotchSegmentedControl(label: "View", options: ["Conversation", "Activity", "Team"], title: { $0 }, selection: $selectedTab)
+        // A working turn's clock ticks each second; "Worked 2 min ago" refreshes each half minute.
+        TimelineView(.periodic(from: .now, by: model.current?.isBusy == true ? 1 : 30)) { context in
+            header(model.current?.title ?? "New session",
+                   subtitle: Self.subtitle(model.current, needsSetup: model.currentDraftNeedsSetup, connected: model.connection,
+                                           connectionMessage: model.connectionMessage, now: context.date),
+                   session: model.current, trailing: {
+                NotchSegmentedControl(label: "View", options: ["Conversation", "Activity", "Team"], title: { $0 }, selection: $selectedTab)
+            })
         }
         VStack(spacing: 0) {
             if let error = model.errorMessage {
@@ -1376,15 +1421,11 @@ struct FullSessionView: View {
                 // Refined and Tahoe size the card to its question; Instrument only an approval.
                 RequestView(model: model, request: request)
                     .frame(height: PanelTheme.current == .instrument && request.kind != .approval ? 210 : nil)
-            } else if PanelTheme.current == .refined {
+            } else {
                 ComposerView(model: model, focused: $focused, isCompact: false, showsTitle: selectedTab != "Conversation")
                     .fixedSize(horizontal: false, vertical: true).zIndex(1)
-            } else {
-                ComposerDestinationView(model: model, showsTitle: selectedTab != "Conversation").zIndex(0.5)
-                if model.current?.attachments.isEmpty == false { AttachmentStrip(model: model).frame(height: 28) }
-                ComposerView(model: model, focused: $focused, isCompact: false).fixedSize(horizontal: false, vertical: true).zIndex(1)
             }
-        }.readable().padding(.horizontal, 22).padding(.top, 10).padding(.bottom, 18).zIndex(1)
+        }.readable().padding(.horizontal, 22).padding(.top, 8).padding(.bottom, 18).zIndex(1)
             .layoutPriority(PanelTheme.current == .tahoe ? 1 : 0)
     }
 

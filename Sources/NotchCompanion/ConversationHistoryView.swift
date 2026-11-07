@@ -91,16 +91,16 @@ struct ConversationHistoryView: View {
                     Color.clear.frame(height: 2).id("conversation-tail")
                 }
                 // Refined and Tahoe: text sits on the panel's margin, under the title and the field's edge.
-                .padding(.vertical, 12).padding(.horizontal, PanelTheme.pick(0, 0, 3))
+                // As deep as the edge fades, so content at rest is never faded.
+                .padding(.vertical, 14).padding(.horizontal, PanelTheme.pick(0, 0, 3))
                 .background(alignment: .topLeading) {
                     HistoryScrollProbe(coordinator: scrolling)
                         .frame(width: 0, height: 0)
                         .allowsHitTesting(false)
                 }
             }
-            // Content softens as it passes under the title and into the composer
-            // (Tahoe: only under the title, like a system scroll edge).
-            .scrollEdgeFade(top: PanelTheme.pick(12, 12, 14), bottom: PanelTheme.pick(12, 0, 10))
+            // Content dissolves as it passes under the header and into the composer, never sliced.
+            .scrollEdgeFade(top: 14, bottom: 14)
             .accessibilityLabel("Conversation history")
             // Links in answers open in their own app; local paths open as files.
             .environment(\.openURL, OpenURLAction { url in

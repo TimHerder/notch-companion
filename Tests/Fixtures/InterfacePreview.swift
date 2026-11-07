@@ -860,6 +860,14 @@ import ImageIO
         model.sessions[0].permissionMode = .fullAccess
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-full-access", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-full-access", output: output)
+        // A tight composer bar: the model label truncates first, then the folder; the gauge and Send stay.
+        let fixtureFolder = model.sessions[0].workspacePath
+        model.sessions[0].permissionMode = .autoEdit
+        model.sessions[0].modelOverride = RuntimeModelChoice(model: "fixture-long-context-model-for-tight-bars", provider: "fixture-provider")
+        model.sessions[0].workspacePath = "/tmp/A deliberately long project folder name"
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-composer-tight", output: output)
+        model.sessions[0].workspacePath = fixtureFolder
+        model.sessions[0].modelOverride = nil
         model.sessions[0].permissionMode = nil
         model.sessions[0].runtime = fixtureRuntime
         model.showPermissionModes = false
@@ -1115,7 +1123,12 @@ import ImageIO
         model.sessions[0].runtime = .hermes
         model.sessions[0].isLegacyPrivate = true
         model.connectionMessage = "Legacy Hermes connected"
+        // Default controls plus SnapShot: the bar's widest legacy case still keeps the field on its margins.
+        (model.showModelPicker, model.showContextUsage, model.showSnapShot) = (true, true, true)
+        model.snapShotSource = SnapShotSource(processID: 1, appName: "Safari", windowID: 1, title: "Release notes")
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-legacy-conversation", output: output)
+        (model.showModelPicker, model.showContextUsage, model.showSnapShot) = (false, false, false)
+        model.snapShotSource = nil
         model.sessions[0].isLegacyPrivate = false
         model.connectionMessage = "Hermes connected"
         model.page = .session

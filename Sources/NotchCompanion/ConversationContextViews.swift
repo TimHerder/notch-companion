@@ -1,55 +1,44 @@
 import SwiftUI
 import AppKit
 
-/// Where a message goes: the harness, the session on secondary pages, and its
-/// working folder. Refined renders it inside the composer's toolbar.
+/// Where a message goes, in the composer's bar: a draft's harness, the folder
+/// and, on secondary pages, the session.
 struct ComposerDestinationView: View {
     @ObservedObject var model: AppModel
     var showsTitle = false
 
     var body: some View {
-        switch PanelTheme.current {
-        case .refined:
-            HStack(spacing: 2) {
-                sessionControls
-                WorkspaceButton(model: model)
-                if showsTitle, model.current?.isLegacyPrivate != true {
-                    // The session's name gives way first when the toolbar is tight.
-                    Label(model.current?.title ?? "New session", systemImage: "bubble.left")
-                        .labelStyle(DestinationLabelStyle())
-                        .font(CompanionStyle.callout).foregroundStyle(CompanionStyle.tertiary)
-                        .lineLimit(1).padding(.horizontal, 8).layoutPriority(-1)
-                        .help("Messages and attachments go to \(model.current?.title ?? "New session")")
-                        .accessibilityLabel("Message \(model.current?.title ?? "New session")")
-                }
+        HStack(spacing: PanelTheme.pick(2, 6, 6)) {
+            sessionControls
+            WorkspaceButton(model: model)
+            if showsTitle, model.current?.isLegacyPrivate != true {
+                // After the model label, the session's name gives way before the harness and folder.
+                destinationTitle(model.current?.title ?? "New session").layoutPriority(-1)
             }
-            .fixedSize(horizontal: false, vertical: true)
-        case .tahoe, .instrument:
-            HStack(spacing: 8) {
-                sessionControls
-                if showsTitle, model.current?.isLegacyPrivate != true {
-                    if PanelTheme.current == .instrument {
-                        HStack(spacing: 6) {
-                            Text("To").microLabel(9.5).foregroundStyle(CompanionStyle.faint)
-                            Text(model.current?.title ?? "New session").font(.system(size: 11.5)).lineLimit(1)
-                        }
-                        .help("Messages and attachments go to \(model.current?.title ?? "New session")")
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("Message \(model.current?.title ?? "New session")")
-                        .layoutPriority(1)
-                    } else {
-                        Label("Message \(model.current?.title ?? "New session")", systemImage: "bubble.left")
-                            .lineLimit(1).help("Messages and attachments go to \(model.current?.title ?? "New session")")
-                            .layoutPriority(1)
-                    }
-                }
-                Spacer(minLength: 0)
-                WorkspaceButton(model: model)
-                    .frame(maxWidth: showsTitle ? 150 : .infinity, alignment: .trailing)
-            }
-            .font(.system(size: PanelTheme.pick(11, 12, 11))).foregroundStyle(CompanionStyle.secondary)
-            .frame(minHeight: PanelTheme.current == .instrument ? 22 : nil)
         }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func destinationTitle(_ title: String) -> some View {
+        Group {
+            switch PanelTheme.current {
+            case .refined:
+                Label(title, systemImage: "bubble.left").labelStyle(DestinationLabelStyle())
+                    .font(CompanionStyle.callout).foregroundStyle(CompanionStyle.tertiary).padding(.horizontal, 8)
+            case .tahoe:
+                Label(title, systemImage: "bubble.left").labelStyle(DestinationLabelStyle())
+                    .font(.system(size: 12)).foregroundStyle(CompanionStyle.secondary).padding(.horizontal, 4)
+            case .instrument:
+                HStack(spacing: 6) {
+                    Text("To").microLabel(9.5).foregroundStyle(CompanionStyle.faint)
+                    Text(title).font(.system(size: 11.5)).foregroundStyle(CompanionStyle.secondary)
+                }.padding(.horizontal, 4)
+            }
+        }
+        .lineLimit(1)
+        .help("Messages and attachments go to \(title)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Message \(title)")
     }
 
     @ViewBuilder private var sessionControls: some View {
@@ -159,7 +148,9 @@ struct SessionRuntimeControl: View {
                 }
                 .onDisappear { popupDismissal.stop() }
             }
-        } else {
+        } else if session.isLegacyPrivate || PanelTheme.current != .tahoe {
+            // Tahoe names a started session's harness in its placeholder ("Ask Codex…") alone;
+            // the placeholder hides behind a draft or the busy hint, so the others keep the label.
             fixedRuntime
                 .help(session.isLegacyPrivate
                       ? "This conversation uses the companion’s earlier private Hermes profile."
@@ -167,21 +158,22 @@ struct SessionRuntimeControl: View {
         }
     }
 
+    /// Truncates rather than holding its width, so a tight bar keeps the gauge and Send in the field.
     @ViewBuilder private var fixedRuntime: some View {
         let title = session.isLegacyPrivate ? "Legacy Hermes" : session.runtime.title
         switch PanelTheme.current {
         case .refined:
             Text(title)
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(CompanionStyle.secondary)
-                .fixedSize().padding(.horizontal, 8)
+                .lineLimit(1).padding(.horizontal, 8)
         case .tahoe:
-            Text(title).font(.system(size: 12, weight: .semibold)).fixedSize()
+            Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
         case .instrument:
             HStack(spacing: 6) {
                 Rectangle().fill(CompanionStyle.text).frame(width: 5, height: 5)
-                Text(title).microLabel(10, weight: .semibold)
+                Text(title).microLabel(10, weight: .semibold).lineLimit(1)
             }
-                .foregroundStyle(CompanionStyle.secondary).fixedSize()
+                .foregroundStyle(CompanionStyle.secondary)
         }
     }
 
@@ -264,7 +256,8 @@ struct ContinueLegacySessionButton: View {
     var body: some View {
         Button("Continue in Hermes…") { reviewContinuation() }
             .buttonStyle(NotchPillButtonStyle(small: true))
-            .fixedSize()
+            // Truncates in the composer's bar instead of pushing the gauge and Send out.
+            .lineLimit(1)
             .disabled(session.isBusy || model.submitting)
             .help(session.isBusy ? "Wait for this session and its delegated work to finish."
                   : "Create a separate conversation in your existing Hermes profile with this history attached.")
