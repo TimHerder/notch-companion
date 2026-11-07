@@ -686,9 +686,9 @@ notch, dots, live activity, announcements, aura, rim comet, glance and stage use
   for what needs you and the primary action. Tracked uppercase SF Mono for
   labels, states, counts and logs; SF Pro for prose. Hairlines, 3–4-point
   radii, a 16-point dot grid, a ruled scale under the header, viewfinder
-  brackets around the open eyes, LED lamps, numbered rows, tool calls as log
-  lines, code line numbers, segmented meters, a diffstat, square switches and
-  a fader slider.
+  brackets around the open eyes, LED lamps, numbered rows (in the notch), tool
+  calls as log lines, code line numbers, segmented meters, a diffstat, square
+  switches and a fader slider.
 
 ## Controls and window behavior
 
@@ -768,29 +768,34 @@ identify selection.
   started session's folder opens in Finder. Settings labels the separate default “Default folder
   for new sessions.”
 - **Session browsers.** Both share search, rename, archive/restore and one
-  **Archived** chip inside the search capsule (below it only where the capsule
-  is too narrow). The Needs you and Unread filters remain in the model, not the
-  interface.
+  **Archived** chip inside the search capsule in every state, typing included.
+  With Archived on, the title reads **Archived** and Back (the notch header's
+  chevron; a chevron before the sidebar title) returns to the active list. The
+  Needs you and Unread filters remain in the model, not the interface.
   - The default list shows only active sessions: working, needs you, unread
     result or failure, unconfirmed send, a draft with text or files, the
     selection, and read idle sessions not yet auto-archived. It ends with a
     quiet **Archived · N** row; with nothing active it reads “All caught up”
-    above that row.
+    above that row. Empty states start at the rows' content inset.
   - **Auto-archive** is derived, never a flag. A top-level session that is
     read, idle, not submitting, with no pending or queued send and an empty
     draft, lists under Archived once the later of its last activity and
     `lastSeenAt` is older than Settings → **Archive read sessions after**
-    (`sessions.autoArchiveAfter`: 1 hour, 12 hours (default), 3 days, Never).
+    (`sessions.autoArchiveAfter`: 1 hour, 12 hours (default), 3 days, Never;
+    1h, 12h, 3d where the 252-point sidebar is too narrow for the words).
     The selection never auto-archives; `lastSeenAt` is set when a session is
     opened, read, restored or stops being the selection. The list re-evaluates every minute. Sending,
     opening or Restore brings it back.
   - Archived lists manual and auto-archived sessions by project; archived
     attention and unread results keep their dots. A search query covers every
     top-level session, titles and conversations, archived ones marked.
-  - Rows are one line (about 34 points): status glyph (spinning arc, pulsing
+  - Rows are about 34 points: status glyph (spinning arc, pulsing
     question, green check or red mark while unread; a quiet mark for a read
     failure; Instrument uses its lamps), title (dimmed once read), the runtime
     (notch only) and a compact age, or the ticking turn timer while working.
+    The notch keeps each row to one line; the full-session sidebar wraps a
+    title to two lines, with the glyph, age and ellipsis on its first line,
+    and leaves out Instrument's row numbers.
     The latest message is the tooltip and part of the accessibility label.
     Hover, focus or open swaps the age for the ellipsis, which expands Rename,
     Archive or Restore, and Continue in Hermes… (legacy only) inline.
@@ -880,8 +885,10 @@ runtime, or collapsing, dismisses it. Model and context overlays render above
 the destination/folder row. The context gauge stays as it is (a ring, Instrument's
 segment meter). Its bubble has a fixed 264-point width, so it never jumps
 between states: a **Context** section label with Close, the percentage
-(unclamped, `≈` for estimates, `—` when unknown) with `42k / 200k` at the
-right, a [usage bar](#usage), and a caption (**Estimate**, **Window not
+(unclamped, `≈` for estimates) with `42k / 200k` at the right and a
+[usage bar](#usage); a report without a window heads with what is known
+(`42k used`) and has no bar, and `—` stands only before the first report. A
+caption follows (**Estimate**, **Window not
 reported**, **Over the reported window**, then **Updated** and the report time;
 **No report yet** before the first report). Hover, accessibility and dismissal
 are unchanged. Opening one chooser closes the other; neither shifts the
@@ -926,10 +933,12 @@ row, opening **Usage**, a scrolling page within the panel bounds; Back returns.
   per-model or per-bucket variants, **Extra usage** last. A row is the window
   name with the percentage used (or **Limit reached** in amber) at the right, a
   bar, and the reset: **Resets in 1 h 40 min** within a day, then weekday and
-  time, a date beyond six days, all in one time style. A reset already past
-  reads **Reset since last report** and shows the window as unknown. Opening or
-  refreshing asks Codex again; Claude Code reports only during a turn. Errors
-  show under their harness.
+  time, a date beyond six days, all in one time style. Usage and context
+  dates use the app's language with the system region and 12- or 24-hour
+  clock (`Locale.app`), so an English interface never shows German weekdays.
+  A reset already past reads **Reset since last report** and shows the window
+  as unknown. Opening or refreshing asks Codex again; Claude Code reports only
+  during a turn. Errors show under their harness.
 - **Bars** fill with the share used and take the warning color (amber; the
   signal in Instrument) when reached or from 90 %. Unknown is a dim track with
   no fill and `—`, never 0 %. Refined draws a thin capsule, Tahoe an

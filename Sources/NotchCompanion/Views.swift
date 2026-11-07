@@ -315,6 +315,8 @@ struct NotchHeaderView: View {
                 else if case .runtimeChooser(let defaults) = model.page { model.page = defaults ? .settings : .session }
                 else if model.page.isRuntimeSetup { model.page = .settings }
                 else if model.page == .usage { model.page = .sessions }
+                // Archived steps back to the active list before leaving the page.
+                else if model.page == .sessions && model.sessionFilter == .archived { model.sessionFilter = .all }
                 else { model.page = .session }
             }.padding(.leading, -7)
         }
@@ -399,7 +401,7 @@ struct NotchHeaderView: View {
     }
 
     private var headerTitle: String {
-        switch model.page { case .sessions: return "Your sessions"; case .team: return "Delegated work"; case .agent: return "Agent details"; case .activity: return "Activity"; case .settings: return "Settings"; case .usage: return "Usage"; case .runtimeSetup(let runtime): return "Set up \(runtime.title)"; case .runtimeChooser(let defaults): return defaults ? "Default agent" : "Choose agent"; case .welcome: return "Welcome"; case .session: return model.current?.title ?? "New session" }
+        switch model.page { case .sessions: return model.sessionFilter == .archived ? "Archived" : "Your sessions"; case .team: return "Delegated work"; case .agent: return "Agent details"; case .activity: return "Activity"; case .settings: return "Settings"; case .usage: return "Usage"; case .runtimeSetup(let runtime): return "Set up \(runtime.title)"; case .runtimeChooser(let defaults): return defaults ? "Default agent" : "Choose agent"; case .welcome: return "Welcome"; case .session: return model.current?.title ?? "New session" }
     }
 
     private func teamButton(_ session: CompanionSession) -> some View {
@@ -839,8 +841,14 @@ struct SettingsContent: View {
                 }
                 SettingsRow("Default folder for new sessions", symbol: "folder.fill", tint: .blue, divider: true) { DefaultWorkspaceButton(model: model) }
                 SettingsRow("Archive read sessions after", symbol: "archivebox.fill", tint: .gray, divider: true) {
-                    NotchSegmentedControl(label: "Archive read sessions after", options: SessionAutoArchive.allCases,
-                                          title: \.label, selection: $model.autoArchiveAfter, small: true)
+                    // The 252-point sidebar fits only the list's own age style (1h, 12h, 3d).
+                    ViewThatFits(in: .horizontal) {
+                        NotchSegmentedControl(label: "Archive read sessions after", options: SessionAutoArchive.allCases,
+                                              title: \.label, selection: $model.autoArchiveAfter, small: true)
+                        NotchSegmentedControl(label: "Archive read sessions after", options: SessionAutoArchive.allCases,
+                                              title: { $0.interval.map(SessionDigest.compactAge) ?? $0.label },
+                                              selection: $model.autoArchiveAfter, small: true)
+                    }
                         .help("Read, idle sessions move to Archived after this long without activity. Search and the Archived list still find them.")
                 }
             }
@@ -1194,8 +1202,9 @@ struct SettingsRow<Control: View>: View {
                     if let icon { SettingsIcon(symbol: icon, tint: tint) }
                     Text(title).fixedSize(horizontal: true, vertical: false)
                     Spacer(minLength: 0)
-                    // Caps a long folder name so it truncates instead of stacking.
-                    control.frame(maxWidth: 220, alignment: .trailing)
+                    // Caps a long folder name so it truncates instead of stacking; wide
+                    // enough for the archive choices' full words (230 points in Instrument).
+                    control.frame(maxWidth: 240, alignment: .trailing)
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 10) {
@@ -1295,7 +1304,10 @@ struct FullSessionView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 5) {
-                Text("Your sessions").font(.system(size: 14, weight: .semibold))
+                if model.sessionFilter == .archived {
+                    QuietIconButton(symbol: "chevron.left", label: "Back to your sessions") { model.sessionFilter = .all }.padding(.leading, -7)
+                }
+                Text(model.sessionFilter == .archived ? "Archived" : "Your sessions").font(.system(size: 14, weight: .semibold))
                 Spacer(minLength: 0)
                 MarkAllAsReadButton(model: model)
                 QuietIconButton(symbol: "folder.badge.plus", label: "New project") { model.addProject(showPanel: false) }

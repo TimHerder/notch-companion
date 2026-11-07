@@ -451,8 +451,9 @@ Context usage is the latest native occupancy/request snapshot (`context_used`
 or `last.totalTokens`; Hermes `session.info`/`session.usage`/completion usage,
 Codex `thread/tokenUsage/updated` and reroute events), never cumulative usage
 and never guessed. The composer shows a monochrome gauge; hover and a click
-overlay show percentage and abbreviated counts (`20k / 828k`, `42k used` without
-a window), with `≈` for estimates, `—` and a dashed ring for unknown values.
+overlay show percentage and abbreviated counts (`20k / 828k`; without a window
+the overlay heads with `42k used` and draws no bar), with `≈` for estimates,
+`—` and a dashed ring for unknown values.
 The percentage is not clamped (`110%` over the window) while the gauge and bar
 are; the overlay's bar takes the warning color from 90 %, and its caption names
 an estimate, an unreported window or an over-limit report before the report
