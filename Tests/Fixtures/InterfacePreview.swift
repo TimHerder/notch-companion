@@ -1129,9 +1129,19 @@ import ImageIO
         model.sessions[model.sessions.count - 1].runtime = .hermes
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-runtime-draft", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-runtime-draft", output: output)
+        // The longest harness name, selected, is the tightest row in the menu.
+        let menuSuite = "notch-harness-menu-\(UUID().uuidString)"
+        let menuPreferences = UserDefaults(suiteName: menuSuite)!
+        menuPreferences.set(Dictionary(uniqueKeysWithValues: [RuntimeKind.hermes, .codex, .pi, .deepseek].map {
+            ($0.rawValue, RuntimeRoute.defaultProfile($0, defaults: menuPreferences))
+        }), forKey: "runtime.configuredProfiles")
+        let menuModel = AppModel(storageURL: temporary.appendingPathComponent("harness-menu.json"), playsSounds: false,
+                                 client: PreviewTransport(), preferences: menuPreferences)
+        defer { menuModel.shutdown(); menuPreferences.removePersistentDomain(forName: menuSuite) }
+        menuModel.sessions[0].runtime = .deepseek
         try render(VStack {
             Spacer()
-            HStack { SessionRuntimeControl(model: model, session: model.current!, choosingRuntime: true); Spacer() }
+            HStack { SessionRuntimeControl(model: menuModel, session: menuModel.sessions[0], choosingRuntime: true); Spacer() }
         }.padding(20).frame(width: 560, height: 300)
             .background(CompanionStyle.background).foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
             size: NSSize(width: 560, height: 300), name: "ready-harness-dropdown", output: output)

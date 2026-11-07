@@ -208,6 +208,7 @@ struct SessionRuntimeControl: View {
         choosingRuntime = false
     }
 
+    /// Each width fits the logo, the longest name (DeepSeek Harness) and the selection mark untruncated.
     @ViewBuilder private var runtimeChoices: some View {
         switch PanelTheme.current {
         case .refined:
@@ -227,7 +228,7 @@ struct SessionRuntimeControl: View {
                     .accessibilityAddTraits(session.runtime == runtime ? .isSelected : [])
                 }
             }
-            .padding(6).frame(width: 196)
+            .padding(6).frame(width: 220)
             .notchPopover()
             .background(PopupDismissalRegion(monitor: popupDismissal))
             .offset(y: -36)
@@ -248,7 +249,7 @@ struct SessionRuntimeControl: View {
                     .accessibilityAddTraits(session.runtime == runtime ? .isSelected : [])
                 }
             }
-            .padding(5).frame(width: 196)
+            .padding(5).frame(width: 220)
             .notchPopover(cornerRadius: 12)
             .background(PopupDismissalRegion(monitor: popupDismissal))
             .offset(y: -30)
@@ -270,7 +271,7 @@ struct SessionRuntimeControl: View {
                     .accessibilityAddTraits(session.runtime == runtime ? .isSelected : [])
                 }
             }
-            .padding(5).frame(width: 188)
+            .padding(5).frame(width: 214)
             .instrumentPopup()
             .background(PopupDismissalRegion(monitor: popupDismissal))
             .offset(y: -30)

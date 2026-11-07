@@ -756,8 +756,9 @@ agent's official mark at about 16 points (14 in Instrument's harness menu)
 just before its name. The mark keeps its own colours in every design: never
 tinted, desaturated, cropped or stretched; an optical scale offsets padding
 built into a file (Codex's Blossom, Antigravity). It never replaces the name,
-and VoiceOver reads only the name. A runtime without a bundled mark shows its
-name alone. Logos stay out of the island, session rows, the composer bar's
+and VoiceOver reads only the name. Menus are wide enough that the longest name,
+DeepSeek Harness, shows in full beside its mark and the selection mark. A
+runtime without a bundled mark shows its name alone. Logos stay out of the island, session rows, the composer bar's
 labels, the app icon and marketing assets. Sources and owners:
 [third-party marks](third-party-marks.md).
 
