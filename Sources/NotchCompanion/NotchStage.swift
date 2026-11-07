@@ -91,6 +91,9 @@ struct StageContent: Equatable {
     static let messageGap: CGFloat = 4
     static let changesGap: CGFloat = 6, changesHeight: CGFloat = 14
     static let commandGap: CGFloat = 8, commandHeight: CGFloat = 24
+    static let commandFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+    static let commandLineHeight = commandFont.ascender - commandFont.descender + commandFont.leading
+    static let commandMaxLines = 3
     static let answersGap: CGFloat = 10, answerHeight: CGFloat = 26
     static let topPadding: CGFloat = 8, bottomPadding: CGFloat = 16
 
@@ -105,6 +108,22 @@ struct StageContent: Equatable {
         return min(answerRows > 0 || command != nil ? 2 : 3, lines)
     }
 
+    /// A command may break between any two characters, so wrapping never hides its middle.
+    static func breakable(_ command: String) -> String { command.map(String.init).joined(separator: "\u{200B}") }
+
+    /// Lines the command wraps to inside its field's 8-point insets: up to three, tail-truncated after that.
+    var commandLines: Int {
+        guard let command else { return 0 }
+        // Far more than three lines' worth at the stage's width; measuring further changes nothing.
+        let bounds = (Self.breakable(String(command.prefix(400))) as NSString)
+            .boundingRect(with: NSSize(width: bodyWidth - 16, height: .greatestFiniteMagnitude),
+                          options: [.usesLineFragmentOrigin], attributes: [.font: Self.commandFont])
+        return min(Self.commandMaxLines, max(1, Int((bounds.height / Self.commandLineHeight).rounded())))
+    }
+
+    /// One line keeps the 24-point field; each further line adds its height.
+    var commandFieldHeight: CGFloat { Self.commandHeight + ceil(CGFloat(max(0, commandLines - 1)) * Self.commandLineHeight) }
+
     var answersHeight: CGFloat {
         let rows = CGFloat(answerRows)
         return rows > 0 ? rows * Self.answerHeight + (rows - 1) * Self.rowSpacing : 0
@@ -117,7 +136,7 @@ struct StageContent: Equatable {
         var height = Self.topPadding + Self.headerHeight + Self.bottomPadding
         if lines > 0 { height += Self.messageGap + ceil(CGFloat(lines) * Self.lineHeight) }
         if changes != nil { height += Self.changesGap + Self.changesHeight }
-        if command != nil { height += Self.commandGap + Self.commandHeight }
+        if command != nil { height += Self.commandGap + commandFieldHeight }
         if answerRows > 0 { height += Self.answersGap + answersHeight }
         return mascot ? max(NotchGeometry.mascotStageBodyHeight, height) : height
     }
@@ -197,7 +216,7 @@ struct NotchStageView: View {
                                     .padding(.top, StageContent.messageGap)
                             }
                             if let changes = content.changes { changeLine(changes) }
-                            if let command = content.command { commandField(command) }
+                            if let command = content.command { commandField(command, height: content.commandFieldHeight) }
                         }
                         .padding(.leading, StageContent.indent)
                         .glanceReveal(peek: stage, index: 1, reducedMotion: model.reducedMotion)
@@ -231,7 +250,7 @@ struct NotchStageView: View {
     private func spoken(_ announcement: NotchAnnouncement, _ content: StageContent) -> String {
         var parts = ["\(announcement.kind.verb): \(content.title)"]
         if !content.detail.isEmpty { parts.append(content.detail) }
-        if let command = content.command { parts.append(command) }
+        if let command = content.command { parts.append(String(command.prefix(NotchAnnouncement.spokenLimit))) }
         if let changes = content.changes {
             parts.append("\(changes.allFiles.count) changed files, \(Self.added(changes)) lines added, \(Self.removed(changes)) removed")
         }
@@ -257,14 +276,15 @@ struct NotchStageView: View {
         .padding(.top, StageContent.changesGap)
     }
 
-    /// What an approval wants to run: one monospaced line, truncated in the middle.
-    private func commandField(_ command: String) -> some View {
-        Text(command)
-            .font(.system(size: 11.5, design: .monospaced))
+    /// What an approval wants to run, monospaced: it wraps between any characters
+    /// up to three lines and only then truncates at the tail, never in the middle.
+    private func commandField(_ command: String, height: CGFloat) -> some View {
+        Text(StageContent.breakable(command))
+            .font(Font(StageContent.commandFont))
             .foregroundStyle(IslandStyle.text.opacity(0.9))
-            .lineLimit(1).truncationMode(.middle)
+            .lineLimit(StageContent.commandMaxLines).truncationMode(.tail)
             .padding(.horizontal, 8)
-            .frame(maxWidth: .infinity, minHeight: StageContent.commandHeight, maxHeight: StageContent.commandHeight, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .leading)
             .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 0.75))
             .padding(.top, StageContent.commandGap)

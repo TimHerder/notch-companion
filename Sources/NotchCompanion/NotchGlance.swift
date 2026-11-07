@@ -246,7 +246,7 @@ enum SessionDigest {
             let text = answer(session)
             return text.isEmpty ? "Something went wrong" : text
         case .needsInput:
-            return String(entry(session, requests: requests).detail.prefix(400))
+            return entry(session, requests: requests).detail
         case .hello:
             return ""
         }
@@ -520,8 +520,9 @@ private struct GlanceRow: View {
     }
 }
 
-/// Status at a glance: a spinning arc while working, a pulsing question when
-/// waiting, a lit check or warning while unread, and quiet marks once read.
+/// Status at a glance: a spinning arc while working, a pulsing solid question
+/// disc when waiting, a solid check or warning disc while unread, and quiet
+/// marks once read.
 struct GlanceStatusGlyph: View {
     var status: GlanceEntry.Status?
     var unread: Bool
@@ -548,17 +549,18 @@ struct GlanceStatusGlyph: View {
                     Circle().stroke(amber.opacity(reducedMotion ? 0 : 0.5 * (1 - phase)), lineWidth: 1.5)
                         .scaleEffect(reducedMotion ? 1 : 1 + 0.35 * phase)
                 }
-                Circle().fill(amber.opacity(0.2))
-                Image(systemName: "questionmark").font(.system(size: 10, weight: .bold)).foregroundStyle(amber)
+                // Solid like an unread Done, so the rows that need the user are never the dimmest.
+                Circle().fill(amber)
+                Image(systemName: "questionmark").font(.system(size: 10, weight: .bold)).foregroundStyle(IslandStyle.onAccent)
             case .finished:
                 let green = IslandStyle.indicatorColor(.finished)
                 Circle().fill(unread ? green : Color.white.opacity(0.07))
                 Image(systemName: "checkmark").font(.system(size: 9.5, weight: .bold))
                     .foregroundStyle(unread ? IslandStyle.onAccent : IslandStyle.secondary)
             case .failed:
-                Circle().fill(unread ? IslandStyle.error.opacity(0.22) : Color.white.opacity(0.07))
+                Circle().fill(unread ? IslandStyle.error : Color.white.opacity(0.07))
                 Image(systemName: "exclamationmark").font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(unread ? IslandStyle.error : IslandStyle.secondary)
+                    .foregroundStyle(unread ? IslandStyle.onAccent : IslandStyle.secondary)
             case .stopped:
                 Circle().fill(Color.white.opacity(0.07))
                 Image(systemName: "stop.fill").font(.system(size: 7)).foregroundStyle(IslandStyle.secondary)
@@ -643,8 +645,8 @@ struct GlanceBandSummary: View {
 }
 
 /// The compact announcement inside the widened resting band: the acting
-/// status icon, the session title, then the message. The icon and its color
-/// carry the verb; VoiceOver still hears it.
+/// status icon, the session title, then the message in whatever width the
+/// title leaves. The icon and its color carry the verb; VoiceOver still hears it.
 struct AnnouncementLabel: View {
     var announcement: NotchAnnouncement
     var reducedMotion = false
@@ -655,8 +657,8 @@ struct AnnouncementLabel: View {
                 .frame(width: NotchAnnouncement.iconWidth)
             Text(announcement.title).font(.system(size: 11.5, weight: .medium)).foregroundStyle(IslandStyle.text)
                 .lineLimit(1).truncationMode(.tail)
-                .frame(width: announcement.detail.isEmpty ? nil : announcement.titleWidth, alignment: .leading)
-            if !announcement.detail.isEmpty {
+                .layoutPriority(1)
+            if announcement.bandShowsMessage {
                 Text(announcement.detail).font(.system(size: 11.5)).foregroundStyle(IslandStyle.secondary)
                     .lineLimit(1).truncationMode(.tail)
                     .padding(.leading, 1)
@@ -699,10 +701,20 @@ struct AnnouncementIcon: View {
 }
 
 /// A small island inside the open panel naming another session's result:
-/// status glyph, title, one line of the message, Open.
+/// status glyph, title, the message in whatever width the title leaves, Open.
 struct PanelToastView: View {
     var announcement: NotchAnnouncement
     var action: () -> Void
+
+    static let maxWidth: CGFloat = 380
+    /// Padding, glyph, gaps, “Open” and its chevron: everything around the title and message.
+    private static let chrome = 7 + 18 + 8 + 8 + 4 + NotchAnnouncement.width("Open", font: .systemFont(ofSize: 11, weight: .medium)) + 8 + 7 + 12
+
+    /// Title first, as in the band: the message shows only when enough of the toast is left beside it.
+    static func showsMessage(_ announcement: NotchAnnouncement) -> Bool {
+        let title = NotchAnnouncement.width(announcement.title, font: .systemFont(ofSize: 12, weight: .medium))
+        return !announcement.detail.isEmpty && maxWidth - chrome - title - 8 >= NotchAnnouncement.minMessageWidth
+    }
 
     var body: some View {
         Button(action: action) {
@@ -710,8 +722,8 @@ struct PanelToastView: View {
                 GlanceStatusGlyph(status: announcement.kind.glanceStatus, unread: true, reducedMotion: true, size: 18)
                 Text(announcement.title).font(.system(size: 12, weight: .medium)).foregroundStyle(IslandStyle.text)
                     .lineLimit(1).truncationMode(.tail)
-                    .frame(width: announcement.detail.isEmpty ? nil : Self.titleWidth(announcement.title), alignment: .leading)
-                if !announcement.detail.isEmpty {
+                    .layoutPriority(1)
+                if Self.showsMessage(announcement) {
                     Text(announcement.detail).font(.system(size: 12)).foregroundStyle(IslandStyle.secondary)
                         .lineLimit(1).truncationMode(.tail)
                 }
@@ -730,12 +742,8 @@ struct PanelToastView: View {
         .buttonStyle(.plain)
         .pressableCursor()
         // Hugs its content; a long message truncates within the cap.
-        .frame(maxWidth: 380)
+        .frame(maxWidth: Self.maxWidth)
         .accessibilityLabel("\(announcement.spoken). Open")
-    }
-
-    private static func titleWidth(_ title: String) -> CGFloat {
-        NotchAnnouncement.width(title, font: .systemFont(ofSize: 12, weight: .medium), cap: 150)
     }
 }
 

@@ -151,8 +151,10 @@ centred like the panel, top-anchored, covering the band and camera.
 - Below: up to three 44-point rows by priority (needs you, working, unread
   failure, unread result, then recent; quiet archived or
   [auto-archived](#conversation-usability-and-session-management) sessions and
-  untouched drafts skipped). Each has a status glyph (spinning orange arc,
-  pulsing amber question, green check or red warning while unread, quiet marks once read),
+  untouched drafts skipped). Each has a status glyph (spinning orange arc;
+  solid discs with a dark mark for a pulsing amber question and, while unread,
+  a green check or red warning, so the rows that need you are never the
+  dimmest; quiet marks once read),
   title, runtime, live turn timer or age, and one line of real detail (the
   question, running tool and argument, streaming tail, failed child, “Asks: …”,
   or the result's first line, e.g. “Sent report.pdf”).
@@ -169,13 +171,15 @@ centred like the panel, top-anchored, covering the band and camera.
 
 **Announcement.** When a session finishes, fails or asks for input while the
 notch is not expanded, the band keeps its height and widens on the right (the
-camera-side edge never moves) to show the colored status icon, the session
-title and one line of the message, sized to the text within 120–250 points.
+camera-side edge never moves) to show the colored status icon and the session
+title, then one line of the message, sized to the text within 120–230 points.
 The icon and its color carry the verb, so no “Done”/“Failed”/“Needs you” word
-is drawn; VoiceOver still hears “Done: <title>. <message>”. A title stops at
-100 points when a message follows, so the message always gets room; both
-truncate at the tail. It springs open, holds 4.2 / 5 / 6 s (done / failed /
-needs you), and retracts over 340 ms. The eyes take the result's expression
+is drawn; VoiceOver still hears “Done: <title>. <message>”, the message cut at
+400 characters. The title comes first at its full width; the message follows
+in secondary color only in the width left beside it, and is left out rather
+than shown as a stub when less than 70 points remain (the stage and glance
+still show it). Both truncate at the tail. It springs open, holds 4.2 / 5 /
+6 s (done / failed / needs you), and retracts over 340 ms. The eyes take the result's expression
 and look at the label. Clicking it opens the session; hovering opens the
 glance. Dots stay to the label's right.
 
@@ -202,8 +206,9 @@ ring. Reduced motion keeps only a soft fade. The aura owns no geometry, input
 or expansion and never plays while the full panel is open.
 
 **Toast.** In the open panel, a result from a session other than the one being
-read appears as a small capsule below the header (status glyph, title, one
-line of the message, “Open”; no verb word, VoiceOver keeps it), at most 380
+read appears as a small capsule below the header (status glyph, title, then
+one line of the message by the band's rule, only in the width the title
+leaves, and “Open”; no verb word, VoiceOver keeps it), at most 380
 points wide, for the same hold, until the panel closes or that conversation
 opens; clicking it opens the session. The band, toast and aura never play for a conversation
 that is on screen. VoiceOver hears each announcement.
@@ -404,7 +409,8 @@ open (the toast stands in) or over an open glance (the edge still lights).
   - for a finished turn with changes, one quiet line such as “4 files +120 −8”
     with the counts in green and red;
   - for an approval, “Wants to run” and its command in a monospaced inset
-    field, one line truncated in the middle;
+    field that wraps between any characters for up to three lines and only
+    then truncates at the tail, never in the middle; the body grows with it;
   - the answers directly beneath.
 
   Message, line, field and answers hang after the icon's column.
@@ -412,7 +418,8 @@ open (the toast stands in) or over an open glance (the edge still lights).
   (see [announcement](#island-tiers)), never live status such as “Thinking…”;
   a question shows the live request, so one answered meanwhile shows **Answer
   sent** (an answered approval keeps “Wants to run” and its snapshotted command
-  in the field).
+  in the field, the same full command as before the answer; only speech is
+  cut to 400 characters).
 - The body height is measured from this content and the text width before the
   stage opens, and re-springs if it changes (the next question, a late change
   summary). With Eyes, the eyes stay in the band; the text starts 8 points below
