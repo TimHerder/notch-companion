@@ -860,6 +860,14 @@ import ImageIO
         model.sessions[0].permissionMode = .fullAccess
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-full-access", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-full-access", output: output)
+        // A tight composer bar: the model label truncates first, then the folder; the gauge and Send stay.
+        let fixtureFolder = model.sessions[0].workspacePath
+        model.sessions[0].permissionMode = .autoEdit
+        model.sessions[0].modelOverride = RuntimeModelChoice(model: "fixture-long-context-model-for-tight-bars", provider: "fixture-provider")
+        model.sessions[0].workspacePath = "/tmp/A deliberately long project folder name"
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-composer-tight", output: output)
+        model.sessions[0].workspacePath = fixtureFolder
+        model.sessions[0].modelOverride = nil
         model.sessions[0].permissionMode = nil
         model.sessions[0].runtime = fixtureRuntime
         model.showPermissionModes = false

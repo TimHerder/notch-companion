@@ -36,11 +36,20 @@ Opening expands **one panel and one black silhouette** to 560 × 544 points
 region. The header is two rows on one grid:
 
 - **Top row** (band height + 4): the eyes, 1.7× larger, with their left edge on
-  the 20-point content margin; the live status in words 16 points after them,
-  ending 8 points before a physical camera; 24-point icon controls (Mark all as
-  read on Your sessions, New, Settings gear) at the right margin, 6 points from
-  the top.
-- **Title row** (28 points): the page title with Back and the Team chip.
+  the 20-point content margin, and 24-point icon controls (Mark all as read on
+  Your sessions, New, Settings gear) at the right margin, 6 points from the
+  top. No text, so a physical camera never splits a word.
+- **Title row** (28 points): the page title with Back and the Team chip. On a
+  session, a status dot follows the title (6.5 points in the session's status
+  colour; a lit 6-point LED in Instrument): it breathes while work runs (still
+  under Reduce Motion) and hides when nothing is live or unread. Its word
+  (“Done”, “Needs your answer”, the running tool) is its tooltip and the
+  title's spoken value; banners and the transcript explain the rest. States
+  the user must act on (**Check native work**, **Send unconfirmed**) keep the
+  word as a short amber subtitle directly under the title.
+
+Content starts directly under the title row; the transcript's own 14-point
+inset and edge fade give it air.
 
 Displays without a notch use the 32-point simulated band, so the layout is the
 same on every Mac. These are regions inside one `UnifiedNotchView`, not
@@ -76,7 +85,7 @@ mask or expansion animation.
 | Thinking | Expanded, eyes look up and drift. |
 | Answering | Expanded, eyes look toward the transcript. |
 | New tool call | Expanded, a brief glance toward the transcript. |
-| Working | Expanded, narrowed eyes scan like reading and the status names the running tool. |
+| Working | Expanded, narrowed eyes scan like reading; the title's status dot breathes and its tooltip names the running tool. |
 | Pointer leaves | A passive preview closes 300 ms after the pointer leaves the unified surface; the full panel plays the collapse cue once, the glance closes silently. Moving within it never dismisses it. |
 | File approaching | Drag entry opens the panel before the drop, widens the eyes and shows Current session / New session targets. |
 | Needs input | Wider eyes with a small periodic hop; expanded, they look toward the request. |
@@ -246,7 +255,7 @@ protection and send cue; the glance stays open. Hovering a running row swaps
 its runtime name for a **Stop** that interrupts without opening or selecting.
 
 **Motion language.** Panel content and announcement/live labels materialize
-from a light blur; the header status blur-replaces; timers roll digits; tool
+from a light blur; timers roll digits; tool
 glyphs morph. A faint rim along the open island's sides and bottom (starting
 below band height) defines it against dark wallpapers.
 
@@ -282,8 +291,8 @@ Each effect is brief, driven by real state, and dropped under reduced motion.
   Needs you hops.
 - **Writing waveform.** While an answer streams, its live glyph is three bars
   that jump as text arrives and settle within about a second of a pause.
-- **Working shimmer.** A soft highlight sweeps the header status and a glance
-  row's tool or thinking line while work runs, never a streaming answer.
+- **Working shimmer.** A soft highlight sweeps a glance row's tool or
+  thinking line while work runs, never a streaming answer.
 - **Rim comet.** While agents work, a small warm light laps the open glance or
   panel rim every 4 s, emerging below the band.
 - **Landing dots.** A dot that becomes a result or question pops and sends one
@@ -462,7 +471,7 @@ appearance previews, and uses neutral wording without a character voice.
   marked welcomed. Settings → **Welcome · Show again** replays it.
 - **Where.** A page of the one panel (`PanelPage.welcome(step:)`). The header
   keeps only the eyes or mascot and a **Skip** button (not on the last step);
-  status, New, Settings, Back, the title row and composer are hidden. Each step
+  New, Settings, Back, the title row and composer are hidden. Each step
   centres a title, a secondary line and its choices a little above the middle;
   the footer has a page indicator, **Back** and **Continue**/**Done** as the
   primary (Return). Steps blur through each other over 0.34 s (fade under
@@ -502,6 +511,10 @@ drop opens its session).
   the full content region without the composer, its destination controls or
   attachment strip, and links to the full-session window. Returning restores
   the composer with draft and attachments. Detail views keep Back.
+- The transcript fades over 14 points at both edges, under the header and above
+  the composer, in every design and both surfaces, on an eased ramp so a line
+  cut by the edge dissolves instead of reading as sliced. Its 14-point inset
+  keeps content at rest out of the fade.
 - Show the full conversation in true order: a turn's text and tool calls appear
   in the order they began. Text the agent writes between calls is commentary,
   one step smaller and quieter, with no header or Copy. Consecutive calls form
@@ -664,6 +677,12 @@ position are remembered (`FullSessionWindow`).
 
 - Every page uses one header: optional back chevron, 19-point title, optional
   one-line subtitle, trailing controls (Conversation / Activity / Team).
+  A session's subtitle never contradicts its transcript: the harness and
+  “Needs your answer”, “Working for 0:42” (ticking), **Send unconfirmed** or
+  **Check native work**; otherwise a connection problem while idle; otherwise
+  how the last turn ended (“Worked 2 min ago”, “Failed 1 h ago”, “Stopped just
+  now”). “Connects when you send a message.” is left for a session with no
+  connection that has not run a turn, and a connected one says so.
 - Header, banners, transcript, tabs and composer share one centred column at
   most 820 points wide; Settings and Usage use 620.
 - Settings opens in the main pane from a **Settings** row at the foot of the
@@ -687,22 +706,24 @@ notch, dots, live activity, announcements, aura, rim comet, glance and stage use
   6/10/14/18; `well` cards and a `raised` bubble. Status colors match the
   island dots (working orange, needs-you amber, done green, failed red); sage
   only for the primary action. A faint bloom around the open eyes. The composer
-  is one field with an inner toolbar (attach, SnapShot, harness, folder,
-  session, Send/Stop); user messages are right-aligned bubbles; approvals,
+  is one field with an inner bar (see [composer model controls](#composer-model-controls),
+  as in every design); user messages are right-aligned bubbles; approvals,
   questions and project trust are amber-rimmed cards; copy on hover or focus;
   scroll edges fade.
 - **Tahoe:** Apple-native. Dark-Aqua label opacities, gray fills,
   `Color.accentColor` for the primary action, switches and selection, system
   status colors. Lit disc header controls; capsule buttons with a lit glass
   edge; Settings, setup, projects and delegated work as grouped lists with
-  colored icon tiles; menu-style choosers.
+  colored icon tiles; menu-style choosers. The composer is a rounded field
+  (18-point radius) with its bar inside.
 - **Instrument:** monochrome plus one international-orange signal (`#FF5A1F`)
   for what needs you and the primary action. Tracked uppercase SF Mono for
   labels, states, counts and logs; SF Pro for prose. Hairlines, 3–4-point
   radii, a 16-point dot grid, a ruled scale under the header, viewfinder
   brackets around the open eyes, LED lamps, numbered rows (in the notch), tool
   calls as log lines, code line numbers, segmented meters, a diffstat, square
-  switches and a fader slider.
+  switches and a fader slider. The composer is an inset readout: a prompt
+  chevron on the first line and the bar along its bottom edge.
 
 ## Controls and window behavior
 
@@ -878,27 +899,34 @@ folder whose sessions are all archived leaves the default list.
 
 ## Composer model controls
 
-The prompt field holds only attach, the editor and Send/Stop (Refined's
-toolbar adds SnapShot, harness, folder and, on secondary pages, the
-destination session). Session settings sit in a quiet 22-point row **under the
-field**: permission mode at the left, then model with reasoning effort, and the
-context gauge at the right, as plain secondary-color text buttons. The row
-takes height from the transcript, not the panel. Each control is optional
-(model and context on by default, permission modes off).
+The composer is **one field in every design**: attachments and the editor on
+top, and one bar along its bottom edge holding every control:
+`[+] [SnapShot] [harness (drafts) · folder · session (secondary pages)] …
+[model] [permission mode] [context gauge] [Send/Stop]`. Nothing sits in a row
+above or under the field, so a tall draft, a queue or a banner can never push a
+control out of view. Session settings (model with reasoning effort, permission
+mode, context gauge) are plain secondary-color buttons in the bar's trailing
+group, shown on the session page (compact) or always (full window). Each is
+optional (model and context on by default, permission modes off). A started
+session has no harness label (the placeholder “Ask Codex…” and the editor's
+spoken label name it); a draft's harness chooser stays in the bar, and Legacy
+Hermes keeps its label. When the bar is tight the session name gives way first,
+then the model label, then the folder chip; the gauge and Send keep their size.
 
 The model label shows the runtime's display name for the selected, reported or
-default model (the ID only when unnamed), no “Next:” prefix, then the effort
-when the model has efforts (`xhigh` reads **Extra high**), no chevron. It
-truncates within the row.
+default model (the ID only when unnamed; **Runtime default** when none is
+known), no “Next:” prefix, then the effort when the model has efforts (`xhigh`
+reads **Extra high**), no chevron. It truncates within the bar.
 
-The model picker is a bounded overlay above its row with an inset **Search
+The model picker is a bounded overlay rising from the bar with an inset **Search
 models…** field, refresh and Close. Search filters by name or ID without
 changing selection. Choosing a model with efforts keeps the picker open for
 **Reasoning effort**; the section is omitted when unsupported. No footer hints.
 Loading, errors and empty results stay visible. Choices apply on Send and are
 disabled during parent/child work or unresolved sends. Changing session or
-runtime, or collapsing, dismisses it. Model and context overlays render above
-the destination/folder row. The context gauge stays as it is (a ring, Instrument's
+runtime, or collapsing, dismisses it. Model, permission and context overlays
+open upward from the bar's trailing group, above the field's edge and the
+editor. The context gauge stays as it is (a ring, Instrument's
 segment meter). Its bubble has a fixed 264-point width, so it never jumps
 between states: a **Context** section label with Close, the percentage
 (unclamped, `≈` for estimates) with `42k / 200k` at the right and a
@@ -918,8 +946,8 @@ toggle on click. Closing removes the click monitoring.
 
 ## Permission modes
 
-An optional control (icon and mode name) at the left of the row under the field
-sets how much the agent may do unasked in this conversation: **Default
+An optional control (icon and mode name) in the composer's bar, between the model
+and the context gauge, sets how much the agent may do unasked in this conversation: **Default
 permissions** (the harness's own settings), **Ask**, **Auto-edit**, **Plan**,
 **Full access**. Off by default behind **Show permission modes**; shown only
 for harnesses that map at least one mode, listing only those
@@ -1020,8 +1048,8 @@ session inside its parent; notch silhouette and bounds are unchanged.
   (`mcp__notch__`, `notch.`, OpenCode's per-session `notch-<16 hex>_`, Codex's
   bare name): “Delegate / Delegating /
   Delegated a child task”, “Get / Getting / Got delegated task status”, and so
-  on. While a turn waits on a delegation `wait`, the header reads **Waiting on a
-  child**.
+  on. While a turn waits on a delegation `wait`, the header's status dot reads
+  **Waiting on a child** (tooltip and spoken title).
 - **Settings.** **Cross-agent delegation** (default on) lets sessions of every
   harness (OpenCode from 2.0) opened afterwards delegate.
 - **Delete.** Deleting a parent removes its children from the companion; native

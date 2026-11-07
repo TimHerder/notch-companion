@@ -5,8 +5,7 @@ struct ComposerView: View {
     @ObservedObject var model: AppModel
     var focused: FocusState<Bool>.Binding
     var isCompact = true
-    /// Refined: secondary pages name the session the message goes to. The
-    /// other designs render the destination row outside the composer.
+    /// Secondary pages name the session the message goes to, in the field's bar.
     var showsTitle = false
     @State private var editorHeight: CGFloat = ComposerTextView.minimumHeight
     @State private var submissionNotice: String?
@@ -90,74 +89,56 @@ struct ComposerView: View {
                     notice
                 }
             }
-            switch PanelTheme.current {
-            case .refined: refinedField
-            case .tahoe, .instrument: inlineField
-            }
-            // Session settings sit in their own row under the field, as in other agent harnesses.
-            if (!isCompact || model.page == .session) && (model.showModelPicker || model.showContextUsage || model.showPermissionModes) {
-                switch PanelTheme.current {
-                case .refined: ModelControlsView(model: model).padding(.leading, 6).padding(.trailing, 10)
-                case .tahoe: ModelControlsView(model: model).padding(.horizontal, 10)
-                case .instrument: ModelControlsView(model: model).padding(.horizontal, 4)
-                }
-            }
+            field
             if let hint {
                 Text(hint).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
-                    .fixedSize(horizontal: false, vertical: true).padding(.horizontal, refined ? 14 : 5)
+                    // On the editor's inset, now that every design shares the field.
+                    .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 14)
             }
         }
         .onChange(of: model.currentID) { _, _ in submissionNotice = nil }
         .onChange(of: busy) { _, _ in submissionNotice = nil }
     }
 
-    /// Refined: one field, files and the editor on top, a toolbar along its
-    /// bottom edge (attach, where the message goes, Send), all on one inset.
-    private var refinedField: some View {
-        let shape = RoundedRectangle(cornerRadius: CompanionStyle.Radius.field, style: .continuous)
+    /// One field in every design: files and the editor on top, one bar along its
+    /// bottom edge with attach, SnapShot, where the message goes, the session's
+    /// model, permissions and context, and Send. Nothing sits outside it, so a
+    /// tall draft or a banner can never push a control out of view.
+    private var field: some View {
+        let theme = PanelTheme.current
         let lit = focused.wrappedValue
         return VStack(alignment: .leading, spacing: 0) {
             if model.current?.attachments.isEmpty == false {
                 AttachmentStrip(model: model).padding(.horizontal, 10).padding(.top, 10)
             }
-            editor
-                .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 2)
-                .textCursor()
-            HStack(spacing: 2) {
-                QuietIconButton(symbol: "plus", label: "Attach files") { model.pickFiles(showPanel: isCompact) }
-                // The notch remembers the window in front when it opened; the full window is in front itself.
-                if isCompact && model.showSnapShot && model.current?.capabilities.images == true {
-                    QuietIconButton(symbol: "camera.viewfinder",
-                                    label: model.snapShotSource.map { "Attach a picture of \($0.name)" } ?? "Open the notch from a window to attach it") {
-                        Task { await model.attachSnapShot() }
+            Group {
+                if theme == .instrument {
+                    HStack(alignment: .top, spacing: 8) {
+                        // The prompt glyph sits on the first line: it is yours to write.
+                        Image(systemName: "chevron.right").font(.system(size: 9.5, weight: .heavy))
+                            .foregroundStyle(lit ? CompanionStyle.signal : CompanionStyle.secondary)
+                            .frame(width: 10, height: ComposerTextView.minimumHeight).accessibilityHidden(true)
+                        editor
                     }
-                    .disabled(model.snapShotSource == nil)
+                } else {
+                    editor
                 }
-                ComposerDestinationView(model: model, showsTitle: showsTitle)
-                Spacer(minLength: 8)
-                sendButton
             }
-            .padding(.horizontal, 7).padding(.bottom, 7)
+            .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 2)
+            .textCursor()
+            bar.padding(.horizontal, 7).padding(.bottom, 7)
         }
-        .background(bodyStyle == nil ? CompanionStyle.surface.opacity(0.8) : Color.white.opacity(0.06), in: shape)
-        .overlay(shape.strokeBorder(LinearGradient(colors: [Color.white.opacity(lit ? 0.24 : 0.13), Color.white.opacity(lit ? 0.14 : 0.06)],
-                                                   startPoint: .top, endPoint: .bottom), lineWidth: 0.75))
+        // The surface is a background layer, so the bar's choosers float above its edge.
+        .background { fieldSurface(lit: lit) }
         .animation(.easeOut(duration: 0.15), value: lit)
     }
 
-    /// Tahoe and Instrument: attach keys, the editor and Send on one row.
-    private var inlineField: some View {
-        let instrument = PanelTheme.current == .instrument
-        // Tahoe: a single line is a capsule, the 28-point buttons 5 points inside
-        // a 38-point field so their circles share its corner centers.
-        // Instrument: a square-cornered inset readout; the 28-point keys sit 5 points inside it.
-        let shape = RoundedRectangle(cornerRadius: instrument ? CompanionStyle.cardRadius : 19, style: .continuous)
-        // Instrument: attach keys stay on the first line with the prompt glyph; Send stays at the last.
-        let firstLine = instrument ? max(0, editorHeight - ComposerTextView.minimumHeight) : 0
-        let row = HStack(alignment: .bottom, spacing: 6) {
+    /// `[+] [SnapShot] [destination, folder] … [model] [permissions] [context] [Send]`.
+    /// When it is tight the model label truncates first, then the folder; the
+    /// gauge and Send keep their size.
+    private var bar: some View {
+        HStack(spacing: 2) {
             QuietIconButton(symbol: "plus", label: "Attach files") { model.pickFiles(showPanel: isCompact) }
-                .padding(.bottom, 5)
-                .alignmentGuide(.bottom) { $0[.bottom] + firstLine }
             // The notch remembers the window in front when it opened; the full window is in front itself.
             if isCompact && model.showSnapShot && model.current?.capabilities.images == true {
                 QuietIconButton(symbol: "camera.viewfinder",
@@ -165,41 +146,38 @@ struct ComposerView: View {
                     Task { await model.attachSnapShot() }
                 }
                 .disabled(model.snapShotSource == nil)
-                .padding(.bottom, 5).padding(.leading, -6)
-                .alignmentGuide(.bottom) { $0[.bottom] + firstLine }
             }
-            if instrument {
-                HStack(alignment: .top, spacing: 8) {
-                    // The prompt glyph sits on the first line: it is yours to write.
-                    Image(systemName: "chevron.right").font(.system(size: 9.5, weight: .heavy))
-                        .foregroundStyle(focused.wrappedValue ? CompanionStyle.signal : CompanionStyle.secondary)
-                        .frame(width: 10, height: ComposerTextView.minimumHeight).accessibilityHidden(true)
-                    editor.textCursor()
-                }
-                .padding(.vertical, 8)
-            } else {
-                editor
-                    .padding(.vertical, 8)
-                    .textCursor()
+            ComposerDestinationView(model: model, showsTitle: showsTitle).layoutPriority(1)
+            Spacer(minLength: 8)
+            if (!isCompact || model.page == .session) && (model.showModelPicker || model.showContextUsage || model.showPermissionModes) {
+                ModelControlsView(model: model).padding(.trailing, 4)
             }
             sendButton
-                .padding(.bottom, 5)
         }
-        .padding(.horizontal, 5)
-        return Group {
-            if instrument {
-                row
-                    .background(CompanionStyle.inset, in: shape)
-                    .overlay(shape.strokeBorder(focused.wrappedValue ? Color.white.opacity(0.34) : CompanionStyle.ruleStrong, lineWidth: 0.75))
-            } else {
-                row
-                    // Glass over the black body reads as a hole; a gray fill makes it a field.
-                    .background(bodyStyle == .black ? CompanionStyle.fill : .clear, in: shape)
-                    .notchControlBackground(shape, fallback: CompanionStyle.surface)
-                    // A focused field wears the accent ring, as native text fields do.
-                    .overlay(shape.strokeBorder(focused.wrappedValue ? AnyShapeStyle(CompanionStyle.accent.opacity(0.7)) : AnyShapeStyle(GlassEdge.gradient(0.16)),
-                                                lineWidth: focused.wrappedValue ? 1.5 : 0.5))
-            }
+    }
+
+    /// Refined: a solid white-6% field. Tahoe: Apple's gray fill under Liquid
+    /// Glass (on Black) with an accent ring when focused. Instrument: a dark
+    /// square-cornered inset readout on a hairline.
+    @ViewBuilder private func fieldSurface(lit: Bool) -> some View {
+        switch PanelTheme.current {
+        case .refined:
+            let shape = RoundedRectangle(cornerRadius: CompanionStyle.Radius.field, style: .continuous)
+            shape.fill(bodyStyle == nil ? CompanionStyle.surface.opacity(0.8) : Color.white.opacity(0.06))
+                .overlay(shape.strokeBorder(LinearGradient(colors: [Color.white.opacity(lit ? 0.24 : 0.13), Color.white.opacity(lit ? 0.14 : 0.06)],
+                                                           startPoint: .top, endPoint: .bottom), lineWidth: 0.75))
+        case .tahoe:
+            let shape = RoundedRectangle(cornerRadius: CompanionStyle.Radius.field, style: .continuous)
+            // Glass over the black body reads as a hole; a gray fill makes it a field.
+            shape.fill(bodyStyle == .black ? CompanionStyle.fill : .clear)
+                .notchControlBackground(shape, fallback: CompanionStyle.surface)
+                // A focused field wears the accent ring, as native text fields do.
+                .overlay(shape.strokeBorder(lit ? AnyShapeStyle(CompanionStyle.accent.opacity(0.7)) : AnyShapeStyle(GlassEdge.gradient(0.16)),
+                                            lineWidth: lit ? 1.5 : 0.5))
+        case .instrument:
+            let shape = RoundedRectangle(cornerRadius: CompanionStyle.cardRadius, style: .continuous)
+            shape.fill(CompanionStyle.inset)
+                .overlay(shape.strokeBorder(lit ? Color.white.opacity(0.34) : CompanionStyle.ruleStrong, lineWidth: 0.75))
         }
     }
 

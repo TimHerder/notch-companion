@@ -36,7 +36,45 @@ struct ModelControlsView: View {
             } ?? "The runtime has not reported context usage yet. Send a message to receive a report."
             let modes = session.capabilities.supportedPermissionModes
             let theme = PanelTheme.current
+            // A long name truncates first but keeps about a dozen characters before the folder gives way.
+            let modelMinWidth: CGFloat? = (modelTitle?.count ?? 0) > 12 ? 84 : nil
+            // Model, permissions, context: the trailing group of the composer's bar.
             HStack(spacing: 4) {
+                if model.showModelPicker {
+                    Button {
+                        choosingModel.toggle()
+                        showingContext = false; choosingPermissions = false
+                    } label: {
+                        switch theme {
+                        case .refined:
+                            HStack(spacing: 5) {
+                                Text(modelTitle ?? "Runtime default")
+                                    .lineLimit(1).truncationMode(.middle).frame(minWidth: modelMinWidth)
+                                if let effort {
+                                    Text(RuntimeModelOption.effortTitle(effort)).foregroundStyle(CompanionStyle.tertiary)
+                                        .lineLimit(1).fixedSize()
+                                }
+                            }
+                        case .tahoe, .instrument:
+                            HStack(spacing: theme == .instrument ? 7 : 5) {
+                                Text(modelTitle ?? "Runtime default").foregroundStyle(CompanionStyle.text)
+                                    .lineLimit(1).truncationMode(.middle).frame(minWidth: modelMinWidth)
+                                if let effort { Text(RuntimeModelOption.effortTitle(effort)).lineLimit(1).fixedSize() }
+                            }
+                            .modifier(InstrumentMicroLabel(active: theme == .instrument))
+                        }
+                    }
+                    .sessionControlStyle()
+                    .disabled(!model.canChangeModel(session.id))
+                    .accessibilityLabel("Choose \(session.runtime.title) model and reasoning effort")
+                    .accessibilityValue([modelTitle, effort.map(RuntimeModelOption.effortTitle)].compactMap { $0 }.joined(separator: ", "))
+                    .background(PopupDismissalRegion(monitor: popupDismissal))
+                    .help(session.isLegacyPrivate ? "Model selection is unavailable for Legacy Hermes."
+                          : session.isBusy ? "Wait for this session and its delegated work to finish."
+                          : "Choose the model for your next message in this conversation")
+                    // The first to truncate when the bar is tight.
+                    .layoutPriority(-1)
+                }
                 if model.showPermissionModes && !modes.isEmpty {
                     Button {
                         choosingPermissions.toggle()
@@ -66,6 +104,8 @@ struct ModelControlsView: View {
                         .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
                     }
                     .sessionControlStyle()
+                    // A short mode name stays whole; the model and then the folder give way first.
+                    .fixedSize()
                     .disabled(!model.canChangePermissionMode(session.id))
                     .help(model.canChangePermissionMode(session.id)
                           ? "Permissions for your next message: \(permissionTitle)"
@@ -73,40 +113,6 @@ struct ModelControlsView: View {
                     .accessibilityLabel("Permission mode")
                     .accessibilityValue(permissionTitle)
                     .background(PopupDismissalRegion(monitor: popupDismissal))
-                }
-                Spacer(minLength: 8)
-                if model.showModelPicker {
-                    Button {
-                        choosingModel.toggle()
-                        showingContext = false; choosingPermissions = false
-                    } label: {
-                        switch theme {
-                        case .refined:
-                            HStack(spacing: 5) {
-                                Text(modelTitle ?? "Runtime default")
-                                    .lineLimit(1).truncationMode(.middle)
-                                if let effort {
-                                    Text(RuntimeModelOption.effortTitle(effort)).foregroundStyle(CompanionStyle.tertiary)
-                                        .lineLimit(1).fixedSize()
-                                }
-                            }
-                        case .tahoe, .instrument:
-                            HStack(spacing: theme == .instrument ? 7 : 5) {
-                                Text(modelTitle ?? "Runtime default").foregroundStyle(CompanionStyle.text)
-                                    .lineLimit(1).truncationMode(.middle)
-                                if let effort { Text(RuntimeModelOption.effortTitle(effort)).lineLimit(1).fixedSize() }
-                            }
-                            .modifier(InstrumentMicroLabel(active: theme == .instrument))
-                        }
-                    }
-                    .sessionControlStyle()
-                    .disabled(!model.canChangeModel(session.id))
-                    .accessibilityLabel("Choose \(session.runtime.title) model and reasoning effort")
-                    .accessibilityValue([modelTitle, effort.map(RuntimeModelOption.effortTitle)].compactMap { $0 }.joined(separator: ", "))
-                    .background(PopupDismissalRegion(monitor: popupDismissal))
-                    .help(session.isLegacyPrivate ? "Model selection is unavailable for Legacy Hermes."
-                          : session.isBusy ? "Wait for this session and its delegated work to finish."
-                          : "Choose the model for your next message in this conversation")
                 }
                 if model.showContextUsage {
                     let toggle = {
@@ -143,6 +149,8 @@ struct ModelControlsView: View {
                             .buttonStyle(NotchIconButtonStyle(size: 22))
                         }
                     }
+                    // The gauge never gives way in a tight bar.
+                    .fixedSize()
                     .help(contextCounts.map { [$0, percentage].compactMap { $0 }.joined(separator: " · ") } ?? contextDetail)
                     .accessibilityLabel("Context usage")
                     .accessibilityValue(contextDetail)
@@ -206,7 +214,8 @@ struct ModelControlsView: View {
                         .offset(y: -30)
                 }
             }
-            .overlay(alignment: .bottomLeading) {
+            // Anchored at the trailing edge like the others, so it stays inside the panel.
+            .overlay(alignment: .bottomTrailing) {
                 if choosingPermissions && model.showPermissionModes {
                     permissionChoices(session: session, modes: modes)
                         .frame(width: PanelTheme.pick(320, 320, 364))
@@ -624,7 +633,7 @@ private struct InstrumentMicroLabel: ViewModifier {
 }
 
 private extension View {
-    /// Refined's quiet toolbar control under the field; a text button elsewhere.
+    /// Refined's quiet toolbar control in the field's bar; a text button elsewhere.
     @ViewBuilder func sessionControlStyle() -> some View {
         if PanelTheme.current == .refined { buttonStyle(NotchToolbarButtonStyle(height: 22, weight: .regular)) }
         else { buttonStyle(NotchTextButtonStyle()) }
