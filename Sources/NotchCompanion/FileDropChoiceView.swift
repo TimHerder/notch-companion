@@ -42,7 +42,7 @@ struct FileDropChoiceView: View {
                 case .instrument:
                     let square = RoundedRectangle(cornerRadius: CompanionStyle.cardRadius, style: .continuous)
                     targets
-                        .background { ZStack { Color.black; InstrumentGrid() } }
+                        .background(Color.black)
                         .clipShape(square)
                         .overlay(square.strokeBorder(CompanionStyle.ruleStrong, lineWidth: 1))
                         .overlay {
@@ -85,7 +85,7 @@ struct FileDropChoiceView: View {
         .multilineTextAlignment(.center)
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .modifier(DropZoneSurface(isCurrent: isCurrent, selected: selected))
+        .modifier(DropZoneSurface(selected: selected))
         .opacity(enabled ? 1 : 0.5)
         .accessibilityElement(children: .combine)
         .accessibilityValue(enabled ? (selected ? "Release to attach" : "Drop target") : "Unavailable")
@@ -111,7 +111,6 @@ struct FileDropChoiceView: View {
                 .font(.system(size: 28, weight: .ultraLight))
                 .foregroundStyle(selected ? CompanionStyle.text : CompanionStyle.secondary)
                 .frame(width: 64, height: 56)
-                .overlay { Reticle(arm: 6).opacity(selected ? 1 : 0.6) }
                 .accessibilityHidden(true)
         }
     }
@@ -126,7 +125,7 @@ struct FileDropChoiceView: View {
                 .foregroundStyle(selected ? CompanionStyle.accent : tahoe ? CompanionStyle.secondary : CompanionStyle.tertiary)
         case .instrument:
             Label(title, systemImage: enabled ? "arrow.down.to.line" : "arrow.right")
-                .microLabel(10, weight: selected ? .semibold : .regular, tracking: 0.8)
+                .font(.system(size: 11.5, weight: selected ? .semibold : .regular))
                 .foregroundStyle(selected ? CompanionStyle.onAccent : CompanionStyle.secondary)
                 .padding(.horizontal, 9).frame(height: 22)
                 .background(selected ? CompanionStyle.text : Color.clear, in: RoundedRectangle(cornerRadius: CompanionStyle.radius))
@@ -137,7 +136,6 @@ struct FileDropChoiceView: View {
 
 /// The fill and edge of one destination in the current design.
 private struct DropZoneSurface: ViewModifier {
-    let isCurrent: Bool
     let selected: Bool
 
     func body(content: Content) -> some View {
@@ -159,11 +157,6 @@ private struct DropZoneSurface: ViewModifier {
                 .padding(10)
         case .instrument:
             content
-                .overlay(alignment: .topLeading) {
-                    Text(isCurrent ? "A · Current" : "B · New").microLabel(9.5, tracking: 0.8)
-                        .foregroundStyle(selected ? CompanionStyle.text : CompanionStyle.faint).padding(14)
-                        .accessibilityHidden(true)
-                }
                 .background(selected ? Color.white.opacity(0.05) : .clear)
         }
     }

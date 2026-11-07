@@ -48,12 +48,7 @@ struct ChangeSummaryView: View {
                         Text(title).fontWeight(PanelTheme.pick(.medium, .semibold, .medium))
                     }
                     if !all.isEmpty {
-                        if theme == .instrument {
-                            Text(String(format: "%02d", all.count) + (all.count == 1 ? " file" : " files")).microLabel(10, weight: .regular, tracking: 0.6)
-                                .foregroundStyle(CompanionStyle.secondary)
-                        } else {
-                            Text("\(all.count) \(all.count == 1 ? "file" : "files")").foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.secondary))
-                        }
+                        Text("\(all.count) \(all.count == 1 ? "file" : "files")").foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.secondary))
                         Spacer(minLength: 4)
                         counts(added, removed)
                         if theme == .instrument { DiffStat(added: added, removed: removed) }
@@ -78,7 +73,7 @@ struct ChangeSummaryView: View {
                         switch theme {
                         case .refined: label.foregroundStyle(CompanionStyle.secondary).fontWeight(.medium)
                         case .tahoe: label.foregroundStyle(CompanionStyle.secondary).fontWeight(.semibold)
-                        case .instrument: label.microLabel(10, weight: .semibold).foregroundStyle(CompanionStyle.text)
+                        case .instrument: label.foregroundStyle(CompanionStyle.secondary).fontWeight(.semibold)
                         }
                         Spacer(minLength: 4)
                         if !group.files.isEmpty { counts(group.additions, group.deletions) }
@@ -98,8 +93,7 @@ struct ChangeSummaryView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "chevron.right").font(.system(size: PanelTheme.pick(10, 10, 8), weight: .bold))
                                 .frame(width: PanelTheme.pick(16, 15, 14))
-                            let label = Text("\(hidden) more \(hidden == 1 ? "file" : "files")")
-                            if theme == .instrument { label.microLabel(9.5, tracking: 0.7) } else { label }
+                            Text("\(hidden) more \(hidden == 1 ? "file" : "files")")
                         }
                         .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.secondary))
                         .frame(minHeight: 20).padding(.horizontal, PanelTheme.pick(0, 7, 7)).contentShape(Rectangle())
@@ -221,7 +215,7 @@ struct ChangeSummaryView: View {
                             kind.font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
                         case .instrument:
                             Text(file.path).font(CompanionStyle.mono(11)).lineLimit(2).truncationMode(.middle)
-                            kind.microLabel(9, weight: .regular, tracking: 0.6).foregroundStyle(CompanionStyle.faint)
+                            kind.font(.system(size: 10.5)).foregroundStyle(CompanionStyle.faint)
                         }
                     }
                     Spacer(minLength: 4)
@@ -282,11 +276,8 @@ struct ChangeSummaryView: View {
 
     private func editorButton(_ title: String, url: URL) -> some View {
         Button { open(url) } label: {
-            if theme == .instrument {
-                Label(title, systemImage: "arrow.up.right").microLabel(9.5, tracking: 0.6).foregroundStyle(CompanionStyle.secondary)
-            } else {
-                Label(title, systemImage: "arrow.up.right")
-            }
+            let label = Label(title, systemImage: "arrow.up.right")
+            if theme == .instrument { label.foregroundStyle(CompanionStyle.secondary) } else { label }
         }
             .buttonStyle(NotchTextButtonStyle())
             .contextMenu { Button("Choose editor…") { chooseEditor(url) } }

@@ -60,14 +60,10 @@ struct SessionBrowserView: View {
             }.softTopEdge(8, bottom: compact ? 14 : 0).accessibilityLabel("Sessions")
         case .instrument:
             ScrollView {
-                // Rows are numbered through the whole list, like channels on a device.
-                let order = projects.flatMap(\.sessions).map(\.id)
                 LazyVStack(spacing: 0) {
                     ForEach(projects) { project in
                         projectHeader(project)
-                        ForEach(project.sessions) { session in
-                            row(session, index: (order.firstIndex(of: session.id) ?? 0) + 1)
-                        }
+                        ForEach(project.sessions) { session in row(session) }
                     }
                     if projects.isEmpty { emptyState }
                     if showsFooters { footers.padding(.top, projects.isEmpty ? 0 : 12) }
@@ -105,9 +101,8 @@ struct SessionBrowserView: View {
                     Text("\(count)").font(.system(size: PanelTheme.pick(11, 12, 11)).monospacedDigit())
                         .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.faint))
                 case .instrument:
-                    Text(filter.title).microLabel(9.5, tracking: 0.8)
-                    Text(String(format: "%02d", count)).font(CompanionStyle.mono(10).monospacedDigit())
-                        .foregroundStyle(CompanionStyle.faint)
+                    Text(filter.title).font(.system(size: 12))
+                    Text("\(count)").font(.system(size: 11).monospacedDigit()).foregroundStyle(CompanionStyle.faint)
                 }
                 Spacer(minLength: 6)
                 Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
@@ -145,7 +140,6 @@ struct SessionBrowserView: View {
             .padding(.vertical, 40).padding(.horizontal, 24).frame(maxWidth: .infinity)
         case .instrument:
             VStack(alignment: .leading, spacing: 6) {
-                Text("00 sessions").microLabel(9.5).foregroundStyle(CompanionStyle.faint)
                 Text(emptyTitle).font(.system(size: 15, weight: .semibold))
                 Text(emptyDetail).font(.system(size: 12.5)).foregroundStyle(CompanionStyle.secondary)
             }
@@ -239,7 +233,7 @@ struct SessionBrowserView: View {
                     .labelStyle(.titleAndIcon)
                     .microLabel(10, weight: .semibold).foregroundStyle(CompanionStyle.secondary))
                     .layoutPriority(1)
-                Text(String(format: "%02d", count)).font(CompanionStyle.mono(10).monospacedDigit()).foregroundStyle(CompanionStyle.faint)
+                Text("\(count)").font(.system(size: 11).monospacedDigit()).foregroundStyle(CompanionStyle.faint)
                 Rectangle().fill(CompanionStyle.rule).frame(height: 0.5)
                 newSession
             }
@@ -255,8 +249,7 @@ struct SessionBrowserView: View {
             .accessibilityAddTraits(.isHeader)
     }
 
-    /// `index` numbers the row in Instrument.
-    @ViewBuilder private func row(_ session: CompanionSession, index: Int = 0) -> some View {
+    @ViewBuilder private func row(_ session: CompanionSession) -> some View {
         if renamingID == session.id {
             renameEditor(session)
         } else {
@@ -267,7 +260,7 @@ struct SessionBrowserView: View {
             let entry = SessionDigest.entry(session, requests: model.requests)
             VStack(alignment: .leading, spacing: 0) {
                 Button { model.sessionActionsID = nil; model.selectSession(session.id) } label: {
-                    rowLine(session, entry: entry, index: index, selected: selected, hidesTrailing: showsActions)
+                    rowLine(session, entry: entry, selected: selected, hidesTrailing: showsActions)
                         .padding(.horizontal, PanelTheme.pick(12, 10, 10))
                         // A two-line sidebar title keeps the single-line rows' first-line position.
                         .padding(.vertical, compact ? 0 : 9)
@@ -319,13 +312,12 @@ struct SessionBrowserView: View {
     }
 
     static var rowHeight: CGFloat { PanelTheme.pick(34, 32, 34) }
-    /// Where Instrument titles start: past the ordinal in the notch, past the lamp in the sidebar.
-    private var instrumentTitleX: CGFloat { compact ? 54 : 27 }
+    /// Where Instrument titles start: past the lamp.
+    private let instrumentTitleX: CGFloat = 27
 
     /// Status, title, then runtime and age (a live timer while working). The
     /// notch keeps one line; the sidebar wraps titles to two, the rest on the first.
-    private func rowLine(_ session: CompanionSession, entry: GlanceEntry, index: Int, selected: Bool, hidesTrailing: Bool) -> some View {
-        let theme = PanelTheme.current
+    private func rowLine(_ session: CompanionSession, entry: GlanceEntry, selected: Bool, hidesTrailing: Bool) -> some View {
         // Read rows recede; what is new or needs you keeps full contrast.
         let quiet = !entry.unread && !selected
         let archived = model.sessionFilter != .archived && (session.isArchived || model.isAutoArchived(session))
@@ -349,13 +341,6 @@ struct SessionBrowserView: View {
             }
         }
         return HStack(alignment: alignment, spacing: spacing) {
-            // The 252-point sidebar has no room for the ordinal beside a readable title.
-            if theme == .instrument && compact {
-                Text(String(format: "%02d", index)).font(CompanionStyle.mono(10.5).monospacedDigit())
-                    .foregroundStyle(selected ? CompanionStyle.text : CompanionStyle.faint)
-                    .frame(width: 18, alignment: .leading)
-                    .accessibilityHidden(true)
-            }
             statusMark(session, entry: entry)
             if compact {
                 label
@@ -397,7 +382,7 @@ struct SessionBrowserView: View {
             if entry.status == .working {
                 TimelineView(.periodic(from: entry.since, by: 1)) { context in
                     Text(SessionDigest.elapsed(context.date.timeIntervalSince(entry.since)))
-                        .foregroundStyle(theme == .instrument ? CompanionStyle.text : IslandStyle.indicatorColor(.running))
+                        .foregroundStyle(theme == .instrument ? CompanionStyle.signal : IslandStyle.indicatorColor(.running))
                 }
             } else if let until = session.snoozedUntil {
                 // A snoozed row counts down to its wake instead of up from its last activity.
@@ -408,8 +393,7 @@ struct SessionBrowserView: View {
                     .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.faint))
             }
         }
-        .font(PanelTheme.pick(CompanionStyle.caption, .system(size: 11.5), CompanionStyle.mono(10)).monospacedDigit())
-        .textCase(theme == .instrument ? .uppercase : nil)
+        .font(PanelTheme.pick(CompanionStyle.caption, .system(size: 11.5), .system(size: 11)).monospacedDigit())
         .lineLimit(1)
         .fixedSize()
     }
@@ -471,7 +455,7 @@ struct SessionBrowserView: View {
         switch PanelTheme.current {
         case .refined: text.foregroundStyle(CompanionStyle.faint)
         case .tahoe: text.foregroundStyle(CompanionStyle.faint)
-        case .instrument: text.microLabel(9.5, weight: .regular, tracking: 0.6).foregroundStyle(CompanionStyle.faint)
+        case .instrument: text.foregroundStyle(CompanionStyle.faint)
         }
     }
 

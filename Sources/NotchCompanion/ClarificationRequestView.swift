@@ -135,7 +135,7 @@ private struct RequestAnswerForm: View {
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, maxHeight: request.kind == .approval ? nil : .infinity, alignment: .topLeading)
                 .padding(.leading, 12)
-                .overlay(alignment: .leading) { Rectangle().fill(CompanionStyle.signal).frame(width: 2) }
+                .overlay(alignment: .leading) { Rectangle().fill(CompanionStyle.amber).frame(width: 2) }
         }
     }
 
@@ -166,16 +166,15 @@ private struct RequestAnswerForm: View {
                 }
             }
         case .instrument:
-            // Needs you: the signal lamp, the request in tracked capitals, a rule to the progress count.
+            // Needs you: the amber lamp, the request, a rule to the progress count.
             HStack(alignment: .center, spacing: 8) {
-                LED(color: CompanionStyle.signal, pulsing: true, size: 6)
-                Label(request.title, systemImage: request.kind == .approval ? "hand.raised" : "bubble.left")
-                    .labelStyle(.titleOnly)
-                    .microLabel(10.5, weight: .semibold, tracking: 0.9).foregroundStyle(CompanionStyle.signal)
+                LED(color: CompanionStyle.amber, pulsing: true, size: 6)
+                Text(request.title)
+                    .font(.system(size: 13, weight: .semibold))
                     .lineLimit(2).layoutPriority(1)
-                Rectangle().fill(CompanionStyle.signal.opacity(0.35)).frame(height: 0.5)
+                Rectangle().fill(CompanionStyle.amber.opacity(0.35)).frame(height: 0.5)
                 if let progress {
-                    Text(progress).microLabel(9.5, tracking: 0.6).foregroundStyle(CompanionStyle.secondary).fixedSize()
+                    Text(progress).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary).fixedSize()
                 }
             }
         }
@@ -239,7 +238,7 @@ private struct RequestAnswerForm: View {
         switch PanelTheme.current {
         case .refined: Text(text).font(CompanionStyle.caption).foregroundStyle(CompanionStyle.tertiary).padding(.top, 2)
         case .tahoe: Text(text).font(.system(size: 11.5)).foregroundStyle(CompanionStyle.secondary)
-        case .instrument: Text(text).microLabel(9.5, tracking: 0.7).foregroundStyle(CompanionStyle.faint)
+        case .instrument: Text(text).font(.system(size: 11)).foregroundStyle(CompanionStyle.faint)
         }
     }
 
@@ -398,7 +397,7 @@ struct AsyncQuestionCard: View {
                     if answered {
                         if !question.options.isEmpty {
                             Text(question.options.joined(separator: " · "))
-                                .font(PanelTheme.pick(CompanionStyle.caption, .system(size: 11.5), CompanionStyle.mono(10.5)))
+                                .font(PanelTheme.pick(CompanionStyle.caption, .system(size: 11.5), .system(size: 11.5)))
                                 .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.secondary))
                                 .lineLimit(2)
                         }
@@ -435,10 +434,9 @@ struct AsyncQuestionCard: View {
                 .foregroundStyle(answered ? CompanionStyle.secondary : CompanionStyle.amber)
         case .instrument:
             HStack(spacing: 8) {
-                LED(color: answered ? CompanionStyle.faint : CompanionStyle.signal, lit: !answered, size: 6)
-                Label(title, systemImage: answered ? "checkmark.bubble" : "bubble.left")
-                    .labelStyle(.titleOnly)
-                    .microLabel(10, weight: .semibold)
+                LED(color: answered ? CompanionStyle.faint : CompanionStyle.amber, lit: !answered, size: 6)
+                Text(title)
+                    .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(answered ? CompanionStyle.secondary : CompanionStyle.amber)
                 Rectangle().fill(CompanionStyle.rule).frame(height: 0.5)
             }

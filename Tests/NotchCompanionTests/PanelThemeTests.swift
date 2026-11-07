@@ -47,10 +47,17 @@ final class PanelThemeTests: XCTestCase {
         XCTAssertEqual(CompanionStyle.accent, .accentColor)
         XCTAssertEqual(CompanionStyle.color(.finished), CompanionStyle.green)
 
+        // Instrument: orange only for live work; the primary key is lit white and
+        // the other statuses use the island's colors.
         PanelTheme.current = .instrument
-        XCTAssertEqual(CompanionStyle.accent, CompanionStyle.signal)
-        XCTAssertEqual(CompanionStyle.color(.waiting), CompanionStyle.signal)
-        XCTAssertEqual(CompanionStyle.color(.finished), CompanionStyle.text)
+        XCTAssertNotEqual(CompanionStyle.accent, CompanionStyle.signal)
+        XCTAssertEqual(CompanionStyle.color(.working), CompanionStyle.signal)
+        XCTAssertEqual(CompanionStyle.indicatorColor(.running), CompanionStyle.signal)
+        XCTAssertEqual(CompanionStyle.color(.waiting), IslandStyle.amber)
+        XCTAssertEqual(CompanionStyle.indicatorColor(.waiting), IslandStyle.amber)
+        XCTAssertEqual(CompanionStyle.color(.finished), IslandStyle.indicatorColor(.finished))
+        XCTAssertEqual(CompanionStyle.color(.failed), IslandStyle.error)
+        XCTAssertEqual(CompanionStyle.amber, IslandStyle.amber)
         XCTAssertEqual(NotchRowButtonStyle().cornerRadius, CompanionStyle.radius)
 
         XCTAssertEqual(island.0, IslandStyle.accent)

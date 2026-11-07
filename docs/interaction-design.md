@@ -529,7 +529,7 @@ drop opens its session).
   status word is spoken, not shown) with no card in Refined and Tahoe and log
   lines in Instrument; a finished run outside a fold reads “N tool calls”. In
   Refined and Tahoe a failed call's name takes the failure colour beside its
-  icon; Instrument marks it with its signal tag.
+  icon; Instrument marks it with a red `ERR` tag.
 - **Live current-turn cap:** only the newest run shows its latest three calls,
   newest at the bottom, with older calls behind “N earlier tool calls”; new
   calls roll rows upward. Stable tool identities update rows in place. The cap
@@ -537,7 +537,7 @@ drop opens its session).
   content reads “Working for 42s”, ticking for the whole turn while text
   streams (“Waiting for your reply…” while the agent waits on you, beside a
   still question mark in the needs-you colour in Refined and Tahoe and a steady
-  signal LED in Instrument; never the spinner), followed by
+  amber LED in Instrument; never the spinner), followed by
   any delegated agents still working.
 - **Finished turns** read: your message, a **Worked for 2:14** fold (collapsed
   by default), the answer, then its changes (open for the latest finished turn,
@@ -683,8 +683,7 @@ black and fade to glass over the next 80 points. Body controls by design:
   gray fill under Liquid Glass on Black, translucent on Glass and Smoked; its
   other fills stay translucent except the sent bubble, menus and drop tray.
 - **Instrument:** flat hairline keys and inset fields on every body, no Liquid
-  Glass; Jump to latest is a solid black key; the blur shows through the dot
-  grid.
+  Glass; Jump to latest is a solid black key.
 
 The full-session window follows the same Notch body setting immediately,
 including controls, sidebar and the area under the title bar, with a uniform
@@ -739,14 +738,25 @@ notch, dots, live activity, announcements, aura, rim comet, glance and stage use
   edge; Settings, setup, projects and delegated work as grouped lists with
   colored icon tiles; menu-style choosers. The composer is a rounded field
   (18-point radius) with its bar inside.
-- **Instrument:** monochrome plus one international-orange signal (`#FF5A1F`)
-  for what needs you and the primary action. Tracked uppercase SF Mono for
-  labels, states, counts and logs; SF Pro for prose. Hairlines, 3–4-point
-  radii, a 16-point dot grid, a ruled scale under the header, viewfinder
-  brackets around the open eyes, LED lamps, numbered rows (in the notch), tool
-  calls as log lines, code line numbers, segmented meters, a diffstat, square
-  switches and a fader slider. The composer is an inset readout: a prompt
-  chevron on the first line and the bar along its bottom edge.
+- **Instrument:** monochrome with one international-orange signal (`#FF5A1F`)
+  that means live work (the working lamp, timer and log line) and focus (the
+  prompt chevron and caret), nothing else. Other statuses use the island's
+  colors: done green, needs-you amber (questions, approvals, project trust,
+  setup, **Limit reached** and full meters), failures and errors red. The
+  primary action (Send, Stop, Implement, Reply, Save) is a lit white key.
+  Tracked uppercase SF Mono only for section headers (rule labels, project
+  headers, the Changes title, a code block's language), tool log lines and
+  status lamps' labels; buttons, chips, segmented controls and metadata use
+  sentence-case SF (**Set up**, **Archived**, **Copy**, “2 files”, “Hermes ·
+  now”, “You”), and counts are never zero-padded. One decorative motif: the
+  ruled scale under the header with the viewfinder brackets around the open
+  eyes (no dot grid, crop marks or row numbers). Hairlines, 3–4-point radii,
+  LED lamps, tool calls as log lines, code line numbers, segmented meters, a
+  diffstat, square switches and a fader slider. Pinned banners (connection,
+  errors, deferred work, a delegated task needing attention) sit on an opaque
+  panel-colored strip with a hairline under it. The composer is an inset
+  readout: a prompt chevron on the first line and the bar along its bottom
+  edge.
 
 ### Agent logos
 
@@ -765,8 +775,8 @@ labels, the app icon and marketing assets. Sources and owners:
 ## Controls and window behavior
 
 Use the shared controls in `NotchControls.swift`, which draw each control in
-the current design. Reserve the accent (sage, system accent, or Instrument
-orange) for the primary action (Send/Stop, Reply, Allow once, Save). Every
+the current design. Reserve the accent (sage, system accent, or Instrument's
+lit white key) for the primary action (Send/Stop, Reply, Allow once, Save). Every
 control has hover and press feedback. The gear toggles Settings directly;
 **Open full session** lives in the Settings footer. Offline state appears in the
 top banner and Settings, not in the composer.
@@ -838,8 +848,8 @@ identify selection.
   plan's name, the first heading of the turn's last answer (as plain text,
   without a leading “Plan:”), or **Plan ready** when it has none; then **Keep
   planning** as quiet text and **Implement** as its one action (Refined's
-  neutral pill, so sage stays with Send; the accent key in Tahoe and
-  Instrument). It is never a separate band or tint. Implement
+  neutral pill, so sage stays with Send; the accent key in Tahoe; the lit
+  white key, like Send, in Instrument). It is never a separate band or tint. Implement
   returns to the permission mode used before Plan was chosen (Default
   permissions when there was none) and sends “Implement the plan.” through the
   normal send path, leaving the draft alone; when nothing could start it stays
@@ -916,8 +926,7 @@ identify selection.
     (notch only; a quiet **Plan ready** instead while a plan waits unread) and
     a compact age, or the ticking turn timer while working.
     The notch keeps each row to one line; the full-session sidebar wraps a
-    title to two lines, with the glyph, age and ellipsis on its first line,
-    and leaves out Instrument's row numbers.
+    title to two lines, with the glyph, age and ellipsis on its first line.
     The latest message is the tooltip and part of the accessibility label.
     Hover, focus or open swaps the age for the ellipsis, which expands Rename,
     Snooze or Wake now, Archive or Restore, and Continue in Hermes… (legacy
@@ -1081,8 +1090,8 @@ row, opening **Usage**, a scrolling page within the panel bounds; Back returns.
   A reset already past reads **Reset since last report** and shows the window
   as unknown. Opening or refreshing asks Codex again; Claude Code reports only
   during a turn. Errors show under their harness.
-- **Bars** fill with the share used and take the warning color (amber; the
-  signal in Instrument) when reached or from 90 %. Unknown is a dim track with
+- **Bars** fill with the share used and take the warning color (amber, in
+  every design) when reached or from 90 %. Unknown is a dim track with
   no fill and `—`, never 0 %. Refined draws a thin capsule, Tahoe an
   accent-colored capsule, Instrument a segment meter across the width.
 - **Sessions started here**: tokens per day and harness for messages sent from

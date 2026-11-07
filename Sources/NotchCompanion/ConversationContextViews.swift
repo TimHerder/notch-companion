@@ -30,7 +30,7 @@ struct ComposerDestinationView: View {
                     .font(.system(size: 12)).foregroundStyle(CompanionStyle.secondary).padding(.horizontal, 4)
             case .instrument:
                 HStack(spacing: 6) {
-                    Text("To").microLabel(9.5).foregroundStyle(CompanionStyle.faint)
+                    Text("To").font(.system(size: 11.5)).foregroundStyle(CompanionStyle.faint)
                     Text(title).font(.system(size: 11.5)).foregroundStyle(CompanionStyle.secondary)
                 }.padding(.horizontal, 4)
             }
@@ -197,7 +197,7 @@ struct SessionRuntimeControl: View {
         case .instrument:
             HStack(spacing: 6) {
                 Rectangle().fill(CompanionStyle.text).frame(width: 5, height: 5)
-                Text(title).microLabel(10, weight: .semibold).lineLimit(1)
+                Text(title).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
             }
                 .foregroundStyle(CompanionStyle.secondary)
         }
@@ -255,10 +255,9 @@ struct SessionRuntimeControl: View {
             .offset(y: -30)
         case .instrument:
             VStack(spacing: 0) {
-                ForEach(Array(model.readyRuntimes.enumerated()), id: \.element) { index, runtime in
+                ForEach(model.readyRuntimes) { runtime in
                     Button { choose(runtime) } label: {
                         HStack(spacing: 9) {
-                            Text(String(format: "%02d", index + 1)).font(CompanionStyle.mono(10)).foregroundStyle(CompanionStyle.faint)
                             AgentLogo(runtime: runtime, size: 14)
                             Text(runtime.title).font(.system(size: 12.5, weight: .medium))
                             Spacer(minLength: 0)
@@ -314,7 +313,7 @@ struct DeferredOperationBanner: View {
                 switch PanelTheme.current {
                 case .refined: Image(systemName: "clock")
                 case .tahoe: Image(systemName: "clock.fill")
-                case .instrument: LED(color: CompanionStyle.signal, pulsing: true, size: 5)
+                case .instrument: LED(color: CompanionStyle.amber, pulsing: true, size: 5)
                 }
                 Text(operation.waitingMessage).lineLimit(2)
                 Spacer(minLength: 0)
@@ -323,9 +322,12 @@ struct DeferredOperationBanner: View {
             if PanelTheme.current == .refined {
                 row.foregroundStyle(CompanionStyle.amber)
                     .panelNotice(CompanionStyle.amber)
-            } else {
-                row.font(.system(size: PanelTheme.pick(11, 12, 11.5))).foregroundStyle(CompanionStyle.amber)
+            } else if PanelTheme.current == .tahoe {
+                row.font(.system(size: 12)).foregroundStyle(CompanionStyle.amber)
                     .padding(.vertical, 7)
+            } else {
+                row.font(.system(size: 11.5)).foregroundStyle(CompanionStyle.amber)
+                    .padding(.vertical, 7).instrumentBanner()
             }
         }
     }
@@ -345,8 +347,8 @@ struct FailedAgentBanner: View {
                     Image(systemName: "exclamationmark.circle.fill")
                     Text("Delegated task needs attention").lineLimit(1)
                 case .instrument:
-                    LED(color: CompanionStyle.signal, size: 5)
-                    Text("Delegated task needs attention").microLabel(10, weight: .semibold).lineLimit(1)
+                    LED(color: CompanionStyle.error, size: 5)
+                    Text("Delegated task needs attention").fontWeight(.semibold).lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 Button("Review") {
@@ -357,9 +359,12 @@ struct FailedAgentBanner: View {
             if PanelTheme.current == .refined {
                 row.foregroundStyle(CompanionStyle.error)
                     .panelNotice(CompanionStyle.error)
-            } else {
-                row.font(.system(size: PanelTheme.pick(11, 12, 11))).foregroundStyle(CompanionStyle.error)
+            } else if PanelTheme.current == .tahoe {
+                row.font(.system(size: 12)).foregroundStyle(CompanionStyle.error)
                     .padding(.vertical, 7)
+            } else {
+                row.font(.system(size: 11.5)).foregroundStyle(CompanionStyle.error)
+                    .padding(.vertical, 7).instrumentBanner()
             }
         }
     }

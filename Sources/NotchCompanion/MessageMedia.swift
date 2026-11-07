@@ -206,7 +206,7 @@ private struct MediaImageView: View {
                             .clipShape(RoundedRectangle(cornerRadius: PanelTheme.pick(10, 10, CompanionStyle.cardRadius), style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: PanelTheme.pick(10, 10, CompanionStyle.cardRadius), style: .continuous)
                                 .strokeBorder(PanelTheme.pick(Color.white.opacity(0.1), Color.white.opacity(0.1), CompanionStyle.rule), lineWidth: PanelTheme.pick(0.75, 0.75, 0.5)))
-                        Text(item.caption ?? item.name).font(PanelTheme.pick(.system(size: 11), .system(size: 11), CompanionStyle.mono(10))).foregroundStyle(CompanionStyle.secondary).lineLimit(1)
+                        Text(item.caption ?? item.name).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary).lineLimit(1)
                     }
                 }
                 .buttonStyle(.plain).pressableCursor()
@@ -259,8 +259,8 @@ private struct MediaFileCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
                 if PanelTheme.current == .instrument {
-                    Text(available ? detail : "File not found").microLabel(9.5, weight: .regular, tracking: 0.6)
-                        .foregroundStyle(available ? CompanionStyle.secondary : CompanionStyle.signal).lineLimit(1)
+                    Text(available ? detail : "File not found").font(.system(size: 11))
+                        .foregroundStyle(available ? CompanionStyle.secondary : CompanionStyle.error).lineLimit(1)
                 } else {
                     Text(available ? detail : "File not found").font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary).lineLimit(1)
                 }
