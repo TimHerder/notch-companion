@@ -490,8 +490,7 @@ final class OpenCodeClient: RuntimeTransport {
         guard let owner = root(sid), roots[owner] == cwd else { return }
         revisions[owner, default: 0] += 1
         if type == "session.error" {
-            let error = props["error"] as? [String: Any]
-            failures[sid] = ((error?["data"] as? [String: Any])?["message"] as? String) ?? (error?["name"] as? String) ?? CodexProtocolState.describe(props["error"])
+            failures[sid] = Self.failureReason(props["error"]) ?? CodexProtocolState.describe(props["error"])
             event("runtime.notice", sid: sid, ["message": "OpenCode reported a native turn error. Checking its final state."])
         }
         if type == "session.status", let status = props["status"] as? [String: Any] {
@@ -649,7 +648,10 @@ final class OpenCodeClient: RuntimeTransport {
             if confirmed {
                 pendingPrompts.remove(sid)
                 let last = messages[sid]?.last?["info"] as? [String: Any] ?? [:]
-                event("message.complete", sid: sid, ["text": delivered[sid] ?? "", "status": failures[sid] != nil ? "error" : Self.terminal(last, cancelled: cancelled.remove(sid) != nil), "error": failures[sid] ?? ""])
+                let status = failures[sid] != nil ? "error" : Self.terminal(last, cancelled: cancelled.remove(sid) != nil)
+                // Without a session.error frame, the terminal message's own error is the reason (an abort is not "error").
+                let reason = failures[sid] ?? (status == "error" ? Self.failureReason(last["error"]) : nil)
+                event("message.complete", sid: sid, ["text": delivered[sid] ?? "", "status": status, "error": reason ?? ""])
             }
         }
         return ["messages": Self.history(messages[sid] ?? []), "history_complete": true, "running": !allIdle, "parent_complete": stable && !busy.contains(sid), "subagents": snapshots, "activity_verified": stable, "info": contextInfo]
@@ -769,6 +771,11 @@ final class OpenCodeClient: RuntimeTransport {
     nonisolated static func currentText(_ rows: [[String: Any]]) -> String {
         let lastUser = rows.lastIndex { ($0["info"] as? [String: Any])?["role"] as? String == "user" } ?? -1
         return messageRows(Array(rows.dropFirst(lastUser + 1))).filter { $0["role"] as? String == "assistant" }.compactMap { $0["text"] as? String }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+    /// A native turn error's reason: its `message`, `data.message`, else its name.
+    nonisolated static func failureReason(_ error: Any?) -> String? {
+        guard let error = error as? [String: Any] else { return nil }
+        return [error["message"], (error["data"] as? [String: Any])?["message"], error["name"]].compactMap { $0 as? String }.first { !$0.isEmpty }
     }
     nonisolated static func terminal(_ info: [String: Any], cancelled: Bool) -> String {
         if cancelled { return "interrupted" }

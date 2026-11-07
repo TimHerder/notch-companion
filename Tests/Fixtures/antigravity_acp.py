@@ -4,6 +4,7 @@ discovery commands. Conversations are listed only once prompted, and load/resume
 import json
 import os
 import sys
+import time
 import uuid
 
 HERE = os.path.dirname(os.path.abspath(sys.argv[0]))
@@ -28,6 +29,7 @@ current = {}
 prompt_id = None
 prompt_sid = None
 asking = None
+deaf = work = False
 
 
 def send(value):
@@ -94,7 +96,9 @@ for line in sys.stdin:
             listed.append(prompt_sid)
             json.dump(listed, open(STORE, "w"))
         text = params["prompt"][0]["text"]
-        if text == "question":
+        # "stuck" never answers session/cancel; "ask then work" keeps working after its answer.
+        deaf, work = text == "stuck", text == "ask then work"
+        if text in ("question", "ask then work"):
             update(prompt_sid, "tool_call", toolCallId="interaction_1", title="Running ask_question", status="in_progress")
             asking = "ask-1"
             send(dict(id="ask-1", method="session/request_permission", params=dict(sessionId=prompt_sid,
@@ -111,17 +115,22 @@ for line in sys.stdin:
                           dict(optionId="reject", name="Deny", kind="reject_once")])))
         elif text == "slow":
             update(prompt_sid, "agent_message_chunk", content=dict(type="text", text="Working"))
+        elif text in ("silent", "stuck"):
+            pass
         else:
             update(prompt_sid, "tool_call", toolCallId="call-1", title="Running delegate_task", status="completed",
                    rawInput=dict(task="fixture"), _meta=dict(is_mcp_tool_call=True))
             finish("reply:" + current[prompt_sid])
     elif method == "session/cancel":
         # A turn waiting on the client ends only once that request is answered, as ACP requires of the client.
-        if prompt_id is not None and asking is None:
+        if prompt_id is not None and asking is None and not deaf:
             finish("", "cancelled")
     elif method is None and wire_id in ("ask-1", "perm-1"):
         asking = None
         outcome = frame["result"]["outcome"]
+        if work:
+            update(prompt_sid, "agent_message_chunk", content=dict(type="text", text="Working. "))
+            time.sleep(0.7)
         finish(outcome.get("optionId", outcome["outcome"]), "cancelled" if outcome["outcome"] == "cancelled" else "end_turn")
     elif wire_id is not None and method is not None:
         send(dict(id=wire_id, error=dict(code=-32601, message="Unsupported fixture method")))

@@ -28,6 +28,12 @@ final class ACPRuntimeClient: RuntimeTransport {
     private var version = "ACP v1"
     /// A turn's limit in seconds, not counting time it waits on the user (settable by tests).
     var promptTimeout: Double = 1_800
+    /// How long an overdue turn has to confirm its cancellation before the process is restarted.
+    var promptGrace: Double = 45
+    /// When the user last answered each session's request; the turn's full period restarts there.
+    private var answered: [String: ContinuousClock.Instant] = [:]
+    /// Overdue turns, kept busy until the agent confirms, and the error they settle with.
+    private var overdue: [String: String] = [:]
     private let executableOverride: URL?
     private var executable: URL?
 
@@ -250,14 +256,12 @@ final class ACPRuntimeClient: RuntimeTransport {
                         let result = try await self.rpc("session/prompt", ["sessionId": sid, "prompt": prompt], timeout: self.promptTimeout)
                         guard self.generation == run else { return }
                         self.accept(sid)
-                        self.emit(self.state.finish(sid, stopReason: result["stopReason"] as? String ?? "unknown"))
+                        self.emit(self.state.finish(sid, stopReason: result["stopReason"] as? String ?? "unknown", error: self.overdue.removeValue(forKey: sid)))
                     } catch {
                         guard self.generation == run else { return }
-                        if case ACPClientError.rpc = error {
-                            let accepted = self.state.started.contains(sid)
-                            if accepted { self.emit(self.state.finish(sid, stopReason: "error", error: error.localizedDescription)) }
-                            else { self.state.active.remove(sid) }
-                        }
+                        self.overdue.removeValue(forKey: sid)
+                        if self.state.started.contains(sid) { self.emit(self.state.finish(sid, stopReason: "error", error: error.localizedDescription)) }
+                        else { self.state.active.remove(sid) }
                         self.submissions.removeValue(forKey: sid)?.resume(throwing: error)
                     }
                 }
@@ -270,6 +274,7 @@ final class ACPRuntimeClient: RuntimeTransport {
             return ["interrupted": true]
         case "approval.respond", "clarify.respond":
             if let frame = try state.answer(params, approval: method == "approval.respond") { try process.send(frame) }
+            answered[sid] = .now
             return ["resolved": true]
         case "session.rename":
             return ["renamed": true, "local_only": true] // ACP has no native title setter.
@@ -332,20 +337,28 @@ final class ACPRuntimeClient: RuntimeTransport {
         return try await withCheckedThrowingContinuation { continuation in
             pending[id] = continuation
             deadlines[id] = Task { @MainActor [weak self] in
+                let period = Duration.seconds(timeout)
+                var until = ContinuousClock.now + period, cancelling = false
                 while true {
-                    do { try await Task.sleep(for: .seconds(timeout)) } catch { return }
+                    do { try await Task.sleep(until: until, clock: .continuous) } catch { return }
                     guard let self, self.generation == run else { return }
                     guard let turn else {
                         self.fail(ACPClientError.unavailable("\(self.runtime.title) timed out during \(method). Check that the selected native profile exposes ACP v1. Reconnect and inspect the saved session before retrying a prompt."))
                         return
                     }
-                    // Waiting on the user does not count against the turn.
-                    if self.state.requests.values.contains(where: { $0.session == turn }) { continue }
-                    // Settle and cancel only this turn; the shared process keeps serving every other session.
-                    self.deadlines.removeValue(forKey: id)
+                    let minutes = Int(timeout / 60)
+                    let overdue = "\(self.runtime.title) did not finish this turn in \(minutes) minutes, so it was cancelled. Check the native conversation before sending again."
+                    // Only stopping the process proves an unconfirmed cancellation ended the turn; the send stays unconfirmed.
+                    if cancelling { self.fail(ACPClientError.unavailable(overdue)); return }
+                    // Waiting on the user never counts: the full period restarts while a request is open and after each answer.
+                    if self.state.requests.values.contains(where: { $0.session == turn }) { until = .now + period; continue }
+                    if let answer = self.answered[turn], answer + period > .now { until = answer + period; continue }
+                    // Ask only this turn to stop and keep it busy until the agent answers the prompt.
+                    cancelling = true
+                    self.overdue[turn] = overdue
                     try? self.process.send(["jsonrpc": "2.0", "method": "session/cancel", "params": ["sessionId": turn]])
-                    self.pending.removeValue(forKey: id)?.resume(throwing: ACPClientError.rpc(-1, "\(self.runtime.title) did not finish this turn in \(Int(timeout / 60)) minutes, so it was cancelled. Check the native conversation before sending again."))
-                    return
+                    self.onEvent?("runtime.notice", ["session_id": turn, "message": "\(self.runtime.title) has run this turn for \(minutes) minutes, so it was asked to stop. The session stays busy until it confirms."])
+                    until = .now + .seconds(self.promptGrace)
                 }
             }
             do { try process.send(["jsonrpc": "2.0", "id": id, "method": method, "params": params]) }
@@ -362,6 +375,7 @@ final class ACPRuntimeClient: RuntimeTransport {
         for item in submissions.values { item.resume(throwing: error) }; submissions.removeAll()
         process.stop(); state = ACPProtocolState(antigravity: runtime == .antigravity); directories.removeAll(); images.removeAll(); capabilities.removeAll()
         modeIDs.removeAll(); inheritedModes.removeAll(); modeOverridden.removeAll(); delegationServers.removeAll()
+        answered.removeAll(); overdue.removeAll()
     }
     private static func imageMIME(_ url: URL) -> String? {
         ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"][url.pathExtension.lowercased()]

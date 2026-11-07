@@ -251,7 +251,7 @@ final class OpenCodeHTTPTests: XCTestCase {
     }
 
     @MainActor
-    func testSessionErrorReasonReachesTheFailedCompletion() async throws {
+    func testNativeFailureReasonReachesTheFailedCompletion() async throws {
         let fixture = try peer()
         defer { try? FileManager.default.removeItem(at: fixture.home) }
         let client = OpenCodeClient(profileID: fixture.home.path, executableURL: fixture.executable, supervisorURL: supervisor)
@@ -266,6 +266,18 @@ final class OpenCodeHTTPTests: XCTestCase {
         let complete = try XCTUnwrap(events.last { $0.0 == "message.complete" }?.1)
         XCTAssertEqual(complete["status"] as? String, "error")
         XCTAssertEqual(complete["error"] as? String, "Native provider credentials expired", "The runtime's reason, not the progress notice or raw JSON")
+
+        // No session.error frame: the terminal message's own error is the reason.
+        events.removeAll()
+        let other = try await client.request("session.create", params: ["cwd": fixture.home.path])
+        let otherID = try XCTUnwrap(other["session_id"] as? String)
+        _ = try await client.request("prompt.submit", params: ["session_id": otherID, "text": "terminal-error", "turn_id": "terminal-error"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        let terminal = try XCTUnwrap(events.last { $0.0 == "message.complete" }?.1)
+        XCTAssertEqual(terminal["status"] as? String, "error")
+        XCTAssertEqual(terminal["error"] as? String, "Provider rejected the request")
+        XCTAssertEqual(OpenCodeClient.failureReason(["name": "APIError", "message": "Top-level", "data": ["message": "Nested"]]), "Top-level")
+        XCTAssertEqual(OpenCodeClient.failureReason(["name": "NativeTurnError", "data": ["message": ""]]), "NativeTurnError")
     }
 
     private var supervisor: URL {
