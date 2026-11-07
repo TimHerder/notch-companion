@@ -12,7 +12,7 @@ struct ComposerDestinationView: View {
             sessionControls
             WorkspaceButton(model: model)
             if showsTitle, model.current?.isLegacyPrivate != true {
-                // The session's name gives way first when the bar is tight.
+                // After the model label, the session's name gives way before the harness and folder.
                 destinationTitle(model.current?.title ?? "New session").layoutPriority(-1)
             }
         }
@@ -148,28 +148,32 @@ struct SessionRuntimeControl: View {
                 }
                 .onDisappear { popupDismissal.stop() }
             }
-        } else if session.isLegacyPrivate {
-            // A started session's harness is named by the placeholder ("Ask Codex…");
-            // only the legacy profile, which the placeholder cannot tell apart, keeps a label.
-            fixedRuntime.help("This conversation uses the companion’s earlier private Hermes profile.")
+        } else if session.isLegacyPrivate || PanelTheme.current != .tahoe {
+            // Tahoe names a started session's harness in its placeholder ("Ask Codex…") alone;
+            // the placeholder hides behind a draft or the busy hint, so the others keep the label.
+            fixedRuntime
+                .help(session.isLegacyPrivate
+                      ? "This conversation uses the companion’s earlier private Hermes profile."
+                      : "\(session.runtime.title) · \(session.profileID ?? "Existing local profile")")
         }
     }
 
+    /// Truncates rather than holding its width, so a tight bar keeps the gauge and Send in the field.
     @ViewBuilder private var fixedRuntime: some View {
-        let title = "Legacy Hermes"
+        let title = session.isLegacyPrivate ? "Legacy Hermes" : session.runtime.title
         switch PanelTheme.current {
         case .refined:
             Text(title)
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(CompanionStyle.secondary)
-                .fixedSize().padding(.horizontal, 8)
+                .lineLimit(1).padding(.horizontal, 8)
         case .tahoe:
-            Text(title).font(.system(size: 12, weight: .semibold)).fixedSize()
+            Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
         case .instrument:
             HStack(spacing: 6) {
                 Rectangle().fill(CompanionStyle.text).frame(width: 5, height: 5)
-                Text(title).microLabel(10, weight: .semibold)
+                Text(title).microLabel(10, weight: .semibold).lineLimit(1)
             }
-                .foregroundStyle(CompanionStyle.secondary).fixedSize()
+                .foregroundStyle(CompanionStyle.secondary)
         }
     }
 
@@ -252,7 +256,8 @@ struct ContinueLegacySessionButton: View {
     var body: some View {
         Button("Continue in Hermes…") { reviewContinuation() }
             .buttonStyle(NotchPillButtonStyle(small: true))
-            .fixedSize()
+            // Truncates in the composer's bar instead of pushing the gauge and Send out.
+            .lineLimit(1)
             .disabled(session.isBusy || model.submitting)
             .help(session.isBusy ? "Wait for this session and its delegated work to finish."
                   : "Create a separate conversation in your existing Hermes profile with this history attached.")

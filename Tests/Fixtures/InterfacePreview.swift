@@ -1123,7 +1123,12 @@ import ImageIO
         model.sessions[0].runtime = .hermes
         model.sessions[0].isLegacyPrivate = true
         model.connectionMessage = "Legacy Hermes connected"
+        // Default controls plus SnapShot: the bar's widest legacy case still keeps the field on its margins.
+        (model.showModelPicker, model.showContextUsage, model.showSnapShot) = (true, true, true)
+        model.snapShotSource = SnapShotSource(processID: 1, appName: "Safari", windowID: 1, title: "Release notes")
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-legacy-conversation", output: output)
+        (model.showModelPicker, model.showContextUsage, model.showSnapShot) = (false, false, false)
+        model.snapShotSource = nil
         model.sessions[0].isLegacyPrivate = false
         model.connectionMessage = "Hermes connected"
         model.page = .session

@@ -134,8 +134,9 @@ struct ComposerView: View {
     }
 
     /// `[+] [SnapShot] [destination, folder] … [model] [permissions] [context] [Send]`.
-    /// When it is tight the model label truncates first, then the folder; the
-    /// gauge and Send keep their size.
+    /// When it is tight the model label truncates first (the destination has
+    /// priority), then the session name, then the harness label and folder; the
+    /// gauge, permission mode and Send keep their size.
     private var bar: some View {
         HStack(spacing: 2) {
             QuietIconButton(symbol: "plus", label: "Attach files") { model.pickFiles(showPanel: isCompact) }

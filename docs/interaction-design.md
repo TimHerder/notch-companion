@@ -907,11 +907,15 @@ above or under the field, so a tall draft, a queue or a banner can never push a
 control out of view. Session settings (model with reasoning effort, permission
 mode, context gauge) are plain secondary-color buttons in the bar's trailing
 group, shown on the session page (compact) or always (full window). Each is
-optional (model and context on by default, permission modes off). A started
-session has no harness label (the placeholder “Ask Codex…” and the editor's
-spoken label name it); a draft's harness chooser stays in the bar, and Legacy
-Hermes keeps its label. When the bar is tight the session name gives way first,
-then the model label, then the folder chip; the gauge and Send keep their size.
+optional (model and context on by default, permission modes off). A draft's
+harness chooser stays in the bar. A started session keeps a plain harness label
+in Refined and Instrument, whose placeholder hides behind a draft or the busy
+hint; Tahoe drops it (the placeholder “Ask Codex…” and the editor's spoken label
+name the harness), and Legacy Hermes keeps its label everywhere. When the bar is
+tight the model label truncates first, down to about a dozen characters, then
+the session name, then the harness label, **Continue in Hermes…** and the folder
+chip share what is left, truncating rather than pushing the field past the
+panel's margins; the gauge, permission mode and Send keep their size.
 
 The model label shows the runtime's display name for the selected, reported or
 default model (the ID only when unnamed; **Runtime default** when none is
