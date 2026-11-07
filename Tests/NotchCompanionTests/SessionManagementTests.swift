@@ -353,9 +353,13 @@ final class SessionManagementTests: XCTestCase {
             CompanionSession(id: "third", title: "Match three", state: .waiting, updatedAt: Date(timeIntervalSince1970: 2)),
             CompanionSession(id: "archived", title: "Match archive", state: .finished, updatedAt: Date(timeIntervalSince1970: 4), isArchived: true)
         ]
-        XCTAssertEqual(model.visibleSessions.map(\.id), ["first", "second", "third"])
-        model.sessionSearch = "Match"
+        // "second" is read, idle and old, so it rests under Archived; a search finds archived sessions too.
         XCTAssertEqual(model.visibleSessions.map(\.id), ["first", "third"])
+        model.sessionFilter = .archived
+        XCTAssertEqual(model.visibleSessions.map(\.id), ["second", "archived"])
+        model.sessionFilter = .all
+        model.sessionSearch = "Match"
+        XCTAssertEqual(model.visibleSessions.map(\.id), ["first", "third", "archived"])
         model.sessionFilter = .needsYou
         XCTAssertEqual(model.visibleSessions.map(\.id), ["first", "third"])
         XCTAssertEqual(model.sessionIndicators.map(\.id), ["first", "third", "archived"])
@@ -377,6 +381,127 @@ final class SessionManagementTests: XCTestCase {
         XCTAssertEqual(model.current?.workspacePath, "/tmp/site")
         XCTAssertEqual(model.page, .session)
         XCTAssertEqual(model.visibleProjects.map { $0.sessions.map(\.id) }, [[created, "site"], ["app", "default"]])
+    }
+
+    // MARK: Auto-archive
+
+    /// A private defaults suite, so the archive setting never leaks between tests.
+    private func dormancyFixture(_ sessions: [CompanionSession]) -> (AppModel, ManagementTransport, URL, UserDefaults) {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("notch-dormancy-\(UUID().uuidString)/sessions.json")
+        let suite = "notch-dormancy-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        let transport = ManagementTransport()
+        let model = AppModel(storageURL: file, playsSounds: false, client: transport, preferences: defaults)
+        model.sessions = sessions + [CompanionSession(id: "selected", title: "Selected")]
+        model.currentID = "selected"
+        addTeardownBlock {
+            model.shutdown()
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        }
+        return (model, transport, file, defaults)
+    }
+
+    private func readSession(_ id: String, hoursAgo: Double) -> CompanionSession {
+        CompanionSession(id: id, title: "Old \(id)", state: .finished,
+                         messages: [ChatMessage(role: "user", text: "Question"), ChatMessage(role: "assistant", text: "Answer")],
+                         updatedAt: Date().addingTimeInterval(-hoursAgo * 3_600),
+                         completionID: "\(id)-result", acknowledgedCompletionID: "\(id)-result")
+    }
+
+    func testReadIdleSessionMovesToArchivedAfterTheSetting() {
+        let (model, _, _, defaults) = dormancyFixture([readSession("old", hoursAgo: 48), readSession("recent", hoursAgo: 2)])
+        XCTAssertEqual(model.autoArchiveAfter, .halfDay)
+        XCTAssertEqual(model.visibleSessions.map(\.id), ["recent", "selected"])
+        XCTAssertEqual(model.archivedCount, 1)
+        XCTAssertFalse(model.sessions.first { $0.id == "old" }!.isArchived, "Derived, never flagged")
+        XCTAssertFalse(model.glanceEntries.contains { $0.id == "old" }, "The glance skips it as recent work")
+        model.sessionFilter = .archived
+        XCTAssertEqual(model.visibleSessions.map(\.id), ["old"])
+        model.sessionFilter = .all
+        model.sessionSearch = "Old old"
+        XCTAssertEqual(model.visibleSessions.map(\.id), ["old"], "Search finds it from the default list")
+        model.sessionSearch = ""
+
+        model.autoArchiveAfter = .threeDays
+        XCTAssertEqual(model.visibleSessions.map(\.id), ["old", "recent", "selected"])
+        model.autoArchiveAfter = .hour
+        XCTAssertEqual(model.visibleSessions.map(\.id), ["selected"])
+        model.autoArchiveAfter = .never
+        XCTAssertEqual(model.visibleSessions.map(\.id), ["old", "recent", "selected"])
+        XCTAssertEqual(model.archivedCount, 0)
+
+        let reloaded = AppModel(storageURL: model.storageURL, playsSounds: false, client: ManagementTransport(), preferences: defaults)
+        defer { reloaded.shutdown() }
+        XCTAssertEqual(reloaded.autoArchiveAfter, .never, "The setting persists")
+    }
+
+    func testActiveSessionsNeverAutoArchive() {
+        var unread = readSession("unread", hoursAgo: 48)
+        unread.acknowledgedCompletionID = nil
+        var failed = readSession("failed", hoursAgo: 48)
+        (failed.state, failed.acknowledgedCompletionID) = (.failed, nil)
+        var waiting = readSession("waiting", hoursAgo: 48)
+        waiting.state = .waiting
+        var working = readSession("working", hoursAgo: 48)
+        working.state = .working
+        var pending = readSession("pending", hoursAgo: 48)
+        pending.pendingSubmission = PendingSubmission(id: "turn", draft: "Sent?", userTurnCount: 1, attachmentIDs: [])
+        pending.acknowledgeResult()
+        var queued = readSession("queued", hoursAgo: 48)
+        queued.queuedSends = [QueuedSend(id: "later", text: "Then this")]
+        var drafted = readSession("drafted", hoursAgo: 48)
+        drafted.draft = "Half-written follow-up"
+        var attached = readSession("attached", hoursAgo: 48)
+        attached.attachments = [Attachment(url: URL(fileURLWithPath: "/tmp/notes.txt"))]
+        let active = [unread, failed, waiting, working, pending, queued, drafted, attached]
+        let (model, _, _, _) = dormancyFixture(active + [readSession("old", hoursAgo: 48)])
+        XCTAssertEqual(model.visibleSessions.map(\.id), active.map(\.id) + ["selected"])
+        model.sessionFilter = .archived
+        XCTAssertEqual(model.visibleSessions.map(\.id), ["old"])
+        model.currentID = "old"
+        XCTAssertTrue(model.visibleSessions.isEmpty, "The selection stays in the default list")
+        XCTAssertEqual(model.sessionIndicators.map(\.id), ["unread", "failed", "waiting", "working"], "Dots are unaffected; the read unconfirmed send has none")
+    }
+
+    func testSelectingAcknowledgingAndRestoringRestartTheClock() {
+        var unread = readSession("unread", hoursAgo: 48)
+        unread.acknowledgedCompletionID = nil
+        let (model, _, _, _) = dormancyFixture([readSession("opened", hoursAgo: 48), readSession("restored", hoursAgo: 48), unread])
+        model.selectSession("opened")
+        model.selectSession("selected")
+        XCTAssertNotNil(model.sessions.first { $0.id == "opened" }?.lastSeenAt)
+        XCTAssertFalse(model.isAutoArchived(model.sessions.first { $0.id == "opened" }!), "Opening it restarted its clock")
+        XCTAssertTrue(model.isAutoArchived(model.sessions.first { $0.id == "restored" }!))
+        model.restoreSession("restored")
+        XCTAssertFalse(model.isAutoArchived(model.sessions.first { $0.id == "restored" }!))
+        model.markAllAsRead()
+        XCTAssertFalse(model.isAutoArchived(model.sessions.first { $0.id == "unread" }!), "Reading a result restarts the clock")
+        XCTAssertEqual(model.visibleSessions.map(\.id), ["opened", "restored", "unread", "selected"])
+    }
+
+    func testSendingBringsAnAutoArchivedSessionBack() async {
+        let (model, _, _, _) = dormancyFixture([readSession("old", hoursAgo: 48)])
+        await model.connect()
+        model.sessionFilter = .archived
+        model.selectSession("old")
+        model.draft = "One more thing"
+        await model.send()
+        model.selectSession("selected")
+        model.sessions[0].lastSeenAt = nil
+        XCTAssertFalse(model.isAutoArchived(model.sessions[0]), "Sending updates it, whatever it was last seen")
+        model.sessionFilter = .all
+        XCTAssertTrue(model.visibleSessions.contains { $0.id == "old" })
+    }
+
+    func testLastSeenAtRoundTripsAndOlderFilesDecodeWithoutIt() throws {
+        var session = CompanionSession(id: "seen", title: "Seen")
+        session.lastSeenAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let decoded = try JSONDecoder().decode(CompanionSession.self, from: JSONEncoder().encode(session))
+        XCTAssertEqual(decoded.lastSeenAt, session.lastSeenAt)
+        let older = try JSONDecoder().decode(CompanionSession.self, from: Data(#"{"id":"older","title":"Older"}"#.utf8))
+        XCTAssertNil(older.lastSeenAt)
+        XCTAssertEqual(older.title, "Older")
     }
 
     func testDuplicateAnswersAcrossViewsSubmitOnlyOnce() async {

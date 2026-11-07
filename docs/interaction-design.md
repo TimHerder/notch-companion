@@ -130,10 +130,10 @@ produce new dots; duplicate terminal events never resurrect a read dot.
 
 **Mark all as read** (checkmark beside Your sessions, notch and full-session
 sidebar) acknowledges every current result and saves immediately, leaving work,
-history and selection intact; it is disabled with nothing unread. Rows keep
-their outcome text after reading and show green/red dots only while unread.
-The Unread filter includes both outcomes; Needs you excludes read failures.
-Tooltips and accessibility labels distinguish read and unread.
+history and selection intact; it is disabled with nothing unread. Session rows
+show a green check or red mark only while unread; once read they keep only a
+quiet mark for a failure and dim their title. Tooltips and accessibility labels
+distinguish read and unread.
 
 ## Island tiers
 
@@ -149,9 +149,10 @@ centred like the panel, top-anchored, covering the band and camera.
   camera, a summary (“1 needs you · 2 working · 1 new”, symbol counts where
   words do not fit, or “All caught up”).
 - Below: up to three 44-point rows by priority (needs you, working, unread
-  failure, unread result, then recent; quiet archived sessions and untouched
-  drafts skipped). Each has a status glyph (spinning orange arc, pulsing amber
-  question, green check or red warning while unread, quiet marks once read),
+  failure, unread result, then recent; quiet archived or
+  [auto-archived](#conversation-usability-and-session-management) sessions and
+  untouched drafts skipped). Each has a status glyph (spinning orange arc,
+  pulsing amber question, green check or red warning while unread, quiet marks once read),
   title, runtime, live turn timer or age, and one line of real detail (the
   question, running tool and argument, streaming tail, failed child, “Asks: …”,
   or the result's first line, e.g. “Sent report.pdf”).
@@ -443,7 +444,10 @@ appearance previews, and uses neutral wording without a character voice.
 ## Compact panel
 
 A stable structure: session heading, scrollable conversation region, composer.
-The notch is a complete place to read the conversation, not a preview.
+The notch is a complete place to read the conversation, not a preview. Your
+sessions has no composer: the list uses the whole content region and opening
+the page focuses search. Drafts, attachments and file drops are unaffected (a
+drop opens its session).
 
 - Attachment chips and the bounded multiline editor use internal space; neither
   grows the panel.
@@ -639,7 +643,7 @@ no native menu tracking.
   check. With none ready, link to Settings and keep drafts and files editable
   with Send disabled. The detailed chooser stays in Settings for the default
   agent. Connection timing: [runtime contract](backend-runtime.md#multi-harness-contract).
-- Session filters are toggle chips; choosing the lit chip again shows all. Row
+- The Archived chip toggles; choosing it again returns to the active list. Row
   ellipses expand actions inline; right-click keeps the native menu.
 
 `CompanionPanel` stays nonactivating and above the menu bar: set `.statusBar`
@@ -692,21 +696,42 @@ identify selection.
 - **Rendering.** Assistant and delegated results render headings, lists,
   quotes, rules and fenced code; code scrolls horizontally with its own Copy.
   User messages stay literal.
-- **Destination.** On secondary pages with a composer (not Settings, runtime
-  setup/chooser or Welcome), it names the selected parent session. The folder
-  beside it is that session's: a draft chooses it until its native session
-  exists (OpenClaw drafts keep their agent's workspace); a started session's
-  folder opens in Finder. Settings labels the separate default “Default folder
+- **Destination.** On secondary pages with a composer (not Settings, Your
+  sessions, runtime setup/chooser or Welcome), it names the selected parent
+  session. The folder beside it is that session's: a draft chooses it until its
+  native session exists (OpenClaw drafts keep their agent's workspace); a
+  started session's folder opens in Finder. Settings labels the separate default “Default folder
   for new sessions.”
-- **Session browsers.** Both share search across titles and conversations,
-  rename, archive/restore, and Needs you / Unread / Archived chips (none lit:
-  all active sessions). In the notch the chips sit inside the search capsule; the
-  full-session sidebar puts them below it. A row's ellipsis expands Rename,
-  Archive or Restore, and Continue in Hermes… (legacy only) inline. Order keeps
-  the stable order used by the dots. Archiving keeps history, drafts, selection
-  and receipts; active work cannot be archived; archived attention and unread
-  results still appear in their filters and dots. Sending restores an archived
-  session.
+- **Session browsers.** Both share search, rename, archive/restore and one
+  **Archived** chip inside the search capsule (below it only where the capsule
+  is too narrow). The Needs you and Unread filters remain in the model, not the
+  interface.
+  - The default list shows only active sessions: working, needs you, unread
+    result or failure, unconfirmed send, a draft with text or files, the
+    selection, and read idle sessions not yet auto-archived. It ends with a
+    quiet **Archived · N** row; with nothing active it reads “All caught up”
+    above that row.
+  - **Auto-archive** is derived, never a flag. A top-level session that is
+    read, idle, not submitting, with no pending or queued send and an empty
+    draft, lists under Archived once the later of its last activity and
+    `lastSeenAt` is older than Settings → **Archive read sessions after**
+    (`sessions.autoArchiveAfter`: 1 hour, 12 hours (default), 3 days, Never).
+    The selection never auto-archives; `lastSeenAt` is set when a session is
+    opened, read or restored. The list re-evaluates every minute. Sending,
+    opening or Restore brings it back.
+  - Archived lists manual and auto-archived sessions by project; archived
+    attention and unread results keep their dots. A search query covers every
+    top-level session, titles and conversations, archived ones marked.
+  - Rows are one line (about 34 points): status glyph (spinning arc, pulsing
+    question, green check or red mark while unread; a quiet mark for a read
+    failure; Instrument uses its lamps), title (dimmed once read), the runtime
+    (notch only) and a compact age, or the ticking turn timer while working.
+    The latest message is the tooltip and part of the accessibility label.
+    Hover, focus or open swaps the age for the ellipsis, which expands Rename,
+    Archive or Restore, and Continue in Hermes… (legacy only) inline.
+  - Order keeps the stable order used by the dots. Archiving keeps history,
+    drafts, selection and receipts; active work cannot be archived. Sending
+    restores an archived session.
 - **Questions.** A pending question replaces the composer. Choices stay unsent
   until Reply. Free-text alternatives, progress, per-question state and
   duplicate protection are shared across windows; failed submissions keep the
@@ -721,10 +746,11 @@ identify selection.
 ## Projects
 
 A project is a working folder. Both session browsers group visible sessions
-under the folder's name (full path on hover), keeping stable order for groups
-and rows. A draft without its own folder belongs to the default folder. Search,
-chips, archive and indicators are unchanged; a group shows only while it has
-visible rows.
+under a header with a folder glyph, the folder's name (full path on hover) and
+its row count, keeping stable order for groups and rows. A draft without its
+own folder belongs to the default folder. Search, Archived, archive and
+indicators are unchanged; a group shows only while it has visible rows, so a
+folder whose sessions are all archived leaves the default list.
 
 - Each project header's **+** starts a draft there. **New project** (the
   sessions title row in the notch; beside **+** in the full-session sidebar)

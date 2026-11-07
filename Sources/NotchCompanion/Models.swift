@@ -173,6 +173,30 @@ enum SessionFilter: String, CaseIterable, Identifiable {
     }
 }
 
+/// How long a read, idle session stays in Your sessions before it is listed
+/// under Archived. Derived on display; nothing is flagged or swept.
+enum SessionAutoArchive: String, CaseIterable, Identifiable {
+    case hour, halfDay, threeDays, never
+    static let key = "sessions.autoArchiveAfter"
+    var id: Self { self }
+    var label: String {
+        switch self {
+        case .hour: return "1 hour"
+        case .halfDay: return "12 hours"
+        case .threeDays: return "3 days"
+        case .never: return "Never"
+        }
+    }
+    var interval: TimeInterval? {
+        switch self {
+        case .hour: return 3_600
+        case .halfDay: return 12 * 3_600
+        case .threeDays: return 3 * 86_400
+        case .never: return nil
+        }
+    }
+}
+
 enum DeferredOperation: Equatable {
     case reconnect, quit
     var title: String { self == .reconnect ? "Reconnect" : "Quit" }
@@ -248,6 +272,8 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var turnTokens: [String: Int] = [:]
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
+    /// Last opened, read or restored; with `updatedAt` it starts the auto-archive clock.
+    var lastSeenAt: Date? = nil
     var draft: String = ""
     var attachments: [Attachment] = []
     var workspacePath: String? = nil
@@ -298,7 +324,17 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     mutating func acknowledgeResult() -> Bool {
         guard hasUnreadResult, !isBusy else { return false }
         acknowledgedCompletionID = completionReceipt
+        lastSeenAt = Date()
         return true
+    }
+
+    /// Read, idle, with nothing pending or drafted, and untouched for `interval`:
+    /// it leaves the default list for Archived without an archive flag.
+    func isDormant(after interval: TimeInterval?, now: Date = Date()) -> Bool {
+        guard let interval, !isArchived, CollapsedStatus.resolve(session: self) == .none, !isBusy,
+              pendingSubmission == nil, queuedSends.isEmpty, attachments.isEmpty,
+              draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return max(updatedAt, lastSeenAt ?? .distantPast) < now.addingTimeInterval(-interval)
     }
 }
 
@@ -380,7 +416,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -425,6 +461,7 @@ extension CompanionSession {
         parentSessionID = try values.decodeIfPresent(String.self, forKey: .parentSessionID)
         delegation = try values.decodeIfPresent(DelegationRecord.self, forKey: .delegation)
         queuedSends = try values.decodeIfPresent([QueuedSend].self, forKey: .queuedSends) ?? []
+        lastSeenAt = try values.decodeIfPresent(Date.self, forKey: .lastSeenAt)
         // Assign legacy children to the current restored turn once, so future
         // prompts do not inherit an old child's failure.
         for index in agents.indices where agents[index].turnID == nil {

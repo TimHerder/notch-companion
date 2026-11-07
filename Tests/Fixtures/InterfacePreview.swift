@@ -494,6 +494,9 @@ import ImageIO
 
     @MainActor static func render<V: View>(_ content: V, size: NSSize, name: String, output: URL,
                                            settle: TimeInterval = 0.35) throws {
+        // `--only a,b` renders just the fixtures whose names start with one of these prefixes.
+        if let index = CommandLine.arguments.firstIndex(of: "--only"), index + 1 < CommandLine.arguments.count,
+           !CommandLine.arguments[index + 1].split(separator: ",").contains(where: { name.hasPrefix($0) }) { return }
         let hosting = NSHostingView(rootView: content)
         hosting.sizingOptions = []
         hosting.frame = NSRect(origin: .zero, size: size)
@@ -586,7 +589,13 @@ import ImageIO
             CompanionSession(id: "running", title: "Compare the implementation options", state: .working),
             CompanionSession(id: "question", title: "Plan the next release", state: .waiting),
             CompanionSession(id: "failure", title: "Review delegated work", state: .failed),
-            CompanionSession(id: "archive", title: "Last week’s notes", state: .finished, isArchived: true)
+            CompanionSession(id: "archive", title: "Last week’s notes", state: .finished, isArchived: true),
+            // Read and idle for three days: listed under Archived without a flag.
+            CompanionSession(id: "dormant", title: "Welcome email for testers", state: .finished,
+                             messages: [ChatMessage(role: "user", text: "Draft a welcome email for new testers."),
+                                        ChatMessage(role: "assistant", text: "Here is a short draft for review.")],
+                             updatedAt: Date().addingTimeInterval(-3 * 86_400), workspacePath: "/tmp/Website",
+                             completionID: "dormant-result", acknowledgedCompletionID: "dormant-result")
         ]
         model.sessions[1].runtime = .codex
         model.sessions[3].isLegacyPrivate = true
@@ -883,14 +892,28 @@ import ImageIO
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-session-actions", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-session-actions", output: output)
         model.sessionActionsID = nil
-        model.sessionFilter = .needsYou
+        // A search covers archived sessions too and marks them.
+        model.sessionSearch = "review"
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-filtered", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-sessions-filtered", output: output)
+        model.sessionSearch = ""
+        model.sessionFilter = .archived
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-archived", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-sessions-archived", output: output)
+        model.sessionFilter = .all
+        // Nothing active: the default list says so and links to Archived.
+        let caughtUp = AppModel(storageURL: temporary.appendingPathComponent("caught-up.json"), playsSounds: false,
+                                client: PreviewTransport(), preferences: preferences)
+        defer { caughtUp.shutdown() }
+        caughtUp.sessions = model.sessions.filter { ["archive", "dormant"].contains($0.id) }
+        caughtUp.currentID = "archive"
+        (caughtUp.geometry, caughtUp.notchPresentation) = (model.geometry, model.notchPresentation)
+        (caughtUp.expanded, caughtUp.reducedMotion, caughtUp.connection, caughtUp.page) = (true, true, true, .sessions)
+        try render(UnifiedNotchView(model: caughtUp), size: compact, name: "compact-sessions-caught-up", output: output)
         model.sessionSearch = "A longer session search with no matching results"
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-search", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-sessions-search", output: output)
         model.sessionSearch = ""
-        model.sessionFilter = .all
         model.page = .runtimeChooser(defaultSelection: true)
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-runtime-chooser", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-runtime-chooser", output: output)

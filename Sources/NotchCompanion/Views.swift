@@ -198,39 +198,6 @@ struct StateLabel: View {
     }
 }
 
-/// Result text remains visible after check-in; green/red dots mean unread.
-struct SessionStateLabel: View {
-    var session: CompanionSession
-
-    var body: some View {
-        let status = CollapsedStatus.resolve(session: session)
-        let state = displayState(status)
-        let isResult = state == .finished || state == .failed
-        let label = state == .failed
-            ? (session.pendingSubmission != nil ? "Send unconfirmed" : status == .none ? "Failed" : "Needs attention")
-            : CompanionStyle.label(state)
-        StateLabel(state: state, showsDot: !isResult || status != .none,
-                   dotColor: status == .none ? nil : PanelTheme.current == .refined
-                    ? CompanionStyle.statusColor(status) : CompanionStyle.indicatorColor(status), label: label)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(isResult
-                                ? "\(label), \(status == .none ? "read" : "unread")"
-                                : label)
-            .help(isResult
-                  ? (status == .none ? "Response read" : "Unread response")
-                  : label)
-    }
-
-    private func displayState(_ status: CollapsedStatus) -> WorkState {
-        switch status {
-        case .waiting: return .waiting
-        case .running: return .working
-        case .failed: return .failed
-        default: return session.displayState
-        }
-    }
-}
-
 struct MarkAllAsReadButton: View {
     @ObservedObject var model: AppModel
     var size: CGFloat = 28
@@ -509,7 +476,7 @@ struct CompactPanelView: View {
                     RequestView(model: model, request: request, compact: true)
                         .frame(height: request.kind == .approval ? nil : 190).padding(.top, 8)
                 }
-            } else if model.page != .settings && !model.page.isRuntimeSetup && !model.page.isWelcome {
+            } else if model.page != .settings && model.page != .sessions && !model.page.isRuntimeSetup && !model.page.isWelcome {
                 if theme == .refined {
                     ComposerView(model: model, focused: $focused, showsTitle: model.page != .session)
                         .fixedSize(horizontal: false, vertical: true)
@@ -860,12 +827,17 @@ struct SettingsContent: View {
     private var rows: some View {
         // Tahoe and Instrument head each group; their icon tiles are Tahoe's.
         VStack(alignment: .leading, spacing: PanelTheme.pick(12, 18, 14)) {
-            SettingsGroup(PanelTheme.pick(nil, "New sessions", "Defaults")) {
+            SettingsGroup(PanelTheme.pick(nil, "Sessions", "Defaults")) {
                 SettingsRow("Default agent for new sessions", symbol: "sparkle", tint: .purple) {
                     defaultAgentButton
                         .accessibilityLabel("Default agent for new sessions, \(model.defaultRuntime.title)")
                 }
                 SettingsRow("Default folder for new sessions", symbol: "folder.fill", tint: .blue, divider: true) { DefaultWorkspaceButton(model: model) }
+                SettingsRow("Archive read sessions after", symbol: "archivebox.fill", tint: .gray, divider: true) {
+                    NotchSegmentedControl(label: "Archive read sessions after", options: SessionAutoArchive.allCases,
+                                          title: \.label, selection: $model.autoArchiveAfter, small: true)
+                        .help("Read, idle sessions move to Archived after this long without activity. Search and the Archived list still find them.")
+                }
             }
             SettingsGroup(PanelTheme.pick(nil, "Composer", "Composer")) {
                 SettingsRow("Show model picker", symbol: "cube.fill", tint: .indigo) {

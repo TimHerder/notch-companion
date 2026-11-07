@@ -187,9 +187,11 @@ cannot bypass them.
 ## Session identity and ownership
 
 Each registry entry stores runtime, canonical profile path, native `storedID`,
-working folder, local conversation ID, drafts, attachment references and read
-receipts. `runtimeID` is a connection-local alias cleared on restart. Native IDs
-are never rewritten into another profile's IDs. The router isolates identical
+working folder, local conversation ID, drafts, attachment references, read
+receipts and `lastSeenAt` (optional; older entries decode without it), which
+only drives the derived auto-archive and never reaches a runtime. `runtimeID`
+is a connection-local alias cleared on restart. Native IDs are never rewritten
+into another profile's IDs. The router isolates identical
 live and request IDs across runtimes/profiles; a connection failure interrupts
 only that route, and an unavailable installation does not disable others.
 Projects derive from each entry's working folder; there is no project field.

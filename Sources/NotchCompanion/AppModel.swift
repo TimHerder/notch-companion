@@ -106,6 +106,9 @@ final class AppModel: ObservableObject {
     @Published var submitting = false
     @Published var sessionSearch = ""
     @Published var sessionFilter: SessionFilter = .all
+    @Published var autoArchiveAfter = SessionAutoArchive.halfDay {
+        didSet { preferences.set(autoArchiveAfter.rawValue, forKey: SessionAutoArchive.key); glanceCache = nil }
+    }
     /// The one session row whose inline actions are open.
     @Published var sessionActionsID: String?
     @Published private(set) var deferredOperation: DeferredOperation?
@@ -190,17 +193,29 @@ final class AppModel: ObservableObject {
     }
     var visibleSessions: [CompanionSession] {
         let query = sessionSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let now = Date()
         return topLevelSessions.filter { session in
             let matchesFilter: Bool
             switch sessionFilter {
-            case .all: matchesFilter = !session.isArchived
+            // A search covers every session, archived ones included.
+            case .all: matchesFilter = !query.isEmpty || !(session.isArchived || isAutoArchived(session, now: now))
             case .needsYou: matchesFilter = session.displayState == .waiting || session.hasUnreadFailure
             case .unread: matchesFilter = session.hasUnreadResult && !session.isBusy
-            case .archived: matchesFilter = session.isArchived
+            case .archived: matchesFilter = session.isArchived || isAutoArchived(session, now: now)
             }
             return matchesFilter && (query.isEmpty || session.title.localizedCaseInsensitiveContains(query)
                 || session.messages.contains(where: { $0.text.localizedCaseInsensitiveContains(query) }))
         }
+    }
+    /// Archived by hand or by the auto-archive setting: what the Archived chip lists.
+    var archivedCount: Int {
+        let now = Date()
+        return topLevelSessions.filter { $0.isArchived || isAutoArchived($0, now: now) }.count
+    }
+    /// Dormant sessions leave the default list; the selection and live work stay.
+    func isAutoArchived(_ session: CompanionSession, now: Date = Date()) -> Bool {
+        session.id != currentID && !isSubmitting(session.id) && !unfinishedParents.contains(session.id)
+            && (unfinishedChildren[session.id]?.isEmpty ?? true) && session.isDormant(after: autoArchiveAfter.interval, now: now)
     }
     /// A session's project is its working folder; drafts without one use the default.
     func projectPath(of session: CompanionSession) -> String {
@@ -228,7 +243,8 @@ final class AppModel: ObservableObject {
     var unreadResultCount: Int { topLevelSessions.filter { $0.hasUnreadResult && !$0.isBusy }.count }
     var glanceEntries: [GlanceEntry] {
         if let glanceCache { return glanceCache }
-        let entries = SessionDigest.entries(sessions: topLevelSessions, requests: requests)
+        // shortcut: cached until sessions change, so a session turning dormant meanwhile stays until then.
+        let entries = SessionDigest.entries(sessions: topLevelSessions.filter { !isAutoArchived($0) }, requests: requests)
         glanceCache = entries
         return entries
     }
@@ -260,6 +276,7 @@ final class AppModel: ObservableObject {
         self.preferences = preferences
         let savedUpdateStyle = preferences.string(forKey: NotchUpdateStyle.key)
         updateStyle = NotchUpdateStyle(rawValue: savedUpdateStyle ?? "") ?? (savedUpdateStyle == "shoulder" ? .compact : .popup)
+        autoArchiveAfter = SessionAutoArchive(rawValue: preferences.string(forKey: SessionAutoArchive.key) ?? "") ?? .halfDay
         companionAppearance = CompanionAppearance(rawValue: preferences.string(forKey: CompanionAppearance.key) ?? "")
             ?? (updateStyle == .compact ? .eyes : .mascot)
         mascotCharacter = MascotCharacter(rawValue: preferences.string(forKey: MascotCharacter.key) ?? "") ?? .mote
@@ -684,6 +701,9 @@ final class AppModel: ObservableObject {
     }
 
     func selectSession(_ id: String) {
+        // Opening a session restarts its auto-archive clock; the selection itself never auto-archives.
+        update(id) { $0.lastSeenAt = Date() }
+        scheduleSave()
         currentID = id; page = .session; errorMessage = nil
         projectTrustSessionID = nil
         refreshConnection()
@@ -849,8 +869,9 @@ final class AppModel: ObservableObject {
         save()
     }
 
+    /// Also brings back an auto-archived session by restarting its clock.
     func restoreSession(_ id: String) {
-        update(id) { $0.isArchived = false }
+        update(id) { $0.isArchived = false; $0.lastSeenAt = Date() }
         save()
     }
 
