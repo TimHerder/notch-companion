@@ -129,6 +129,10 @@ final class ChangeSummaryTests: XCTestCase {
                            TurnChanges(id: "wake", workspace: "/p", source: .agent, files: edit)]
         func open() -> Set<String> { ChangeSummaryView.latestFinished(in: ConversationTimeline.build(session: session), session: session) }
         XCTAssertEqual(open(), ["x", "wake"], "The wake continues the delegating turn")
+        // A steer into the wake belongs to the wake's turn.
+        session.messages += [ChatMessage(id: "s", role: "user", text: "Also", turnID: "wake"),
+                             ChatMessage(role: "assistant", text: "Updated the changelog", turnID: "wake")]
+        XCTAssertEqual(open(), ["x", "wake"], "A steer does not end the delegating turn")
         session.messages += [ChatMessage(id: "y", role: "user", text: "Thanks", turnID: "y"), ChatMessage(role: "assistant", text: "Done", turnID: "y")]
         XCTAssertEqual(open(), [], "The user's own next turn ends it")
     }

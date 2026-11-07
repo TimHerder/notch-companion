@@ -168,7 +168,9 @@ struct ChangeSummaryView: View {
         for item in timeline[..<end].reversed() {
             switch item {
             case .changes(let changes): result.insert(changes.id)
-            case .message(let message) where message.role == "user" && message.kind == nil: return result
+            // Only a user row that starts its own turn ends this one; a steer belongs to the turn it joined.
+            case .message(let message) where message.role == "user" && message.kind == nil && (message.turnID ?? message.id) == message.id:
+                return result
             default: continue
             }
         }

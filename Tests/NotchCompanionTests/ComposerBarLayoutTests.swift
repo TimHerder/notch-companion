@@ -48,5 +48,22 @@ private struct ComposerFixture: View {
                 XCTAssertLessThanOrEqual(size.width, column, "\(theme.label)'s composer spills past the column (legacy: \(legacy))")
             }
         }
+        // Codex adds permission modes and a reasoning effort; archiving adds Restore.
+        model.sessions[0].isLegacyPrivate = false
+        model.sessions[0].runtime = .codex
+        model.sessions[0].permissionMode = nil
+        let choice = RuntimeModelChoice(model: "fixture-long-context-model", provider: "fixture-provider", reasoningEffort: "xhigh")
+        model.sessions[0].modelOverride = choice
+        model.modelCatalogs[model.modelCatalogKey(for: model.sessions[0])] = RuntimeModelCatalog(defaultModel: choice, models: [
+            RuntimeModelOption(choice: choice, title: "Fixture long context model", reasoningEfforts: ["low", "medium", "high", "xhigh"])])
+        for archived in [false, true] {
+            model.sessions[0].isArchived = archived
+            for theme in PanelTheme.allCases {
+                PanelTheme.current = theme
+                let size = NSHostingController(rootView: ComposerFixture(model: model))
+                    .sizeThatFits(in: CGSize(width: column, height: 1000))
+                XCTAssertLessThanOrEqual(size.width, column, "\(theme.label)'s Codex composer spills past the column (archived: \(archived))")
+            }
+        }
     }
 }

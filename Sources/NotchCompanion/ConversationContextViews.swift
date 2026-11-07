@@ -49,9 +49,16 @@ struct ComposerDestinationView: View {
             }
         }
         if model.current?.isArchived == true, let id = model.currentID {
-            Button("Restore archived session") { model.restoreSession(id) }
-                .buttonStyle(NotchPillButtonStyle(small: true))
-                .help("Restore this conversation to your sessions")
+            Button { model.restoreSession(id) } label: {
+                // A tight bar keeps the icon rather than an empty pill.
+                ViewThatFits(in: .horizontal) {
+                    Label("Restore archived session", systemImage: "tray.and.arrow.up").lineLimit(1)
+                    Image(systemName: "tray.and.arrow.up")
+                }
+            }
+            .buttonStyle(NotchPillButtonStyle(small: true))
+            .help("Restore this conversation to your sessions")
+            .accessibilityLabel("Restore archived session")
         }
     }
 }
@@ -86,13 +93,15 @@ private struct WorkspaceButton: View {
             HStack(spacing: 5) {
                 if PanelTheme.current == .refined {
                     Image(systemName: "folder").imageScale(.small)
-                    Text(URL(fileURLWithPath: path).lastPathComponent).truncationMode(.middle)
+                    Text(URL(fileURLWithPath: path).lastPathComponent).lineLimit(1).truncationMode(.middle)
                 } else {
                     Label(URL(fileURLWithPath: path).lastPathComponent,
-                          systemImage: PanelTheme.current == .tahoe ? "folder.fill" : "folder").truncationMode(.middle)
+                          systemImage: PanelTheme.current == .tahoe ? "folder.fill" : "folder").lineLimit(1).truncationMode(.middle)
                 }
                 if choosing { Image(systemName: "chevron.up.chevron.down").font(.system(size: 7.5, weight: .semibold)) }
             }
+            // A long folder name stops here, so the model, the gauge and Send keep their room.
+            .frame(maxWidth: 150)
         }
         .destinationButtonStyle()
         .help(choosing ? "Choose this session’s working folder · \(path)" : "Show this session’s working folder in Finder · \(path)")

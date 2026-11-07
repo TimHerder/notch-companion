@@ -47,19 +47,26 @@ struct ModelControlsView: View {
                     } label: {
                         switch theme {
                         case .refined:
-                            HStack(spacing: 5) {
-                                Text(modelTitle ?? "Runtime default")
-                                    .lineLimit(1).truncationMode(.middle).frame(minWidth: modelMinWidth)
-                                if let effort {
-                                    Text(RuntimeModelOption.effortTitle(effort)).foregroundStyle(CompanionStyle.tertiary)
-                                        .lineLimit(1).fixedSize()
+                            // In a tight bar the effort goes first, then the name truncates.
+                            let name = Text(modelTitle ?? "Runtime default").lineLimit(1).truncationMode(.middle)
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 5) {
+                                    name
+                                    if let effort {
+                                        Text(RuntimeModelOption.effortTitle(effort)).foregroundStyle(CompanionStyle.tertiary).lineLimit(1)
+                                    }
                                 }
+                                name.frame(minWidth: modelMinWidth)
                             }
                         case .tahoe, .instrument:
-                            HStack(spacing: theme == .instrument ? 7 : 5) {
-                                Text(modelTitle ?? "Runtime default").foregroundStyle(CompanionStyle.text)
-                                    .lineLimit(1).truncationMode(.middle).frame(minWidth: modelMinWidth)
-                                if let effort { Text(RuntimeModelOption.effortTitle(effort)).lineLimit(1).fixedSize() }
+                            let name = Text(modelTitle ?? "Runtime default").foregroundStyle(CompanionStyle.text)
+                                .lineLimit(1).truncationMode(.middle)
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: theme == .instrument ? 7 : 5) {
+                                    name
+                                    if let effort { Text(RuntimeModelOption.effortTitle(effort)).lineLimit(1) }
+                                }
+                                name.frame(minWidth: modelMinWidth)
                             }
                             .modifier(InstrumentMicroLabel(active: theme == .instrument))
                         }
@@ -80,32 +87,36 @@ struct ModelControlsView: View {
                         choosingPermissions.toggle()
                         choosingModel = false; showingContext = false
                     } label: {
+                        // In a tight bar the mode keeps its glyph; its name stays in help and VoiceOver.
+                        let glyph = Image(systemName: session.permissionMode?.symbol ?? "shield")
                         Group {
                             switch theme {
                             case .refined:
-                                HStack(spacing: 5) {
-                                    Image(systemName: session.permissionMode?.symbol ?? "shield")
-                                    Text(permissionTitle).lineLimit(1)
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 5) { glyph; Text(permissionTitle).lineLimit(1) }
+                                    glyph
                                 }
                             case .tahoe:
-                                HStack(spacing: 5) {
-                                    // The glyph takes the label's color explicitly; inherited, Full access drew it white.
-                                    Image(systemName: session.permissionMode?.symbol ?? "shield").symbolRenderingMode(.monochrome)
-                                        .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
-                                    Text(permissionTitle).lineLimit(1)
+                                // The glyph takes the label's color explicitly; inherited, Full access drew it white.
+                                let tinted = glyph.symbolRenderingMode(.monochrome)
+                                    .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 5) { tinted; Text(permissionTitle).lineLimit(1) }
+                                    tinted
                                 }
                             case .instrument:
-                                HStack(spacing: 6) {
-                                    Image(systemName: session.permissionMode?.symbol ?? "shield").font(.system(size: 10))
-                                    Text(permissionTitle).microLabel(10, tracking: 0.6).lineLimit(1)
+                                let small = glyph.font(.system(size: 10))
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 6) { small; Text(permissionTitle).microLabel(10, tracking: 0.6).lineLimit(1) }
+                                    small
                                 }
                             }
                         }
                         .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
                     }
                     .sessionControlStyle()
-                    // A short mode name stays whole; the model and then the folder give way first.
-                    .fixedSize()
+                    // Gives way with the model, after the folder; the gauge and Send never do.
+                    .layoutPriority(-1)
                     .disabled(!model.canChangePermissionMode(session.id))
                     .help(model.canChangePermissionMode(session.id)
                           ? "Permissions for your next message: \(permissionTitle)"
