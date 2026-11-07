@@ -395,13 +395,13 @@ import ImageIO
                 ChangedFile(path: "Resources/companion.png", additions: nil, deletions: nil, patch: "Binary files differ")])
         for expanded in [false, true] {
             try render(ChangeSummaryView(summary: summary, editorName: "VS Code", open: { _ in }, chooseEditor: { _ in },
-                onInspect: {}, showsFiles: expanded, selectedPath: expanded ? summary.files[0].path : nil)
+                onInspect: {}, showsFiles: expanded, toggle: {}, selectedPath: expanded ? summary.files[0].path : nil)
                 .padding(16).frame(width: 540, height: expanded ? 520 : 80, alignment: .top)
                 .background(CompanionStyle.background).environment(\.colorScheme, .dark),
                 size: NSSize(width: 540, height: expanded ? 520 : 80), name: expanded ? "changes-diff" : "changes-collapsed", output: output)
         }
         summary.source = .workspace
-        try render(ChangeSummaryView(summary: summary, editorName: "VS Code", open: { _ in }, chooseEditor: { _ in }, onInspect: {}, showsFiles: true)
+        try render(ChangeSummaryView(summary: summary, editorName: "VS Code", open: { _ in }, chooseEditor: { _ in }, onInspect: {}, showsFiles: true, toggle: {})
             .padding(16).frame(width: 380, height: 350, alignment: .top).background(CompanionStyle.background).environment(\.colorScheme, .dark),
             size: NSSize(width: 380, height: 350), name: "changes-workspace-small", output: output)
         // A parent turn with a shared child (its file in the parent's capture too) and a worktree child.
@@ -412,9 +412,15 @@ import ImageIO
             TurnChanges(id: "child-2", workspace: "/tmp/Worktrees/Project-1a2b/streaming", files: UnifiedDiff.files(patch.replacingOccurrences(of: "Welcome back", with: "Hi again"))
                 + [ChangedFile(path: "Sources/Stream.swift", kind: "Added", additions: 48)], capturedAt: Date(), label: "Try a streaming greeting · Codex · worktree")]
         try render(ChangeSummaryView(summary: delegated, editorName: "VS Code", open: { _ in }, chooseEditor: { _ in }, onInspect: {},
-            showsFiles: true, selectedPath: "child-2\u{0}Sources/Companion.swift")
+            showsFiles: true, toggle: {}, selectedPath: "child-2\u{0}Sources/Companion.swift")
             .padding(16).frame(width: 540, height: 640, alignment: .top).background(CompanionStyle.background).environment(\.colorScheme, .dark),
             size: NSSize(width: 540, height: 640), name: "changes-delegated", output: output)
+        // Eight files: the first six run into the first child; the second child waits behind "2 more files".
+        var crowded = delegated
+        crowded.files += ["Sources/Panel.swift", "Sources/Onboarding.swift", "Docs/welcome.md", "README.md"].map { ChangedFile(path: $0, additions: 4, deletions: 1) }
+        try render(ChangeSummaryView(summary: crowded, editorName: "VS Code", open: { _ in }, chooseEditor: { _ in }, onInspect: {}, showsFiles: true, toggle: {})
+            .padding(16).frame(width: 540, height: 560, alignment: .top).background(CompanionStyle.background).environment(\.colorScheme, .dark),
+            size: NSSize(width: 540, height: 560), name: "changes-delegated-long", output: output)
         summary.source = .agent
         let model = AppModel(storageURL: temporary.appendingPathComponent("changes.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
         defer { model.shutdown() }
@@ -435,6 +441,20 @@ import ImageIO
         model.reducedMotion = true
         try render(UnifiedNotchView(model: model), size: model.geometry!.expandedFrame.size, name: "changes-compact", output: output)
         try render(FullSessionView(model: model), size: NSSize(width: 900, height: 660), name: "changes-full", output: output)
+        // An older turn's card starts collapsed; the latest lists six files, then "2 more files".
+        let earlier = asked.addingTimeInterval(-600)
+        model.sessions[0].messages.insert(contentsOf: [
+            ChatMessage(id: "first", role: "user", text: "Rename the greeting helper.", createdAt: earlier, turnID: "first"),
+            ChatMessage(role: "assistant", text: "Renamed it to `welcome()`.", createdAt: earlier.addingTimeInterval(20), turnID: "first")], at: 0)
+        model.sessions[0].turnEndedAt["first"] = earlier.addingTimeInterval(21)
+        var longer = summary
+        longer.files += ["Sources/Panel.swift", "Sources/Onboarding.swift", "Tests/OnboardingTests.swift", "Docs/welcome.md", "README.md"]
+            .map { ChangedFile(path: $0, additions: 4, deletions: 1) }
+        model.sessions[0].changes = [TurnChanges(id: "first", workspace: summary.workspace, source: .agent,
+                                                 files: [ChangedFile(path: "Sources/Greeting.swift", additions: 3, deletions: 3)]), longer]
+        try render(UnifiedNotchView(model: model), size: model.geometry!.expandedFrame.size, name: "changes-history-compact", output: output)
+        // Tall enough to show both turns.
+        try render(FullSessionView(model: model), size: NSSize(width: 900, height: 1100), name: "changes-history-full", output: output)
     }
 
     /// A finished turn whose commentary and tool calls fold above its answer and
@@ -528,6 +548,11 @@ import ImageIO
         parent.runtime = .claude
         parent.parentTurnComplete = false
         parent.tools = [ToolActivity(id: "delegate", name: "mcp__notch__delegate_task", detail: "Review the parser fix", state: .finished, turnID: "turn")]
+        // The delegating turn's card, with the child's own edit, stays open while its result is handled.
+        parent.changes = [TurnChanges(id: "turn", workspace: "/tmp/Parser", source: .agent,
+            files: [ChangedFile(path: "Sources/Parser.swift", additions: 6, deletions: 2)],
+            delegated: [TurnChanges(id: "child", workspace: "/tmp/Parser", files: [ChangedFile(path: "Notes/parser-review.md", kind: "Added", additions: 9)],
+                                    label: "Review the parser fix · Codex")])]
         var child = CompanionSession(id: "child", title: "Review the parser fix", state: .finished,
             messages: [ChatMessage(id: "task", role: "user", text: "Act as the review sub-agent for this task.\n\nReview the parser fix in Sources/Parser.swift.", turnID: "task"),
                        ChatMessage(role: "assistant", text: "Two findings: the empty-input branch skips the error, and `parse(_:)` lacks a test for trailing commas.", turnID: "task")],

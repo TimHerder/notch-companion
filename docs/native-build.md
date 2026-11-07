@@ -223,7 +223,11 @@ stamped release label.
 
 `scripts/render-ui-fixtures.sh --changes-only` renders the collapsed change
 summary, expanded file diff, narrow workspace summary, and integrated compact
-and full-session conversations using synthetic change metadata and no runtime.
+and full-session conversations using synthetic change metadata and no runtime;
+`changes-history-*` adds an older turn (its card collapsed) before a latest
+turn whose open card lists six of eight files and “2 more files” (three and
+“5 more files” in the notch). `--delegation-only` gives the delegating turn a
+card with the child's group, open while the child's result is handled.
 `--work-only` renders a finished turn whose commentary and tool calls fold above
 its answer and changes (`compact-`/`full-worked-collapsed`, `-expanded`) and the
 same turn live with its interleaved text and ticking footer (`-worked-live`);

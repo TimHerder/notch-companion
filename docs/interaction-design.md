@@ -533,7 +533,8 @@ drop opens its session).
   signal LED in Instrument; never the spinner), followed by
   any delegated agents still working.
 - **Finished turns** read: your message, a **Worked for 2:14** fold (collapsed
-  by default), the answer, then its changes. The answer is the last text the
+  by default), the answer, then its changes (open for the latest finished turn,
+  see [Change summaries](#change-summaries)). The answer is the last text the
   turn wrote; it keeps the full body style and Copy on hover, and ordinary
   replies carry no harness-name header (relayed messages keep their label). The
   fold holds the commentary and runs in order, indented on a thin leading rule;
@@ -561,13 +562,28 @@ drop opens its session).
 
 ## Change summaries
 
-Each coding turn can show a collapsed **Changes · N files · +A −D** row directly
-under its final answer (below the turn's folded work), in the notch and
-full-session window. Expanding lists paths, change
-kinds and per-file line counts; clicking a file opens its selectable unified
-diff below it (green additions, red removals) in a bounded, independently
-scrolling viewport. Binary files show a Binary label, not line counts.
-Expanding or inspecting stops transcript following; the notch never grows.
+Each coding turn can show a **Changes · N files · +A −D** card directly under
+its final answer (below the turn's folded work), in the notch and full-session
+window, so a finished turn reads as its answer and its files together. Open, it
+lists paths, change kinds and per-file line counts; clicking a file opens its
+selectable unified diff below it (green additions, red removals) in a bounded,
+independently scrolling viewport. Binary files show a Binary label, not line
+counts. An open card lists the first six files (three in the notch, so the
+answer and the card's header stay in view above them) and an **N more files**
+row that reveals the rest.
+
+The latest finished turn's cards (Changes, Workspace changes, delegated
+groups) start open; older turns' start collapsed. A running turn, its steers
+and a message still sending (until the runtime confirms it, even once it shows
+as working) are not finished, so the turn before them stays the latest until
+the new one ends. Turns the companion sent for an agent (a delegation result,
+a relayed question, a message from another session) continue the user's own
+turn before them: its cards stay open beside theirs, so a delegating turn's
+child changes are open when the child's result arrives. Opening or closing a card is remembered per
+session and turn until the app quits, shared by the notch and full window; a
+turn that stops being the latest keeps that choice, or collapses if untouched.
+Opening by default keeps transcript following; the user's own expansion,
+reveal or file inspection stops it. The notch never grows; content scrolls.
 
 **Open file/project in VS Code** uses the installed editor, else Cursor, Zed or
 Xcode, else asks the user to pick an app. Right-click either action for

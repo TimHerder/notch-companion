@@ -1410,7 +1410,7 @@ struct FullSessionView: View {
             FailedAgentBanner(model: model) { selectedTab = "Team" }
         }.readable().padding(.horizontal, 22)
         Group {
-            if selectedTab == "Conversation" { ConversationHistoryView(model: model) }
+            if selectedTab == "Conversation" { ConversationHistoryView(model: model, inNotch: false) }
             else if selectedTab == "Activity" { fullActivity }
             else { fullTeam }
         }.readable().padding(.horizontal, 22).frame(maxHeight: .infinity)
