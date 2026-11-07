@@ -258,7 +258,8 @@ delegation instructions and the launcher adds the companion's tools
 
 Hermes builds with typed wire contracts reject unknown params (error 4000), so
 the adapter strips companion-only fields (`project_trusted`,
-`activity_unverified`, `pending_turn_id`, `turn_id`) and resume's `cwd`. Those
+`activity_unverified`, `pending_turn_id`, `turn_id`, `delegation`,
+`native_submission_attempted`) and resume's `cwd`. Those
 builds also use JSON-RPC server→client requests (`srq-…` ids): after
 `gateway.ready` the adapter sends `client.capabilities {server_requests: true}`,
 ignoring rejection from builds without it, which keep `*.request`/`*.respond`.

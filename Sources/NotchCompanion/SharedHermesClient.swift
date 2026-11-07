@@ -321,7 +321,7 @@ final class SharedHermesClient: RuntimeTransport {
 
     /// Fields other adapters consume. Hermes never read them, and builds with
     /// typed wire contracts reject unknown keys instead of ignoring them.
-    static let companionOnlyParams = ["project_trusted", "activity_unverified", "pending_turn_id", "turn_id", "delegation"]
+    static let companionOnlyParams = ["project_trusted", "activity_unverified", "pending_turn_id", "turn_id", "delegation", "native_submission_attempted"]
 
     static func nativeParams(_ method: String, _ params: [String: Any]) -> [String: Any] {
         var values = params

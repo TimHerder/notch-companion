@@ -20,7 +20,7 @@ status, acceptance status or a known gap changes.
 Listing and reading tasks through Codex desktop doesn't establish that a session
 appears in its visible sidebar, or that live handoff works in general.
 
-## Current status — 2026-10-29
+## Current status — 2026-11-07
 
 **Release pipeline**
 
@@ -40,15 +40,42 @@ appears in its visible sidebar, or that live handoff works in general.
 
 **Adapters**
 
-Live acceptance from earlier private development hasn't been re-run against this
-source snapshot. Known limits:
+No adapter carries an experimental label any more (maintainer decision,
+2026-11-07); the gaps below still need live acceptance before a public release.
+Every harness now hosts cross-agent delegation. Live acceptance from earlier
+private development hasn't been re-run against this source snapshot. Known limits:
 
-- Cursor CLI: experimental, with no live acceptance against an installed CLI.
-- DeepSeek Harness: experimental; profile and extension parity needs live acceptance.
-- Antigravity CLI: headless mode can't ask questions, request approvals or take images.
-- Pi: no terminal-rendered extension UI and no built-in tool approvals.
-- OpenCode: the child-discovery race and the unstable pre-send snapshot are
+- Cursor CLI: not installed here, so prompts and delegation hosting are covered
+  by protocol fixtures only. ACP has no pre-approval, so it may ask before every
+  companion tool call, and its tool rows may miss the delegation labels.
+- DeepSeek Harness: profile and extension parity, and delegation hosting through
+  the stdio bridge, are covered by protocol fixtures only.
+- Antigravity CLI: now runs over `agy acp`. Checked live against agy 1.5.2 with no
+  prompt: `initialize`, `session/list`, `session/new` and the delegation bridge
+  starting from the session. Still unverified with a real prompt: question and
+  MCP tool-call shapes, ACP `usage_update`, whether `session/set_model` stays
+  per-session, and resuming an older stream-json conversation that has content.
+  No images. Running `agy acp` lets agy's own self-updater run.
+- Hermes: delegation hosting relies on Hermes 0.22.3 internals and fails closed
+  with a notice if they change. Checked against the installed 0.22.3 with a
+  throwaway frontend and no model call; no live delegating prompt yet.
+- OpenClaw: delegation hosting through a role-`node` Gateway connection is
+  covered by a fake-Gateway fixture only (OpenClaw isn't installed). Node
+  pairing, command approval and the agent's `sessionKey` form are unverified.
+- OpenCode: 2.0.30 per-session delegation servers were checked live with no
+  prompt (opt-in test with an isolated data folder; `~/.config/opencode`
+  unchanged). Not yet checked with a model call: whether the deny rule hides
+  other sessions' servers or only refuses them, and whether child sessions
+  inherit the rules; the `_meta` ownership check covers both. OpenCode 1.x
+  doesn't host. The child-discovery race and the unstable pre-send snapshot are
   covered by offline fixtures only, not live OpenCode.
+- Pi: no terminal-rendered extension UI and no built-in tool approvals.
+
+**Interface**
+
+- The island update, stage, "Worked for" fold, context bubble and session list
+  are covered by offscreen fixtures in all three designs. No physical-notch,
+  live-hover or VoiceOver acceptance has been done for them.
 
 **Not yet done**
 
@@ -71,7 +98,8 @@ Before the first public release, in addition to the repository steps in
   drag/drop, readable text, Reduce Motion and ordinary macOS permission prompts.
 - Replace the app with an update only after all parent and child work is idle,
   then check that drafts, history, native IDs and read receipts survived.
-- Keep Cursor and DeepSeek labeled experimental until they pass live acceptance.
+- Run live acceptance, including a delegating prompt, for Cursor, DeepSeek and
+  OpenClaw before advertising them in a public release.
 
 When recording results, include the tested OS, architecture, runtime version,
 scenario and outcome. Leave out account names, profile contents, raw transcripts

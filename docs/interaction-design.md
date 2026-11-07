@@ -504,7 +504,7 @@ drop opens its session).
   newest at the bottom, with older calls behind “N earlier tool calls”; new
   calls roll rows upward. Stable tool identities update rows in place. The cap
   limits only the live summary, never history. A footer under the newest
-  content reads “Working for 0:42”, ticking for the whole turn while text
+  content reads “Working for 42s”, ticking for the whole turn while text
   streams (“Waiting for your reply…” while the agent waits on you), followed by
   any delegated agents still working.
 - **Finished turns** read: your message, a **Worked for 2:14** fold (collapsed
@@ -517,7 +517,7 @@ drop opens its session).
   Durations read 8s, 2:14, 1:02:10.
 - A turn that ended before writing any text has no answer: its work stays open
   under its header. The latest turn's own failure or stop names it, “Failed after
-  1:03” or “Stopped after 0:12”, on that header or on the fold above whatever
+  1:03” or “Stopped after 12s”, on that header or on the fold above whatever
   text it wrote (a failed delegated child does not). A steer or wake starts its
   own block; blocks split from a running turn stay open until the turn ends, and
   a block without its own end ends when the next one in its turn begins.
