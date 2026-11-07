@@ -1023,6 +1023,12 @@ struct SettingsContent: View {
                 .foregroundStyle(CompanionStyle.secondary)
                 .textSelection(.enabled)
                 .padding(.leading, PanelTheme.pick(4, 4, 0))
+            // The agent chooser shows these vendors' marks (docs/third-party-marks.md).
+            Text("Claude Code, Codex, OpenCode, Pi, OpenClaw, DeepSeek Harness, Antigravity, Cursor and Hermes Agent and their logos are trademarks of their respective owners. Notch Companion is not affiliated with or endorsed by them.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.faint))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.leading, PanelTheme.pick(4, 4, 0))
         }
     }
 

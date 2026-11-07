@@ -53,6 +53,11 @@ What each agent can do depends on that agent. See the
 [runtime contract](docs/backend-runtime.md) and [verification record](docs/verification.md)
 for details.
 
+Claude Code, Codex, OpenCode, Pi, OpenClaw, DeepSeek Harness, Antigravity,
+Cursor and Hermes Agent and their logos are trademarks of their respective
+owners. Notch Companion is not affiliated with or endorsed by them. See
+[third-party marks](docs/third-party-marks.md).
+
 ## Install
 
 1. Download the ZIP from [Releases](https://github.com/TimHerder/notch-companion/releases)

@@ -13,7 +13,10 @@ The bottom of Settings (compact panel and full-session window) shows the
 bundle's stamped calendar release and build, for example
 `Notch Companion 2026.10.27-r1 · Build 1`, as selectable text. A bare SwiftPM
 executable shows `Development build`. PR builds carry a preview marker and show
-`Preview pr-N-HEAD12` even when numeric bundle version fields exist.
+`Preview pr-N-HEAD12` even when numeric bundle version fields exist. Under it, a
+quiet footnote says the agents' names and logos are their owners' trademarks and
+that Notch Companion is not affiliated with or endorsed by them (the README
+carries the same line).
 
 ## Placement and expansion
 
@@ -482,7 +485,7 @@ appearance previews, and uses neutral wording without a character voice.
   reduced motion). The step lives in the page, so it survives the panel closing
   for a preview.
 - **Agent** (*Choose your agent*): installed harnesses in catalog order, with
-  install location; the default agent if
+  their [logo](#agent-logos) and install location; the default agent if
   found, else the first, is preselected. Choosing sets the default agent and the
   untouched first draft's harness; **Continue** checks the connection, showing
   failures in the panel's error line. With none found: *Install an agent*, setup
@@ -745,6 +748,19 @@ notch, dots, live activity, announcements, aura, rim comet, glance and stage use
   switches and a fader slider. The composer is an inset readout: a prompt
   chevron on the first line and the bar along its bottom edge.
 
+### Agent logos
+
+Where the user picks an agent (the agent chooser, including Settings' default
+agent, the welcome's agent step and a draft's harness menu) each row shows the
+agent's official mark at about 16 points (14 in Instrument's harness menu)
+just before its name. The mark keeps its own colours in every design: never
+tinted, desaturated, cropped or stretched; an optical scale offsets padding
+built into a file (Codex's Blossom, Antigravity). It never replaces the name,
+and VoiceOver reads only the name. A runtime without a bundled mark shows its
+name alone. Logos stay out of the island, session rows, the composer bar's
+labels, the app icon and marketing assets. Sources and owners:
+[third-party marks](third-party-marks.md).
+
 ## Controls and window behavior
 
 Use the shared controls in `NotchControls.swift`, which draw each control in
@@ -757,12 +773,13 @@ top banner and Settings, not in the composer.
 Use inline choosers inside the fixed panel, with plain monochrome buttons and
 no native menu tracking.
 
-- The draft's agent button opens a compact names-only overlay of harnesses whose
-  current profile passed a Settings connection check. Readiness survives
-  restart; profile or installation changes and failed connections require a new
-  check. With none ready, link to Settings and keep drafts and files editable
-  with Send disabled. The detailed chooser stays in Settings for the default
-  agent. Connection timing: [runtime contract](backend-runtime.md#multi-harness-contract).
+- The draft's agent button opens a compact overlay of harnesses (each its
+  [logo](#agent-logos) and name) whose current profile passed a Settings
+  connection check. Readiness survives restart; profile or installation
+  changes and failed connections require a new check. With none ready, link
+  to Settings and keep drafts and files editable with Send disabled. The
+  detailed chooser stays in Settings for the default agent. Connection timing:
+  [runtime contract](backend-runtime.md#multi-harness-contract).
 - The Archived chip toggles; choosing it again returns to the active list. Row
   ellipses expand actions inline; right-click keeps the native menu.
 

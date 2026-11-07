@@ -215,6 +215,7 @@ struct SessionRuntimeControl: View {
                 ForEach(model.readyRuntimes) { runtime in
                     Button { choose(runtime) } label: {
                         HStack(spacing: 8) {
+                            AgentLogo(runtime: runtime)
                             Text(runtime.title)
                             Spacer(minLength: 0)
                             if session.runtime == runtime { Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)) }
@@ -235,6 +236,7 @@ struct SessionRuntimeControl: View {
                 ForEach(model.readyRuntimes) { runtime in
                     Button { choose(runtime) } label: {
                         HStack(spacing: 8) {
+                            AgentLogo(runtime: runtime)
                             Text(runtime.title)
                             Spacer(minLength: 0)
                             if session.runtime == runtime { Image(systemName: "checkmark").font(.system(size: 12, weight: .semibold)).foregroundStyle(CompanionStyle.accent) }
@@ -256,6 +258,7 @@ struct SessionRuntimeControl: View {
                     Button { choose(runtime) } label: {
                         HStack(spacing: 9) {
                             Text(String(format: "%02d", index + 1)).font(CompanionStyle.mono(10)).foregroundStyle(CompanionStyle.faint)
+                            AgentLogo(runtime: runtime, size: 14)
                             Text(runtime.title).font(.system(size: 12.5, weight: .medium))
                             Spacer(minLength: 0)
                             if session.runtime == runtime { LED(color: CompanionStyle.text, size: 6) }

@@ -82,6 +82,8 @@ private development hasn't been re-run against this source snapshot. Known limit
 - A downloaded release hasn't been installed through Gatekeeper on another Mac.
 - No third-party rights or full secret review has been done. Pattern scans found
   nothing, but they aren't a certification.
+- The bundled third-party agent marks haven't had a rights review; vendors'
+  published rules vary (see [third-party marks](third-party-marks.md)).
 - No physical UI acceptance of a release build has been done.
 
 ## Public release acceptance
