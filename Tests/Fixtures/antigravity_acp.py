@@ -27,6 +27,7 @@ listed = json.load(open(STORE)) if os.path.exists(STORE) else ["external-convers
 current = {}
 prompt_id = None
 prompt_sid = None
+asking = None
 
 
 def send(value):
@@ -51,10 +52,11 @@ def opened(sid):
                                              dict(value="claude-sonnet-4-6", name="Claude Sonnet 4.6 (Thinking)")])])
 
 
-def finish(text):
+def finish(text, reason="end_turn"):
     global prompt_id
-    update(prompt_sid, "agent_message_chunk", content=dict(type="text", text=text))
-    reply(prompt_id, dict(stopReason="end_turn"))
+    if text:
+        update(prompt_sid, "agent_message_chunk", content=dict(type="text", text=text))
+    reply(prompt_id, dict(stopReason=reason))
     prompt_id = None
 
 
@@ -94,23 +96,32 @@ for line in sys.stdin:
         text = params["prompt"][0]["text"]
         if text == "question":
             update(prompt_sid, "tool_call", toolCallId="interaction_1", title="Running ask_question", status="in_progress")
+            asking = "ask-1"
             send(dict(id="ask-1", method="session/request_permission", params=dict(sessionId=prompt_sid,
                  toolCall=dict(toolCallId="interaction_1", title="Which color?"),
                  options=[dict(optionId="opt-sage", name="Sage", kind="allow_once"),
                           dict(optionId="opt-ink", name="Ink", kind="allow_once")])))
         elif text == "permission":
             update(prompt_sid, "tool_call", toolCallId="call-2", title="Running run_command", status="pending")
+            asking = "perm-1"
             send(dict(id="perm-1", method="session/request_permission", params=dict(sessionId=prompt_sid,
                  toolCall=dict(toolCallId="call-2", title="Run run_command?", rawInput=dict(CommandLine="rm fixture")),
                  options=[dict(optionId="allow", name="Allow", kind="allow_once"),
                           dict(optionId="always", name="Always", kind="allow_always"),
                           dict(optionId="reject", name="Deny", kind="reject_once")])))
+        elif text == "slow":
+            update(prompt_sid, "agent_message_chunk", content=dict(type="text", text="Working"))
         else:
             update(prompt_sid, "tool_call", toolCallId="call-1", title="Running delegate_task", status="completed",
                    rawInput=dict(task="fixture"), _meta=dict(is_mcp_tool_call=True))
             finish("reply:" + current[prompt_sid])
+    elif method == "session/cancel":
+        # A turn waiting on the client ends only once that request is answered, as ACP requires of the client.
+        if prompt_id is not None and asking is None:
+            finish("", "cancelled")
     elif method is None and wire_id in ("ask-1", "perm-1"):
+        asking = None
         outcome = frame["result"]["outcome"]
-        finish(outcome.get("optionId", outcome["outcome"]))
+        finish(outcome.get("optionId", outcome["outcome"]), "cancelled" if outcome["outcome"] == "cancelled" else "end_turn")
     elif wire_id is not None and method is not None:
         send(dict(id=wire_id, error=dict(code=-32601, message="Unsupported fixture method")))

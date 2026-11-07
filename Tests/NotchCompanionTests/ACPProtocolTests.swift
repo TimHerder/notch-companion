@@ -90,6 +90,24 @@ final class ACPProtocolTests: XCTestCase {
         XCTAssertEqual(state.catalog("two").note, "This ACP runtime has not reported a session model catalog.")
     }
 
+    func testCancellingASessionAnswersEachOpenRequestInItsOwnCancelShape() throws {
+        var state = ACPProtocolState(antigravity: true); state.owned = ["one", "two"]; try state.begin("one"); try state.begin("two")
+        let schema: [String: Any] = ["type": "object", "properties": ["color": ["type": "string"]]]
+        _ = state.serverRequest(id: 1, method: "session/request_permission", params: ["sessionId": "one", "toolCall": ["title": "Edit"],
+            "options": [["optionId": "allow", "kind": "allow_once"]]])
+        _ = state.serverRequest(id: 2, method: "session/request_permission", params: ["sessionId": "one", "toolCall": ["toolCallId": "interaction_1", "title": "Pick"],
+            "options": [["optionId": "a", "name": "A", "kind": "allow_once"]]])
+        _ = state.serverRequest(id: 3, method: "elicitation/create", params: ["sessionId": "one", "requestedSchema": schema])
+        _ = state.serverRequest(id: 4, method: "elicitation/create", params: ["sessionId": "two", "requestedSchema": schema])
+        let replies = Dictionary(uniqueKeysWithValues: state.cancelRequests("one").map { ($0["id"] as? Int ?? 0, $0["result"] as? [String: Any] ?? [:]) })
+        XCTAssertEqual(Set(replies.keys), [1, 2, 3])
+        XCTAssertEqual((replies[1]?["outcome"] as? [String: Any])?["outcome"] as? String, "cancelled")
+        XCTAssertEqual((replies[2]?["outcome"] as? [String: Any])?["outcome"] as? String, "cancelled", "A native question is cancelled, not answered")
+        XCTAssertEqual(replies[3]?["action"] as? String, "cancel")
+        XCTAssertEqual(state.requests.keys.sorted(), ["n:4"], "Another session's request stays open")
+        XCTAssertTrue(state.cancelRequests("one").isEmpty)
+    }
+
     func testCursorRequestsWithoutAnAttributableSessionAreDeclined() throws {
         var state = ACPProtocolState(); state.owned = ["one", "two"]; try state.begin("one"); try state.begin("two")
         let result = state.serverRequest(id: 9, method: "cursor/create_plan", params: ["toolCallId": "unknown", "plan": "Edit"])
