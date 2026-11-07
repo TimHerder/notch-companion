@@ -25,7 +25,6 @@ struct ConversationHistoryView: View {
                         let needsSetup = session.map { model.canChangeRuntime($0.id) } == true && model.readyRuntimes.isEmpty
                         emptyState(needsSetup: needsSetup)
                     }
-                    let latestMessageID = session?.messages.last(where: SessionHistory.isVisibleConversation)?.id
                     ForEach(timeline) { item in
                         switch item {
                         case .message(let message) where message.delegationSummary != nil:
@@ -33,12 +32,12 @@ struct ConversationHistoryView: View {
                             DelegationResultRow(summary: message.delegationSummary ?? "", failed: message.delegationSummary?.hasSuffix(" failed") == true,
                                                 open: childID.map { id in { model.openDelegatedSession(id) } })
                         case .message(let message):
-                            messageView(message, commentary: false, latest: latestMessageID)
+                            messageView(message, commentary: false)
                                 .transition(message.id == session?.stagedSubmission?.message.id && !model.reducedMotion
                                     ? .asymmetric(insertion: .offset(y: 8).combined(with: .opacity), removal: .identity)
                                     : .identity)
                         case .commentary(let message):
-                            messageView(message, commentary: true, latest: latestMessageID)
+                            messageView(message, commentary: true)
                         case .tools(let group):
                             TranscriptToolGroup(group: group, reducedMotion: model.reducedMotion,
                                                 onInspect: scrolling.stopFollowing)
@@ -52,7 +51,7 @@ struct ConversationHistoryView: View {
                                 ForEach(work.entries) { entry in
                                     switch entry {
                                     case .commentary(let message), .message(let message):
-                                        messageView(message, commentary: true, latest: latestMessageID)
+                                        messageView(message, commentary: true)
                                     case .tools(let group):
                                         TranscriptToolGroup(group: group, reducedMotion: model.reducedMotion,
                                                             onInspect: scrolling.stopFollowing, inWork: true)
@@ -86,7 +85,7 @@ struct ConversationHistoryView: View {
                         .transition(.identity)
                     }
                     if let session, session.isBusy {
-                        LiveTurnFooter(since: session.messages.last { $0.role == "user" && SessionHistory.isVisibleConversation($0) }?.createdAt ?? session.updatedAt,
+                        LiveTurnFooter(since: SessionDigest.turnStart(session) ?? session.updatedAt,
                                        waiting: session.state == .waiting, hint: workingHint(session), reducedMotion: model.reducedMotion)
                     }
                     Color.clear.frame(height: 2).id("conversation-tail")
@@ -199,9 +198,9 @@ struct ConversationHistoryView: View {
 }
 
 extension ConversationHistoryView {
-    fileprivate func messageView(_ message: ChatMessage, commentary: Bool, latest: String?) -> some View {
+    fileprivate func messageView(_ message: ChatMessage, commentary: Bool) -> some View {
         TranscriptMessageView(message: message, runtimeTitle: session?.runtime.title ?? model.defaultRuntime.title,
-                              questionStatus: questionStatus(message, latest: message.id == latest), commentary: commentary,
+                              questionStatus: questionStatus(message), commentary: commentary,
                               open: { url, reveal in model.openExternally(url, reveal: reveal) },
                               reply: { questions, answers in await model.replyToQuestions(questions, answers: answers) })
     }
@@ -213,10 +212,9 @@ extension ConversationHistoryView {
         return agents.first.map { "\($0.title) is working" }
     }
 
-    /// Only the latest message's questions can still be answered.
-    fileprivate func questionStatus(_ message: ChatMessage, latest: Bool) -> AsyncQuestionCard.Status? {
+    fileprivate func questionStatus(_ message: ChatMessage) -> AsyncQuestionCard.Status? {
         guard message.questions != nil, let session else { return nil }
-        guard latest else { return .answered }
+        guard ConversationTimeline.questionsOpen(message.id, in: session) else { return .answered }
         let runtime = session.runtime.title
         if session.isBusy { return .open(canReply: false, hint: "Reply when \(runtime) finishes this turn.") }
         if model.submitting { return .open(canReply: false, hint: "Sending…") }

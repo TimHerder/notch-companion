@@ -192,11 +192,10 @@ enum SessionDigest {
         case .idle:
             detail = preview(session)
         }
-        let turnStart = session.messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) })?.createdAt
         return GlanceEntry(id: session.id, title: session.title, status: status,
                            unread: collapsed != .none, detail: detail,
                            runtime: session.isLegacyPrivate ? "Legacy Hermes" : session.runtime.title,
-                           since: status == .working ? (turnStart ?? session.updatedAt) : session.updatedAt,
+                           since: status == .working ? (turnStart(session) ?? session.updatedAt) : session.updatedAt,
                            streaming: streaming, quickReply: quickReply,
                            canStop: status == .working && session.state == .working && session.runtimeID != nil)
     }
@@ -220,9 +219,16 @@ enum SessionDigest {
         return preview(turn)
     }
 
-    /// When the current turn began: its last visible prompt.
+    /// When the current turn began: its last visible prompt, or the earliest one a
+    /// steer or steered wake continued (same turn ID, no end of its own, as the timeline keeps open).
     static func turnStart(_ session: CompanionSession) -> Date? {
-        session.messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) })?.createdAt
+        let prompts = session.messages.filter { $0.role == "user" && SessionHistory.isVisibleConversation($0) }
+        guard var start = prompts.last else { return nil }
+        for prompt in prompts.dropLast().reversed() {
+            guard prompt.turnID != nil, prompt.turnID == start.turnID, session.turnEndedAt[prompt.id] == nil else { break }
+            start = prompt
+        }
+        return start.createdAt
     }
 
     /// The message an announcement snapshots: the answer, the failure's
