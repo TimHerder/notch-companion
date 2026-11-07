@@ -19,8 +19,8 @@ draws a small one.
   results when they finish. Their questions and approvals come to you, and their
   file changes appear in the parent's change summary. A delegated agent can keep
   or narrow its parent's permissions, never widen them. Claude Code, Codex,
-  OpenCode 2, Pi, DeepSeek Harness and Cursor CLI sessions can delegate, to any
-  agent that's ready on your Mac.
+  OpenCode 2, Hermes, Pi, DeepSeek Harness, Antigravity CLI and Cursor CLI
+  sessions can delegate, to any agent that's ready on your Mac.
 - **Glance, don't switch.** Hover to see what's happening, click to open the
   conversation. Each session has its own working and unread state, and closing
   the panel leaves the work running.

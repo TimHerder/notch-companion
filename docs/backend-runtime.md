@@ -252,7 +252,9 @@ inserts rows or copies memory.
 The launcher adds a process-local platform hint describing the notch's Markdown
 and asking for files as `MEDIA:/absolute/path` lines. Nothing is written; a
 user's `platform_hints.notch_companion` overrides it, and an incompatible Hermes
-keeps no hint.
+keeps no hint. Once a session asks for delegation, the hint also carries the
+delegation instructions and the launcher adds the companion's tools
+([Delegation](#delegation)).
 
 Hermes builds with typed wire contracts reject unknown params (error 4000), so
 the adapter strips companion-only fields (`project_trusted`,
@@ -291,7 +293,8 @@ protected, including symlink targets and missing directories. Named profiles
 also protect root identity/auth/shared stores and sibling profiles. Native
 session databases, logs and memory stay writable. The worker never sets
 `HERMES_DESKTOP`, removes inherited Hermes/Codex frontend identity, and uses a
-parent ownership pipe so a dead companion leaves no frontend. Only its own
+parent ownership pipe so a dead companion leaves no frontend; the same pipe
+carries the delegation tools and per-session bindings. Only its own
 process is terminated; the messaging gateway is never restarted or stopped. The
 launcher refuses to run with automatic session archiving, managed local-model
 service ownership or dashboard turn isolation enabled, without changing those
@@ -634,7 +637,7 @@ cancels its tool call; an abandoned `wait` never acknowledges a result. An ACP
 session reloaded while live keeps the bridge it was opened with.
 
 **Injection** (`hostsDelegation`: Claude, Codex, OpenCode 2, DeepSeek, Pi,
-Cursor, Antigravity; version-specific, rerun native acceptance before release). An adapter
+Cursor, Antigravity, Hermes; version-specific, rerun native acceptance before release). An adapter
 may report `hosts_delegation` with a session or model catalog; `false` drops
 that route from hosting until it reports otherwise, and `orchestrator_capabilities`
 then says its children cannot delegate:
@@ -647,7 +650,8 @@ then says its children cannot delegate:
 | Antigravity CLI 1.5.2 | The same stdio bridge in `session/new`/`session/resume` `mcpServers`; agy starts it when the session opens and caches the tool descriptors and server instructions (never the endpoint or token) under its app data `mcp/notch/`. Instructions also go in `_meta.antigravity.systemPrompt.append` on every open when `initialize` advertises it, since agy keeps them only for its process. Nothing is written to its configuration (`agy mcp add` would). |
 | Pi 1.3.0 | Bundled `pi_delegation.mjs` via `--extension`, endpoint and token in the process environment (deleted before the agent runs commands). Registers tools as `mcp__notch__<tool>`; `before_agent_start` appends instructions. Uses `node:http`, not `fetch`, so hour-long waits are not cut. Nothing written to the Pi home. |
 | OpenCode 2.0.30 | One runtime server per session, `notch-<first 16 hex of SHA-256(native ID)>`, added with `PUT /api/experimental/mcp/{server}?location[directory]=<session folder>` (`type: remote`, bearer header, `oauth: false`); runtime-only, so it ends with the owned server and nothing is written to configuration. Added when the session opens and again before each prompt, because an idle folder drops runtime servers. Every server at a folder is visible there, so each session's rules (`PATCH /api/session/{id}` `permissions`, its other rules kept) end with deny `notch-*`, then allow its own `<server>_*`; a session opened without delegation gets the deny alone and loses a stale `notch` instruction entry. Instructions as session instruction entry `notch`. A failure leaves the session usable with a notice. OpenCode 1.x reports `hosts_delegation: false`. |
-| Hermes, OpenClaw | Not hosting (Hermes/OpenClaw have no per-run MCP option). All can be children. |
+| Hermes 0.22.3 | No per-session MCP option on `hermes serve`, so the companion's `hermes_frontend.py` registers native tools `mcp__notch__<tool>` in a `notch` toolset (`execution_timeout` 3900). Before a frontend's first delegating `session.create`/`session.resume`, the client writes the tools and instructions as a JSON line on the ownership pipe and waits for `NOTCH_DELEGATION {"ready": true}`; after each reply it writes `{"bind": <live session id>, url, token}`. Tokens stay in the frontend's memory, out of argv, environment, disk and `session.*` params. A call finds its live session by the agent's stored key (also after a compression rotation) and posts `tools/call` with that session's bearer; unbound callers, Hermes subagents and revoked tokens (401 forgets the binding) get `capability_denied`; Stop closes the request. `notch` joins an explicit toolset list (`tui_gateway.server._load_enabled_toolsets`); `None` already means all, `[]` stays empty. Instructions extend the `notch_companion` platform hint; tool search may defer the tools as it does MCP tools. Changed internals or a name clash (a user MCP server called `notch`) fail closed with a notice; the session stays usable. Nothing is written to the profile. Legacy Hermes does not host. |
+| OpenClaw | Not hosting (no per-run MCP option). Can be a child. |
 
 ## Capability boundaries
 

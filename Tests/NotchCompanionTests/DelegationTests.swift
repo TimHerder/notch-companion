@@ -10,6 +10,7 @@ import XCTest
     /// Runtime IDs whose sends the harness refuses outright.
     var rejectSubmits: Set<String> = []
     var failNextCreate = false
+    var nextResumeError: Error?
     var createDelay: Duration?
     var modelDelay: Duration?
     /// What each harness's installation reports about hosting delegation, by runtime name.
@@ -22,6 +23,7 @@ import XCTest
         switch method {
         case "session.create", "session.resume":
             if failNextCreate { failNextCreate = false; throw AppError("The harness did not start.") }
+            if method == "session.resume", let error = nextResumeError { nextResumeError = nil; throw error }
             if let createDelay { try await Task.sleep(for: createDelay) }
             let owner = params["companion_id"] as? String ?? UUID().uuidString
             var result: [String: Any] = ["session_id": "rt-" + owner, "stored_session_id": "native-" + owner]
@@ -870,6 +872,21 @@ import XCTest
         XCTAssertEqual(transport.calls.filter { $0.0 == "session.create" }.compactMap { $0.1["delegation"] }.count, 2)
     }
 
+    func testAHermesSessionReplacedAfterAMissingUnusedIDStillGetsTheTools() async throws {
+        let (model, transport, _, _) = makeModel(preferences: preferences(ready: [.hermes, .codex]))
+        await model.connect()
+        await model.newSession(showPanel: false, runtime: .hermes)
+        let id = try XCTUnwrap(model.currentID)
+        model.update(id) { $0.storedID = "vanished-before-first-prompt" }
+        transport.nextResumeError = HermesClientError.rpc(4007, "session not found")
+        model.draft = "Plan the release"
+        await model.send()
+        let opens = transport.calls.filter { ["session.resume", "session.create"].contains($0.0) }
+        XCTAssertEqual(opens.map(\.0), ["session.resume", "session.create"])
+        XCTAssertNotNil(opens.last?.1["delegation"], "The replacement session gets the tools with a fresh token")
+        XCTAssertTrue(model.delegationServer.hasGrant(sessionID: id))
+    }
+
     func testStopWhileAChildIsStartingKeepsItFromStarting() async throws {
         let (model, transport, _, _) = makeModel()
         let (parentID, caller) = try await activeParent(model)
@@ -1128,7 +1145,7 @@ import XCTest
         var untouched = ["PATH": "/usr/bin"]
         XCTAssertTrue(PiClient.delegationArguments(nil, environment: &untouched).isEmpty)
         XCTAssertEqual(untouched, ["PATH": "/usr/bin"])
-        XCTAssertEqual(RuntimeKind.allCases.filter(\.hostsDelegation), [.codex, .opencode, .pi, .claude, .deepseek, .antigravity, .cursor])
+        XCTAssertEqual(RuntimeKind.allCases.filter(\.hostsDelegation), [.hermes, .codex, .opencode, .pi, .claude, .deepseek, .antigravity, .cursor])
     }
 
     func testTheStdioBridgeRelaysEachLineWithTheSessionToken() async throws {
@@ -1218,6 +1235,84 @@ import XCTest
         XCTAssertTrue(text.contains("t1") && text.contains("task_status"), text)
         XCTAssertEqual((result["prompt"] as? [String: Any])?["systemPrompt"] as? String, "BASE\n\nPi instructions.", "Appended, never replacing Pi's prompt")
         XCTAssertTrue(result["token"] is NSNull, "The token is cleared before the agent runs commands")
+    }
+
+    /// The lines SharedHermesClient writes, read by the bundled launcher against
+    /// stand-ins for Hermes's registry and session map, calling the real server.
+    func testTheHermesLauncherRegistersTheToolsAndCallsAsTheBoundSession() async throws {
+        let candidates = ["/usr/bin"] + (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        guard let python = candidates.map({ URL(fileURLWithPath: $0).appendingPathComponent("python3") })
+            .first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else { throw XCTSkip("python3 is needed to load the Hermes launcher.") }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/NotchCompanion/Resources/hermes_frontend.py")
+        let server = DelegationServer()
+        defer { server.stop() }
+        server.tools = { _ in Delegation.tools }
+        var callers: [DelegationCaller] = []
+        server.call = { caller, name, arguments in callers.append(caller); return ["tool": name, "taskId": arguments["taskId"] ?? ""] }
+        let url = try await server.start()
+        let token = server.issueToken(for: DelegationCaller(sessionID: "hermes-parent", runtime: .hermes, subagent: false))
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("notch-hermes-launcher-\(UUID().uuidString)")
+        folders.append(folder)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let driver = folder.appendingPathComponent("driver.py")
+        try Data("""
+        import importlib.util, json, sys, threading
+        from types import ModuleType, SimpleNamespace
+        spec = importlib.util.spec_from_file_location("frontend", sys.argv[1])
+        frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
+        class Registry:
+            entries = {}
+            def register(self, name, toolset, schema, handler, check_fn=None, execution_timeout=None):
+                self.entries[name] = SimpleNamespace(toolset=toolset, handler=handler, execution_timeout=execution_timeout)
+            def get_entry(self, name): return self.entries.get(name)
+        registry = ModuleType("tools.registry"); registry.registry = Registry()
+        server = ModuleType("tui_gateway.server")
+        server._sessions = {"live-1": {"session_key": "stored-1", "agent": None}}
+        server._sessions_lock = threading.RLock()
+        server._load_enabled_toolsets = lambda platform=None: ["file"]
+        agent = ModuleType("agent"); agent.prompt_builder = ModuleType("agent.prompt_builder"); agent.prompt_builder.PLATFORM_HINTS = {}
+        sys.modules.update({"tools.registry": registry, "tui_gateway.server": server, "agent": agent,
+                            "agent.prompt_builder": agent.prompt_builder, "tools.interrupt": None})
+        reports = []
+        delegation = frontend.NotchDelegation(report=reports.append)
+        frontend.os.kill = lambda *_: None  # the scripted pipe's EOF must not stop this driver
+        frontend.watch_parent(None, delegation.receive)
+        entries = registry.registry.entries
+        status = entries["mcp__notch__task_status"].handler({"taskId": "t1"}, session_id="stored-1")
+        print(json.dumps({"reports": reports, "names": sorted(entries), "toolsets": server._load_enabled_toolsets(),
+                          "timeouts": sorted({entry.execution_timeout for entry in entries.values()}),
+                          "hint": agent.prompt_builder.PLATFORM_HINTS.get("notch_companion", ""), "status": status}))
+        """.utf8).write(to: driver)
+        var pipe = Data()
+        for message in [SharedHermesClient.toolsMessage,
+                        SharedHermesClient.bindMessage(session: "live-1", delegation: ["url": url.absoluteString, "token": token])] {
+            pipe += try JSONSerialization.data(withJSONObject: message) + Data([0x0A])
+        }
+        let process = Process()
+        process.executableURL = python
+        process.arguments = ["-I", "-B", driver.path, source.path]
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.nullDevice
+        let reader = Task.detached { output.fileHandleForReading.readDataToEndOfFile() }
+        try process.run()
+        try input.fileHandleForWriting.write(contentsOf: pipe)
+        try input.fileHandleForWriting.close()
+        let data = await reader.value
+        await withCheckedContinuation { done in DispatchQueue.global().async { process.waitUntilExit(); done.resume() } }
+        let result = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any], String(decoding: data, as: UTF8.self))
+        let reports = try XCTUnwrap(result["reports"] as? [[String: Any]])
+        XCTAssertEqual(reports.count, 1)
+        XCTAssertNil(SharedHermesClient.delegationFailure(reports[0]), "The launcher confirms the tools before any session opens")
+        XCTAssertEqual(result["names"] as? [String], Delegation.tools.compactMap { ($0["name"] as? String).map { "mcp__notch__" + $0 } }.sorted())
+        XCTAssertEqual(result["toolsets"] as? [String], ["file", "notch"], "An explicit toolset selection gains only the notch toolset")
+        XCTAssertEqual(result["timeouts"] as? [Int], [3900], "Hour-long waits are not cut by Hermes's tool executor")
+        XCTAssertTrue((result["hint"] as? String ?? "").hasSuffix(Delegation.instructions))
+        let status = try XCTUnwrap(JSONSerialization.jsonObject(with: Data((result["status"] as? String ?? "").utf8)) as? [String: Any])
+        XCTAssertEqual(status["taskId"] as? String, "t1")
+        XCTAssertEqual(status["tool"] as? String, "task_status")
+        XCTAssertEqual(callers, [DelegationCaller(sessionID: "hermes-parent", runtime: .hermes, subagent: false)], "The call ran as the bound session")
+        XCTAssertNotNil(SharedHermesClient.delegationFailure(["ready": false]), "A refusal becomes the session's notice")
     }
 
     func testCodexThreadsGetOnlyTheirOwnServerAndInstructionsOnce() async throws {

@@ -1637,6 +1637,8 @@ final class AppModel: ObservableObject {
                        !session.isLegacyPrivate, !session.nativeSubmissionAttempted, session.pendingSubmission == nil,
                        session.messages.isEmpty {
                         update(localID) { $0.storedID = nil; $0.runtimeID = nil }
+                        // The replacement session gets the tools again with a fresh token.
+                        if delegation != nil { delegationServer.revoke(sessionID: localID) }
                         return try await ensureRuntime(localID)
                     }
                     throw error
