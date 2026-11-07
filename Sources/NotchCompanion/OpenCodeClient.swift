@@ -585,12 +585,13 @@ final class OpenCodeClient: RuntimeTransport {
                 } }
             }
             else {
+                // Tools first: text after a call that appeared in the same poll starts a new segment.
+                if observedPrompt { projectTools(rows, sid: id) }
                 let previous = delivered[id] ?? ""
                 if currentText.hasPrefix(previous), currentText.count > previous.count {
                     event(id == sid ? "message.delta" : "subagent.text", sid: id, ["text": String(currentText.dropFirst(previous.count))])
                 }
                 delivered[id] = currentText
-                if observedPrompt { projectTools(rows, sid: id) }
             }
             if id != sid {
                 let status = active ? (waiting ? "waiting" : "working") : Self.terminal(last, cancelled: cancelled.contains(id))
@@ -691,7 +692,8 @@ final class OpenCodeClient: RuntimeTransport {
         requests.removeValue(forKey: id); answers.removeValue(forKey: id); scheduleRefresh(sid)
         return ["resolved": true]
     }
-    nonisolated static func history(_ rows: [[String: Any]]) -> [[String: Any]] {
+    /// One row per native message.
+    nonisolated static func messageRows(_ rows: [[String: Any]]) -> [[String: Any]] {
         rows.compactMap { row in
             guard let info = row["info"] as? [String: Any], let role = info["role"] as? String, let id = info["id"] as? String else { return nil }
             let text = (row["parts"] as? [[String: Any]] ?? []).filter { $0["type"] as? String == "text" && $0["synthetic"] as? Bool != true }.compactMap { $0["text"] as? String }.joined(separator: "\n\n")
@@ -700,9 +702,32 @@ final class OpenCodeClient: RuntimeTransport {
             return result
         }
     }
+    /// Replies split where they streamed: consecutive assistant messages join, and a
+    /// tool call starts a new reply.
+    nonisolated static func history(_ rows: [[String: Any]]) -> [[String: Any]] {
+        var result: [[String: Any]] = []
+        var open = false // the last row is a reply that later text continues
+        for row in rows {
+            guard let info = row["info"] as? [String: Any], let id = info["id"] as? String else { continue }
+            guard info["role"] as? String == "assistant" else { result += messageRows([row]); open = false; continue }
+            for (offset, part) in (row["parts"] as? [[String: Any]] ?? []).enumerated() {
+                if part["type"] as? String == "tool" { open = false; continue }
+                guard part["type"] as? String == "text", part["synthetic"] as? Bool != true,
+                      let text = part["text"] as? String, !text.isEmpty else { continue }
+                if open, let last = result.indices.last {
+                    result[last]["text"] = (result[last]["text"] as? String ?? "") + "\n\n" + text
+                } else {
+                    // A message's first reply keeps the message's ID.
+                    let rowID = result.contains { $0["row_id"] as? String == id } ? id + ":" + String(offset) : id
+                    result.append(["role": "assistant", "text": text, "row_id": rowID]); open = true
+                }
+            }
+        }
+        return result
+    }
     nonisolated static func currentText(_ rows: [[String: Any]]) -> String {
         let lastUser = rows.lastIndex { ($0["info"] as? [String: Any])?["role"] as? String == "user" } ?? -1
-        return history(Array(rows.dropFirst(lastUser + 1))).filter { $0["role"] as? String == "assistant" }.compactMap { $0["text"] as? String }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        return messageRows(Array(rows.dropFirst(lastUser + 1))).filter { $0["role"] as? String == "assistant" }.compactMap { $0["text"] as? String }.filter { !$0.isEmpty }.joined(separator: "\n\n")
     }
     nonisolated static func terminal(_ info: [String: Any], cancelled: Bool) -> String {
         if cancelled { return "interrupted" }

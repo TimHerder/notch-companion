@@ -222,6 +222,10 @@ stamped release label.
 `scripts/render-ui-fixtures.sh --changes-only` renders the collapsed change
 summary, expanded file diff, narrow workspace summary, and integrated compact
 and full-session conversations using synthetic change metadata and no runtime.
+`--work-only` renders a finished turn whose commentary and tool calls fold above
+its answer and changes (`compact-`/`full-worked-collapsed`, `-expanded`) and the
+same turn live with its interleaved text and ticking footer (`-worked-live`);
+the full render includes them.
 
 Run `scripts/render-ui-fixtures.sh` to render the actual SwiftUI/AppKit views
 with a mock transport and temporary session storage. It writes PNGs under

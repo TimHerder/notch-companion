@@ -75,9 +75,14 @@ private struct SendComposerFixture: View {
         return try XCTUnwrap(model.current?.attachments.last)
     }
     private func visibleMessages(_ session: CompanionSession) -> [ChatMessage] {
-        ConversationTimeline.build(session: session).compactMap {
-            if case .message(let message) = $0 { return message }
-            return nil
+        ConversationTimeline.build(session: session).flatMap { item -> [ConversationTimelineItem] in
+            if case .work(let work) = item { return work.entries }
+            return [item]
+        }.compactMap {
+            switch $0 {
+            case .message(let message), .commentary(let message): return message
+            default: return nil
+            }
         }
     }
 

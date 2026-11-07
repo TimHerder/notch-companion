@@ -27,6 +27,8 @@ struct ACPProtocolState {
     var loading = Set<String>()
     var history: [String: [[String: Any]]] = [:]
     var historyWithoutMessageIDs = Set<String>()
+    /// Sessions whose replayed reply was interrupted by a tool call.
+    var historyBreaks = Set<String>()
     var text: [String: String] = [:]
     var requests: [String: Interaction] = [:]
     var tools = Set<String>()
@@ -58,16 +60,21 @@ struct ACPProtocolState {
         // Native load replay is authoritative history, never new live activity.
         if loading.contains(sid) {
             if metadata != nil { return [] }
+            // Replies split where they streamed: at tool calls, not at message IDs.
+            if kind == "tool_call" { historyBreaks.insert(sid) }
             if ["user_message_chunk", "agent_message_chunk"].contains(kind), let chunk = content["text"] as? String {
                 let role = kind == "user_message_chunk" ? "user" : "assistant"
                 let messageID = update["messageId"] as? String
                 if messageID == nil { historyWithoutMessageIDs.insert(sid) }
+                let toolBetween = historyBreaks.remove(sid) != nil
                 if let last = history[sid]?.indices.last, history[sid]?[last]["role"] as? String == role,
-                   messageID == nil || history[sid]?[last]["row_id"] as? String == messageID {
+                   role == "assistant" ? !toolBetween : messageID == nil || history[sid]?[last]["row_id"] as? String == messageID {
                     let previous = history[sid]?[last]["text"] as? String ?? ""
                     history[sid]?[last]["text"] = previous + chunk
                 } else {
-                    let rowID = messageID ?? "acp-\(history[sid]?.count ?? 0)"
+                    let count = history[sid]?.count ?? 0
+                    let reused = messageID.map { id in history[sid]?.contains { $0["row_id"] as? String == id } == true } ?? false
+                    let rowID = messageID.map { reused ? "\($0)-\(count)" : $0 } ?? "acp-\(count)"
                     history[sid, default: []].append(["role": role, "text": chunk, "row_id": rowID])
                 }
             }
