@@ -308,6 +308,15 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     // Legacy children did not have turn metadata. On a legacy session they
     // remain relevant until the next real turn gives the session a new ID.
     var failedCurrentAgents: [ChildAgent] { agents.filter { $0.state == .failed && $0.turnID == latestUserTurnID } }
+    /// A turn that ended without its runtime reporting it (a quit, a disconnect, a local
+    /// Stop, an older save) keeps the session's stop or own failure as its outcome,
+    /// unless the latest visible user row already has one.
+    mutating func recordUnreportedOutcome() {
+        guard state == .interrupted || state == .failed && failedCurrentAgents.isEmpty,
+              let boundary = messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) }),
+              turnOutcome[boundary.id] == nil else { return }
+        turnOutcome[boundary.id] = state
+    }
     var displayState: WorkState {
         if nativeActivityUnverified != nil { return .waiting }
         // Delivery uncertainty is a readable warning, not a live question.

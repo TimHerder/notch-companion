@@ -601,7 +601,8 @@ struct ToolRow: View {
                 Image(systemName: tool.state == .working ? "ellipsis" : tool.state == .failed ? "exclamationmark.circle" : tool.state == .interrupted ? "minus" : "checkmark")
                     .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(tint).frame(width: 14)
                 Text(tool.displayName).font(CompanionStyle.callout)
-                    .foregroundStyle(tool.state == .working ? CompanionStyle.text : CompanionStyle.secondary).lineLimit(1).layoutPriority(1)
+                    .foregroundStyle(tool.state == .failed ? tint : tool.state == .working ? CompanionStyle.text : CompanionStyle.secondary)
+                    .lineLimit(1).layoutPriority(1)
                 if !tool.detail.isEmpty {
                     Text(SessionDigest.oneLine(tool.detail)).font(.system(size: 11, design: .monospaced)).foregroundStyle(CompanionStyle.tertiary)
                         .lineLimit(1).truncationMode(.middle)
@@ -620,7 +621,9 @@ struct ToolRow: View {
                             .foregroundStyle(tool.state == .interrupted ? CompanionStyle.secondary : CompanionStyle.color(tool.state))
                     }
                 }.frame(width: 16)
+                // A failed call's name takes the failure colour, so it reads at a glance.
                 Text(tool.displayName).font(.system(size: 12)).lineLimit(1).layoutPriority(1)
+                    .foregroundStyle(tool.state == .failed ? AnyShapeStyle(CompanionStyle.color(.failed)) : AnyShapeStyle(.primary))
                 if !tool.detail.isEmpty {
                     Text(SessionDigest.oneLine(tool.detail)).font(.system(size: 11, design: .monospaced)).foregroundStyle(CompanionStyle.secondary)
                         .lineLimit(1).truncationMode(.middle)

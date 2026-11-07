@@ -240,7 +240,7 @@ final class ConversationTimelineTests: XCTestCase {
         session.id = "session"
         session.messages = [message("u", "user", 10)]
         session.tools = [tool("broken", 12, state: .failed)]
-        session.state = .failed
+        session.turnOutcome["u"] = .failed
         session.turnEndedAt["u"] = Date(timeIntervalSince1970: 73)
         let failed = ConversationTimeline.build(session: session)
         XCTAssertEqual(failed.map(\.id), ["message:u", "work:session:u"])
@@ -248,24 +248,20 @@ final class ConversationTimelineTests: XCTestCase {
         XCTAssertFalse(work.folds, "With no answer to fold above, the work stays open")
         XCTAssertEqual(work.label, "Failed after 1:03")
         XCTAssertEqual(work.entries.map(\.id), ["tools:session:run:broken"])
-        session.state = .interrupted
+        session.turnOutcome["u"] = .interrupted
         session.turnEndedAt = [:]
         XCTAssertEqual(works(ConversationTimeline.build(session: session)).first?.label, "Stopped")
 
         // A failed turn that wrote text keeps it as its answer, under a fold that says how it ended.
         session.messages.append(message("partial", "assistant", 13, text: "Halfway: the build passes."))
-        session.state = .failed
+        session.turnOutcome["u"] = .failed
         session.turnEndedAt["u"] = Date(timeIntervalSince1970: 73)
         XCTAssertEqual(ConversationTimeline.build(session: session).map(\.id), ["message:u", "work:session:u", "message:partial"])
         XCTAssertEqual(works(ConversationTimeline.build(session: session)).first?.label, "Failed after 1:03")
-        // A failed delegated child is not the turn's own failure.
-        session.agents = [ChildAgent(id: "child", title: "Docs", state: .failed, turnID: session.latestUserTurnID)]
+        // Only the recorded outcome labels a turn, never the session's later state.
+        session.turnOutcome = [:]
+        session.state = .failed
         XCTAssertEqual(works(ConversationTimeline.build(session: session)).first?.label, "Worked for 1:03")
-        // Once a later turn exists only its own outcome is known.
-        session.agents = []
-        session.messages.append(message("u2", "user", 100))
-        session.messages.append(message("a2", "assistant", 101))
-        XCTAssertEqual(works(ConversationTimeline.build(session: session)).first?.outcome, .finished)
     }
 
     func testTurnStartRunsFromThePromptASteerOrSteeredWakeContinued() {

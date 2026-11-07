@@ -162,11 +162,12 @@ enum ConversationTimeline {
         return result
     }
 
-    /// A message's questions stay answerable until a visible user row follows it,
-    /// however much the agent writes or runs after them in the same turn.
+    /// A message's questions stay answerable until a visible row of the user's own
+    /// follows it, however much the agent writes or runs after them in the same turn.
+    /// Rows the companion sent for an agent (wakes, relayed questions) do not answer them.
     static func questionsOpen(_ messageID: String, in session: CompanionSession) -> Bool {
         guard let index = session.messages.firstIndex(where: { $0.id == messageID }) else { return false }
-        return !session.messages[(index + 1)...].contains { $0.role == "user" && SessionHistory.isVisibleConversation($0) }
+        return !session.messages[(index + 1)...].contains { $0.role == "user" && $0.kind == nil && SessionHistory.isVisibleConversation($0) }
     }
 
     /// Text and consecutive tool runs in the order they began. Text followed by a
@@ -205,19 +206,19 @@ enum ConversationTimeline {
     }
 
     /// A finished block: its work folds above the answer, the last text written. A
-    /// block that ended before writing any keeps its work open under its outcome.
+    /// block that ended before writing any, or whose questions above it are still
+    /// open, keeps its work open under its outcome.
     private static func finished(_ block: Block, entries: [ConversationTimelineItem], next: ChatMessage?,
                                  session: CompanionSession) -> [ConversationTimelineItem] {
         guard let boundary = block.boundary else { return entries }
-        // A turn's recorded outcome wins. One that ended without it (a local Stop, a quit,
-        // an older save) takes the session's state if it is the latest (a failed child is
-        // not its failure); older unrecorded ones read as plain work.
-        let outcome: WorkState = session.turnOutcome[boundary.id]
-            ?? (next == nil && (session.state == .interrupted || session.state == .failed && session.failedCurrentAgents.isEmpty)
-                ? session.state : .finished)
+        // Every way a turn ends records its outcome (AppModel), so the session's later
+        // state, such as a send that failed before it became a turn, never relabels it.
+        let outcome = session.turnOutcome[boundary.id] ?? .finished
         let answerID = block.messages.last(where: {
             !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.questions != nil
         })?.id
+        // Questions still open above the answer keep the work unfolded, so their card stays in view.
+        let asking = block.messages.contains { $0.id != answerID && $0.questions != nil && questionsOpen($0.id, in: session) }
         var answer: ChatMessage?
         let work: [ConversationTimelineItem] = entries.compactMap { entry in
             switch entry {
@@ -234,7 +235,7 @@ enum ConversationTimeline {
         var result: [ConversationTimelineItem] = []
         if !work.isEmpty || endedAt != nil {
             result.append(.work(TurnWork(id: "work:\(session.id):\(boundary.id)", entries: work, startedAt: boundary.createdAt,
-                                         endedAt: endedAt, outcome: outcome, folds: answer != nil && !work.isEmpty)))
+                                         endedAt: endedAt, outcome: outcome, folds: answer != nil && !work.isEmpty && !asking)))
         }
         if let answer { result.append(.message(answer)) }
         return result
