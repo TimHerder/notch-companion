@@ -4,8 +4,9 @@ import CryptoKit
 extension RuntimeKind {
     /// Harnesses that take the companion's delegation server through a supported
     /// per-run option. OpenCode's only one is per folder, so one session's token
-    /// would serve all of them; Hermes, OpenClaw and Antigravity have none.
-    var hostsDelegation: Bool { [.claude, .codex, .deepseek, .pi].contains(self) }
+    /// would serve all of them; Hermes and Antigravity have none. OpenClaw gets
+    /// the tools from the companion's node link (`OpenClawNodeLink`).
+    var hostsDelegation: Bool { [.claude, .codex, .deepseek, .pi, .openclaw].contains(self) }
     /// Harnesses that accept input into a running turn.
     var steersTurns: Bool { self == .codex }
 }
@@ -28,6 +29,8 @@ enum Delegation {
     static let maxTaskCharacters = 120_000
     static let defaultWait: TimeInterval = 10 * 60
     static let maxWait: TimeInterval = 60 * 60
+    /// OpenClaw cuts a node tool call off at 120 s (`NODE_MCP_TOOL_CALL_TIMEOUT_MS`).
+    static let openClawMaxWait: TimeInterval = 110
     static let roles = ["implementation", "research", "review", "design", "test", "general"]
     /// Pre-approved for a Plan session (T3's read-only set); the rest still
     /// ask. `task_status` and `notch_session_read` acknowledge results, so they are not.
@@ -379,7 +382,7 @@ extension AppModel {
                     "canRunChildTask": modeAllowed && trustsProject(runtime, path: parent.workspacePath),
                     "canRunCrossProviderChildTask": true, "constraints": constraints]
         }
-        return ["parentSessionId": parent.id, "inheritedRuntime": parent.runtime.rawValue,
+        var result: [String: Any] = ["parentSessionId": parent.id, "inheritedRuntime": parent.runtime.rawValue,
                 "inheritedModel": parent.runtimeInfo?.model ?? parent.modelOverride?.model as Any? ?? NSNull(),
                 "runtimeMode": parent.permissionMode?.runtimeModeName ?? "inherit",
                 "interactionMode": parent.permissionMode == .plan ? "plan" : "default",
@@ -387,6 +390,9 @@ extension AppModel {
                 "features": ["appOwnedSubagents": true, "asyncPolling": true, "cancellation": true,
                              "batchThreadCreation": true, "threadManagement": true, "incrementalThreadRead": true,
                              "scheduledTasks": false, "maxBatchThreads": Delegation.maxBatchSessions]]
+        // OpenClaw node tools carry no server instructions, so they arrive with this first call.
+        if caller.runtime == .openclaw { result["instructions"] = Delegation.instructions }
+        return result
     }
 
     func delegateTask(_ caller: DelegationCaller, _ arguments: [String: Any]) async throws -> [String: Any] {
@@ -402,7 +408,7 @@ extension AppModel {
         }
         let role = arguments["role"] as? String
         guard role.map(Delegation.roles.contains) ?? true else { throw DelegationFailure("invalid_request", "role must be one of \(Delegation.roles.joined(separator: ", ")).") }
-        let timeout = Self.waitTimeout(arguments)
+        let timeout = Self.waitTimeout(arguments, runtime: caller.runtime)
         let taskID = Delegation.derivedID(caller: caller.sessionID, operation: "delegate_task", clientRequestID: clientRequestID)
         // A retry reaches the same task; never a second child.
         if let creating = delegationCreations[taskID] { _ = try await creating.task.value }
@@ -532,9 +538,11 @@ extension AppModel {
         }
     }
 
-    static func waitTimeout(_ arguments: [String: Any]) -> TimeInterval {
-        guard let milliseconds = (arguments["timeoutMs"] as? NSNumber)?.doubleValue, milliseconds.isFinite else { return Delegation.defaultWait }
-        return min(Delegation.maxWait, max(0, milliseconds / 1000))
+    /// A wait ends inside the caller's own tool deadline, so its timeout returns `next` instead of being cut off.
+    static func waitTimeout(_ arguments: [String: Any], runtime: RuntimeKind? = nil) -> TimeInterval {
+        let limit = runtime == .openclaw ? Delegation.openClawMaxWait : Delegation.maxWait
+        guard let milliseconds = (arguments["timeoutMs"] as? NSNumber)?.doubleValue, milliseconds.isFinite else { return min(limit, Delegation.defaultWait) }
+        return min(limit, max(0, milliseconds / 1000))
     }
 
     /// Blocks until the child settles, or returns early on its question,
@@ -1019,13 +1027,13 @@ extension AppModel {
     func waitForSession(_ caller: DelegationCaller, _ arguments: [String: Any]) async throws -> [String: Any] {
         let target = try targetSession(caller, arguments, control: false)
         if target.parentSessionID == caller.sessionID, target.delegation != nil {
-            let result = try await waitForDelegatedTask(target.id, timeout: Self.waitTimeout(arguments), returnsOnQuestion: false)
+            let result = try await waitForDelegatedTask(target.id, timeout: Self.waitTimeout(arguments, runtime: caller.runtime), returnsOnQuestion: false)
             var row: [String: Any] = ["sessionId": target.id, "status": sessionStatus(sessions.first { $0.id == target.id } ?? target),
                                       "timedOut": result["waitTimedOut"] as? Bool ?? false]
             if let next = result["next"] { row["next"] = next }
             return row
         }
-        let deadline = Date().addingTimeInterval(Self.waitTimeout(arguments))
+        let deadline = Date().addingTimeInterval(Self.waitTimeout(arguments, runtime: caller.runtime))
         delegationWaits[caller.sessionID, default: 0] += 1
         defer {
             delegationWaits[caller.sessionID, default: 1] -= 1

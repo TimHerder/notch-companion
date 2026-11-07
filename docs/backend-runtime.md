@@ -49,7 +49,7 @@ project invalidates it.
 | OpenCode | Owned `opencode serve`, native V1/V2 HTTP/SSE; `OPENCODE_CONFIG_DIR`, project `cwd` | Version/schema-guarded 1.18.34–1.18.x and 2.0.30–2.0.x. Paginated history, exact resume, tools, permissions/questions, session models, owned parent/child status. Saved protections from the older ACP frontend stay intact. |
 | DeepSeek Harness | `dsh --profile <existing-name>` with original `$DSH_HOME/profiles/<name>` | Experimental ACP. Never creates or patches an `acp`/`sdk` replacement profile. Resume, tools, approvals, negotiated model/image/context support. |
 | Pi | `pi --mode rpc`; `PI_CODING_AGENT_DIR`, native session file | Native extensions/dialogs, tools, per-session models, images, settled lifecycle. Context from `get_session_stats.contextUsage` only. Bundled process-only extension provides `notch_ask_user`. Terminal-rendered extension UI and built-in tool approvals are unavailable. |
-| OpenClaw | Authenticated WebSocket to the existing loopback Gateway; selected agent | Protocol 4 pairing, sessions/history, chat, approvals/questions, models, tool/child activity. Never starts/stops the Gateway. Remote/TLS unsupported. |
+| OpenClaw | Authenticated WebSocket to the existing loopback Gateway; selected agent | Protocol 4 pairing, sessions/history, chat, approvals/questions, models, tool/child activity, delegation tools through a second role-`node` connection. Never starts/stops the Gateway. Remote/TLS unsupported. |
 | Claude Code | Installed unmodified `claude --print` stream-json; `CLAUDE_CONFIG_DIR`, trusted `cwd` | Native hooks/memory, exact UUID resume, models, permissions/questions, child events. Context = latest parent request's input/cache counts against the reported window. Never `--bare`, an SDK replacement or copied credentials; bypass only for confirmed [Full access](#permission-modes). |
 | Antigravity CLI | Installed `agy` streaming I/O; original `~/.gemini/antigravity-cli` | Conversation IDs/resume, file references, tools, model discovery and exact-ID switching. Context estimate from latest parent-response counts; window unknown. Native `ask_question` is opaque, so questions, approvals and images are unsupported; it shows a limitation notice. Native policy can soft-deny tools on a successful turn. |
 | Cursor CLI | Installed `cursor-agent acp` after `authenticate` with `cursor_login`; native `~/.cursor`, trusted `cwd` | Experimental, not yet run against an installed CLI. Shared ACP adapter. `cursor/ask_question` → question card, `cursor/create_plan` → plan approval, answered in the documented `outcome` shape; requests without `sessionId` are attributed by `toolCallId` or the sole active session, else declined. Sign-in stays with `cursor-agent login`; no profile override. |
@@ -523,7 +523,8 @@ fails. Reopening reuses a live token. **Cross-agent delegation** in Settings
 `status` is `queued`, `running`, `waiting`, `completed`, `failed`, `cancelled` or
 `interrupted`; `workState` is `working`, `waiting_for_children` or
 `result_available`. `summary` is the latest answer once settled. Errors are T3
-codes in an `isError` result. `wait` defaults to 10 minutes, max 60, and a
+codes in an `isError` result. `wait` defaults to 10 minutes, max 60 (OpenClaw
+callers: at most 110 seconds, inside the Gateway's 120-second node call), and a
 timeout never cancels the child; there is no depth, count or concurrency limit.
 Task, send and creation IDs derive from caller + operation + `clientRequestId`
 (SHA-256, UUID-formatted), so retries (even concurrent) reach the same work and
@@ -605,8 +606,8 @@ sends a child (created worktrees remain). A client closing its connection
 cancels its tool call; an abandoned `wait` never acknowledges a result. An ACP
 session reloaded while live keeps the bridge it was opened with.
 
-**Injection** (`hostsDelegation`: Claude, Codex, DeepSeek, Pi; version-specific,
-rerun native acceptance before release):
+**Injection** (`hostsDelegation`: Claude, Codex, DeepSeek, Pi, OpenClaw;
+version-specific, rerun native acceptance before release):
 
 | Harness | Mechanism |
 | --- | --- |
@@ -615,7 +616,8 @@ rerun native acceptance before release):
 | ACP (DeepSeek) | A stdio MCP server in `session/new`/`session/load` `mcpServers`: the companion executable with `--notch-delegation-bridge`, endpoint and token in its `env`. It relays JSON-RPC lines concurrently (65-minute timeout) and answers a revoked token with an error. Instructions come from the server's `initialize`. Without delegation `mcpServers` is `[]`. |
 | Pi 1.3.0 | Bundled `pi_delegation.mjs` via `--extension`, endpoint and token in the process environment (deleted before the agent runs commands). Registers tools as `mcp__notch__<tool>`; `before_agent_start` appends instructions. Uses `node:http`, not `fetch`, so hour-long waits are not cut. Nothing written to the Pi home. |
 | OpenCode | Not hosting: its runtime MCP option (`PUT /api/experimental/mcp/{server}`) is folder-scoped and shared by all sessions there, which would share one session's token. |
-| Hermes, OpenClaw, Antigravity, Cursor | Not hosting (Hermes/OpenClaw/Antigravity have no per-run MCP option; `agy mcp add` writes configuration). All can be children. |
+| OpenClaw (Gateway protocol 4) | A second Gateway connection with role and client mode `node`, the same Keychain device, no operator scopes and its own per-role device token in Keychain. It opens with the first session launched with delegation and closes with the operator connection, so the Gateway withdraws the tools. It declares only `mcp.tools.call.v1` and publishes every tool with `node.pluginTools.update` as `notch_<tool>` (`pluginId: node-mcp`, `mcp {server: notch, tool}`). A `node.invoke.request` runs only for a companion-owned session key that was launched with delegation, as that session through the loopback server with its own token; any other caller gets `capability_denied`. The Gateway's invoke deadline bounds the call, and a cancelled invoke cancels it. Instructions come in the `orchestrator_capabilities` result. Node pairing and command approval stay with OpenClaw (silent for a local Gateway by default). A required pairing, filtered tools (unapproved commands or `gateway.nodes.pluginTools.enabled: false`) or a dropped link become notices; chat keeps working and the next session launch retries. The Gateway lists the tools for every agent while the node is connected. Nothing in the OpenClaw configuration is written. |
+| Hermes, Antigravity, Cursor | Not hosting (Hermes/Antigravity have no per-run MCP option; `agy mcp add` writes configuration). All can be children. |
 
 ## Capability boundaries
 

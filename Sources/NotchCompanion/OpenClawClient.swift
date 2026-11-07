@@ -34,6 +34,10 @@ final class OpenClawClient: RuntimeTransport {
     private var maxImage = 6 * 1024 * 1024
     private var features = Set<String>()
     private var receivedAt = Date()
+    private var nodeSetup: (endpoint: URL, account: String, config: OpenClawConfiguration)?
+    private var nodeLink: OpenClawNodeLink?
+    private var grants: [String: OpenClawNodeLink.Grant] = [:]
+    private var noticeKey: String?
 
     init(profileID: String, device: OpenClawDevice? = nil) {
         self.profileID = profileID
@@ -102,6 +106,7 @@ final class OpenClawClient: RuntimeTransport {
                     if Date().timeIntervalSince(self.receivedAt) > Double(quietSeconds) { self.fail(AppError("The OpenClaw Gateway stopped responding. Reconnect to check saved work.")); return }
                 }
             }
+            nodeSetup = (endpoint, account, config)
             ready = true; onConnectionChange?(true, nil)
         } catch { fail(error); throw error }
     }
@@ -135,11 +140,15 @@ final class OpenClawClient: RuntimeTransport {
             guard created["key"] as? String == key else { throw AppError("OpenClaw created a different session than requested. No existing messaging session was selected.") }
             state.owned.insert(key)
             if let native = created["sessionId"] as? String { nativeIDs[key] = native }
-            return try await hydrate(key)
+            let hydrated = try await hydrate(key)
+            offerTools(to: key, params["delegation"])
+            return hydrated
         }
         if method == "session.resume" {
             guard let key = params["session_id"] as? String, key.hasPrefix("agent:\(agent):notch:") else { throw AppError("This saved OpenClaw session does not belong to the selected companion agent.") }
-            return try await hydrate(key, pendingTurnID: params["pending_turn_id"] as? String)
+            let hydrated = try await hydrate(key, pendingTurnID: params["pending_turn_id"] as? String)
+            offerTools(to: key, params["delegation"])
+            return hydrated
         }
         guard let key = params["session_id"] as? String, state.owned.contains(key) else { throw AppError("This OpenClaw session is not registered with the companion.") }
         switch method {
@@ -246,6 +255,24 @@ final class OpenClawClient: RuntimeTransport {
                 "messages": OpenClawProtocolState.history(history), "history_complete": false, "running": state.busy(key), "info": OpenClawProtocolState.info(info)]
     }
 
+    /// A session launched with delegation gets the tools through the node link,
+    /// which opens with the first such session and closes with this connection.
+    private func offerTools(to key: String, _ launch: Any?) {
+        guard let launch = launch as? [String: Any], let url = (launch["url"] as? String).flatMap(URL.init(string:)),
+              let token = launch["token"] as? String, !token.isEmpty, let setup = nodeSetup else { return }
+        grants[key] = OpenClawNodeLink.Grant(url: url, token: token)
+        noticeKey = key
+        let link = nodeLink ?? OpenClawNodeLink(endpoint: setup.endpoint, config: setup.config, account: setup.account, device: deviceOverride)
+        nodeLink = link
+        // Only a companion-owned session with its own grant may call; any other agent on the Gateway sees the tools but is refused.
+        link.grant = { [weak self] key in self?.state.owned.contains(key) == true ? self?.grants[key] : nil }
+        link.onNotice = { [weak self] message in
+            guard let self, let key = self.noticeKey else { return }
+            self.onEvent?("runtime.notice", ["session_id": key, "message": message])
+        }
+        if !link.isOpen { Task { @MainActor in await link.start() } }
+    }
+
     private func deliver(_ events: [(String, [String: Any])]) {
         for (name, payload) in events {
             if name == "runtime.cancelQuestion", let id = payload["request_id"] as? String {
@@ -338,5 +365,230 @@ final class OpenClawClient: RuntimeTransport {
         socket?.cancel(with: .goingAway, reason: nil); socket = nil
         urlSession?.invalidateAndCancel(); urlSession = nil
         state = OpenClawProtocolState(); images.removeAll(); nativeIDs.removeAll(); leafIDs.removeAll(); features.removeAll()
+        // The Gateway withdraws a node's tools when it disconnects.
+        nodeLink?.close(); nodeLink = nil; grants.removeAll(); noticeKey = nil; nodeSetup = nil
+    }
+}
+
+/// The companion as an OpenClaw node: a second Gateway connection with role
+/// `node` and the same Keychain device, publishing the delegation tools with
+/// `node.pluginTools.update`. The agent calls one through `node.invoke`, which
+/// arrives here with the calling session's key. Pairing and command approval
+/// stay with OpenClaw; a failure is a notice and never affects chat.
+@MainActor
+final class OpenClawNodeLink {
+    nonisolated static let command = "mcp.tools.call.v1"
+    struct Grant { var url: URL; var token: String }
+    var grant: (String) -> Grant? = { _ in nil }
+    var onNotice: (String) -> Void = { _ in }
+    private(set) var isOpen = false
+    private let endpoint: URL
+    private let config: OpenClawConfiguration
+    private let account: String
+    private let persists: Bool
+    private var device: OpenClawDevice?
+    private var socket: URLSessionWebSocketTask?
+    private var urlSession: URLSession?
+    private var receiver: Task<Void, Never>?
+    private var generation = UUID()
+    private var pending: [String: CheckedContinuation<[String: Any], Error>] = [:]
+    private var invocations: [String: Task<Void, Never>] = [:]
+    private var ready = false
+    nonisolated private static let http = URLSession(configuration: .ephemeral)
+
+    init(endpoint: URL, config: OpenClawConfiguration, account: String, device: OpenClawDevice?) {
+        self.endpoint = endpoint; self.config = config; self.account = account
+        self.device = device; persists = device == nil
+    }
+
+    /// Descriptors for the Gateway's reserved `node-mcp` plugin id, which
+    /// requires this command and an `mcp` route (`node-plugin-tool-snapshot.ts`).
+    nonisolated static func descriptors(_ tools: [[String: Any]]) -> [[String: Any]] {
+        tools.compactMap { tool in
+            guard let name = tool["name"] as? String else { return nil }
+            return ["pluginId": "node-mcp", "name": DelegationServer.name + "_" + name,
+                    "description": String((tool["description"] as? String ?? name).prefix(1024)),
+                    "parameters": tool["inputSchema"] ?? [:], "command": command,
+                    "mcp": ["server": DelegationServer.name, "tool": name]]
+        }
+    }
+
+    func start() async {
+        guard !isOpen else { return }
+        isOpen = true
+        let run = UUID(); generation = run
+        do { try await open(run) } catch {
+            guard generation == run else { return } // closed on purpose
+            close()
+            onNotice("OpenClaw sessions cannot delegate: \(error.localizedDescription) Chat keeps working.")
+        }
+    }
+
+    private func open(_ run: UUID) async throws {
+        let device = try self.device ?? OpenClawDevice.load(account: account) // Keychain: always the latest node token
+        let auth = try device.nodeToken.map { ["token": $0] } ?? config.auth(environment: ProcessInfo.processInfo.environment)
+        let session = URLSession(configuration: .ephemeral), socket = session.webSocketTask(with: endpoint)
+        socket.maximumMessageSize = 32 * 1024 * 1024
+        urlSession = session; self.socket = socket
+        receiver = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                let message = try? await socket.receive()
+                guard let self, self.generation == run else { return }
+                var frame: [String: Any]?
+                switch message { case .data(let bytes)?: frame = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any]
+                case .string(let text)?: frame = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+                default: break }
+                guard let frame else {
+                    // Before hello, the handshake's own error is the notice.
+                    guard self.ready else { return self.failPending(AppError("OpenClaw closed the companion's node link.")) }
+                    self.close()
+                    self.onNotice("OpenClaw closed Notch Companion's node link, so OpenClaw sessions cannot delegate until you reopen one. Chat keeps working.")
+                    return
+                }
+                self.receive(frame)
+            }
+        }
+        socket.resume()
+        let challenge = try await wait("challenge", seconds: 15)
+        guard let nonce = challenge["nonce"] as? String, !nonce.isEmpty, let timestamp = challenge["ts"] as? Int, timestamp >= 0 else {
+            throw AppError("OpenClaw sent an invalid pairing challenge.")
+        }
+        let proof = try device.proof(nonce: nonce, timestamp: timestamp, token: auth["token"], scopes: [], mode: "node", role: "node")
+        let hello: [String: Any]
+        do {
+            hello = try await rpc("connect", ["minProtocol": 4, "maxProtocol": 4,
+                "client": ["id": "gateway-client", "displayName": "Notch Companion", "version": "0.3.0", "platform": "macos", "deviceFamily": "mac", "mode": "node"],
+                "role": "node", "scopes": [String](), "caps": [String](), "commands": [Self.command], "auth": auth, "device": proof])
+        } catch let error as OpenClawRPCError where error.code.hasPrefix("AUTH_") && device.nodeToken != nil {
+            // A removed node's token is stale; the next attempt pairs with the Gateway credential.
+            try save { $0.nodeToken = nil }
+            throw error
+        }
+        guard hello["type"] as? String == "hello-ok", hello["protocol"] as? Int == 4 else { throw AppError("This OpenClaw Gateway is incompatible with protocol 4.") }
+        if let token = (hello["auth"] as? [String: Any])?["deviceToken"] as? String, token != device.nodeToken { try save { $0.nodeToken = token } }
+        ready = true
+        let tools = Self.descriptors(Delegation.tools)
+        let published = try await rpc("node.pluginTools.update", ["tools": tools])
+        // The Gateway drops descriptors whose command is not approved, or all of them when plugin tools are off.
+        if (published["tools"] as? [Any])?.count ?? 0 < tools.count {
+            onNotice("OpenClaw has not enabled Notch Companion's delegation tools. Approve its node commands in OpenClaw (openclaw nodes pending, then openclaw nodes approve) and keep gateway.nodes.pluginTools.enabled on. Chat keeps working.")
+        }
+    }
+
+    /// Read-modify-write, so the operator connection's token is never dropped.
+    private func save(_ change: (inout OpenClawDevice) -> Void) throws {
+        if persists {
+            var latest = try OpenClawDevice.load(account: account)
+            change(&latest); try latest.save(account: account)
+        } else if var device { change(&device); self.device = device }
+    }
+
+    private func receive(_ frame: [String: Any]) {
+        if frame["type"] as? String == "res", let id = frame["id"] as? String, let waiter = pending.removeValue(forKey: id) {
+            if frame["ok"] as? Bool == true { waiter.resume(returning: frame["payload"] as? [String: Any] ?? [:]); return }
+            let error = frame["error"] as? [String: Any] ?? [:], details = error["details"] as? [String: Any] ?? [:]
+            let code = details["code"] as? String ?? error["code"] as? String ?? "GATEWAY_ERROR"
+            let message = code == "PAIRING_REQUIRED"
+                ? "Approve Notch Companion as an OpenClaw node (device request \(details["requestId"] as? String ?? "in openclaw devices list")), then reopen the session."
+                : error["message"] as? String ?? "OpenClaw refused the node link (\(code))."
+            waiter.resume(throwing: OpenClawRPCError(code: code, message: message))
+            return
+        }
+        guard frame["type"] as? String == "event", let payload = frame["payload"] as? [String: Any] else { return }
+        switch frame["event"] as? String {
+        case "connect.challenge": pending.removeValue(forKey: "challenge")?.resume(returning: payload)
+        case "node.invoke.request": invoke(payload)
+        case "node.invoke.cancel": (payload["invokeId"] as? String).flatMap { invocations.removeValue(forKey: $0) }?.cancel()
+        default: break
+        }
+    }
+
+    private func invoke(_ request: [String: Any]) {
+        guard let id = request["id"] as? String, let node = request["nodeId"] as? String, invocations[id] == nil else { return }
+        let run = generation, grant = (request["sessionKey"] as? String).flatMap(grant)
+        invocations[id] = Task { @MainActor [weak self] in
+            let reply = await Self.call(request, grant: grant)
+            guard let self, self.generation == run, !Task.isCancelled else { return }
+            self.invocations.removeValue(forKey: id)
+            self.send(["type": "req", "id": UUID().uuidString, "method": "node.invoke.result",
+                       "params": reply.merging(["id": id, "nodeId": node] as [String: Any]) { _, new in new }])
+        }
+    }
+
+    /// One `tools/call` to the delegation server with the grant of the calling
+    /// session (nil: not a companion session with delegation). The reply is
+    /// `node.invoke.result` without its id: an MCP result, with companion errors
+    /// as `isError` results like the HTTP server's.
+    nonisolated static func call(_ request: [String: Any], grant: Grant?) async -> [String: Any] {
+        func failure(_ code: String, _ message: String) -> [String: Any] {
+            let text = String(data: (try? JSONSerialization.data(withJSONObject: ["code": code, "message": message], options: [.sortedKeys])) ?? Data(), encoding: .utf8) ?? message
+            return ["ok": true, "payload": ["content": [["type": "text", "text": text]], "isError": true]]
+        }
+        guard request["command"] as? String == command,
+              let call = (request["paramsJSON"] as? String).flatMap({ try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }),
+              call["server"] as? String == DelegationServer.name, let tool = call["tool"] as? String else {
+            return ["ok": false, "error": ["code": "INVALID_REQUEST", "message": "Notch Companion serves only its own MCP tools."]]
+        }
+        guard let grant else {
+            return failure("capability_denied", "Notch Companion's tools work only in sessions Notch Companion started.")
+        }
+        // The Gateway's own deadline: once it gives up, closing the request cancels the call, so a wait never acknowledges a result nobody received.
+        let budget = (request["timeoutMs"] as? Int).flatMap { $0 > 0 ? Double($0) / 1000 : nil } ?? 65 * 60
+        var post = URLRequest(url: grant.url, timeoutInterval: budget)
+        post.httpMethod = "POST"
+        post.setValue("Bearer " + grant.token, forHTTPHeaderField: "Authorization")
+        post.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        post.httpBody = try? JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                                                    "params": ["name": tool, "arguments": call["arguments"] as? [String: Any] ?? [:]]])
+        guard let (data, response) = try? await http.data(for: post) else {
+            return ["ok": false, "error": ["code": "UNAVAILABLE", "message": "Notch Companion did not answer in time."]]
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 401 { return failure("capability_denied", "This session's Notch Companion token is no longer valid. Reopen the session to delegate.") }
+        guard status == 200, let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return ["ok": false, "error": ["code": "UNAVAILABLE", "message": "Notch Companion is not answering."]]
+        }
+        if let result = reply["result"] as? [String: Any] { return ["ok": true, "payload": result] }
+        return failure("invalid_request", (reply["error"] as? [String: Any])?["message"] as? String ?? "Unknown tool")
+    }
+
+    private func wait(_ key: String, seconds: Double) async throws -> [String: Any] {
+        let run = generation
+        return try await withCheckedThrowingContinuation { continuation in
+            pending[key] = continuation
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(seconds))
+                guard let self, self.generation == run else { return }
+                self.pending.removeValue(forKey: key)?.resume(throwing: AppError("The OpenClaw Gateway did not answer the companion's node link."))
+            }
+        }
+    }
+    private func rpc(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {
+        let id = UUID().uuidString
+        send(["type": "req", "id": id, "method": method, "params": params])
+        return try await wait(id, seconds: 30)
+    }
+    private func send(_ frame: [String: Any]) {
+        guard let socket, let data = try? JSONSerialization.data(withJSONObject: frame), let text = String(data: data, encoding: .utf8) else { return }
+        let run = generation
+        socket.send(.string(text)) { [weak self] error in
+            guard error != nil else { return }
+            Task { @MainActor in if self?.generation == run { self?.close() } }
+        }
+    }
+
+    private func failPending(_ error: Error) {
+        for waiter in pending.values { waiter.resume(throwing: error) }
+        pending.removeAll()
+    }
+
+    func close() {
+        generation = UUID(); isOpen = false; ready = false
+        receiver?.cancel(); receiver = nil
+        failPending(AppError("The OpenClaw node link closed."))
+        for task in invocations.values { task.cancel() }
+        invocations.removeAll()
+        socket?.cancel(with: .goingAway, reason: nil); socket = nil
+        urlSession?.invalidateAndCancel(); urlSession = nil
     }
 }

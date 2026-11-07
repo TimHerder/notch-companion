@@ -101,6 +101,8 @@ struct ToolActivity: Identifiable, Codable, Equatable {
         for prefix in ["mcp__\(server)__", "\(server).", "\(server)__", "\(server)/"] where name.hasPrefix(prefix) {
             return String(name.dropFirst(prefix.count))
         }
+        // OpenClaw node tools are `notch_<tool>`; a bare `notch_session_*` is the tool itself.
+        if name.hasPrefix(server + "_"), delegationLabels[String(name.dropFirst(server.count + 1))] != nil { return String(name.dropFirst(server.count + 1)) }
         return delegationLabels[name] == nil ? nil : name
     }
     var displayName: String {
