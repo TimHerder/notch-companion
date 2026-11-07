@@ -24,13 +24,17 @@ struct UsageView: View {
                 }
                 if runtimes.isEmpty { note("Set up Codex or Claude Code to see their account limits here.") }
                 ForEach(runtimes) { runtime in
-                    let limits = model.rateLimits[runtime.rawValue] ?? []
+                    let limits = RuntimeRateLimit.sorted(model.rateLimits[runtime.rawValue] ?? [])
                     SettingsGroup {
                         SettingsRow(runtime.title, symbol: "terminal.fill", tint: .gray) {
-                            reported(limits.map { "Reported " + $0.reportedAt.formatted(date: .omitted, time: .shortened) }.max() ?? "—")
+                            reported(limits.map(\.reportedAt).max().map { Self.reportedText($0) } ?? "—")
                         }
                         ForEach(limits) { limit in
-                            SettingsRow(limit.name, divider: true) { limitValue(limit) }
+                            // SettingsRow's divider and insets around the stacked row.
+                            Rectangle().fill(PanelTheme.pick(Color.white.opacity(0.06), CompanionStyle.separator, Color.white.opacity(0.08)))
+                                .frame(height: 0.5).padding(.leading, PanelTheme.pick(14, 12, 0))
+                            UsageLimitRow(limit: limit).font(.system(size: 13))
+                                .padding(.horizontal, theme == .refined ? 14 : 12).padding(.vertical, 10)
                         }
                     }
                     if let error = model.rateLimitErrors[runtime.rawValue] { note(error).foregroundStyle(CompanionStyle.amber) }
@@ -80,29 +84,6 @@ struct UsageView: View {
         }
     }
 
-    @ViewBuilder private func limitValue(_ limit: RuntimeRateLimit) -> some View {
-        switch PanelTheme.current {
-        case .refined:
-            Text(Self.describe(limit)).monospacedDigit()
-                .foregroundStyle(limit.reached ? CompanionStyle.amber : CompanionStyle.secondary)
-        case .tahoe:
-            HStack(spacing: 10) {
-                Text(Self.describe(limit)).monospacedDigit().fixedSize()
-                    .foregroundStyle(limit.reached ? CompanionStyle.amber : CompanionStyle.secondary)
-                meter(limit)
-            }
-        case .instrument:
-            HStack(spacing: 10) {
-                if limit.usedPercent != nil || limit.reached {
-                    SegmentMeter(fraction: limit.reached ? 1 : limit.usedPercent.map { min(1, max(0, $0 / 100)) })
-                }
-                Text(Self.describe(limit)).font(CompanionStyle.mono(11)).monospacedDigit()
-                    .foregroundStyle(limit.reached ? CompanionStyle.signal : CompanionStyle.text)
-                    .lineLimit(1).fixedSize()
-            }
-        }
-    }
-
     @ViewBuilder private func heading(_ text: String) -> some View {
         if PanelTheme.current == .tahoe {
             Text(text).font(.system(size: 13, weight: .semibold)).padding(.leading, 4).accessibilityAddTraits(.isHeader)
@@ -123,24 +104,63 @@ struct UsageView: View {
         }
     }
 
-    /// Tahoe: a small capacity bar, as in Storage and Battery settings; unknown stays empty.
-    private func meter(_ limit: RuntimeRateLimit) -> some View {
-        let fraction = limit.reached ? 1 : min(1, max(0, (limit.usedPercent ?? 0) / 100))
-        return Capsule().fill(Color.white.opacity(0.12))
-            .overlay(alignment: .leading) {
-                Capsule().fill(limit.reached || fraction >= 0.8 ? CompanionStyle.amber : CompanionStyle.accent)
-                    .frame(width: 44 * CGFloat(fraction))
-            }
-            .frame(width: 44, height: 5)
-            .accessibilityHidden(true)
+    /// "42%", "Limit reached" or "—"; unknown is never 0. A window that reset
+    /// since the report is unknown again.
+    static func usedText(_ limit: RuntimeRateLimit, now: Date = Date()) -> String {
+        guard !limit.isStale(now: now) else { return "—" }
+        return limit.reached ? "Limit reached" : limit.usedPercent.map { "\(Int($0.rounded()))%" } ?? "—"
     }
 
-    static func describe(_ limit: RuntimeRateLimit) -> String {
-        let used = limit.reached ? "Limit reached" : limit.usedPercent.map { "\(Int($0.rounded()))% used" } ?? "— used"
-        guard let reset = limit.resetsAt else { return used }
-        let when = Calendar.current.isDateInToday(reset) ? reset.formatted(date: .omitted, time: .shortened)
-            : reset.formatted(.dateTime.weekday(.abbreviated).hour().minute())
-        return used + " · resets " + when
+    /// Relative within a day ("Resets in 1 h 40 min"), then the weekday, or the
+    /// date beyond six days, before the time; nil when not reported.
+    static func resetText(_ limit: RuntimeRateLimit, now: Date = Date(), calendar: Calendar = .current) -> String? {
+        guard let reset = limit.resetsAt else { return nil }
+        let seconds = reset.timeIntervalSince(now)
+        guard seconds > 0 else { return "Reset since last report" }
+        if seconds < 86_400 {
+            let minutes = Int((seconds / 60).rounded(.up))
+            let (hours, rest) = (minutes / 60, minutes % 60)
+            return "Resets in " + (hours == 0 ? "\(rest) min" : rest == 0 ? "\(hours) h" : "\(hours) h \(rest) min")
+        }
+        return "Resets " + stamp(reset, day: seconds < 6 * 86_400 ? .weekday : .date, calendar: calendar)
+    }
+
+    /// "Updated 2:20" today, else the date instead, so an old report never looks current.
+    static func reportedText(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        "Updated " + reportedTime(date, now: now, calendar: calendar)
+    }
+    /// The time today, else the day and month.
+    static func reportedTime(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        guard !calendar.isDate(date, inSameDayAs: now) else { return stamp(date, day: nil, calendar: calendar) }
+        return date.formatted(Date.FormatStyle(locale: calendar.locale ?? .autoupdatingCurrent, calendar: calendar,
+                                               timeZone: calendar.timeZone).day().month(.abbreviated))
+    }
+
+    /// The context bubble's caption: what kind of report it is, and when.
+    static func contextCaption(_ context: RuntimeContextUsage, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let notes = [context.used == nil ? "Usage not reported" : nil, context.limit == nil ? "Window not reported" : nil,
+                     (context.ratio ?? 0) > 1 ? "Over the reported window" : nil, context.estimated ? "Estimate" : nil]
+        return (notes.compactMap { $0 } + [reportedText(context.reportedAt, now: now, calendar: calendar)]).joined(separator: " · ")
+    }
+
+    private enum Day { case weekday, date }
+    /// The time in one style everywhere, after the weekday or date when given.
+    private static func stamp(_ date: Date, day: Day?, calendar: Calendar) -> String {
+        let locale = calendar.locale ?? .autoupdatingCurrent
+        let time = date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, calendar: calendar, timeZone: calendar.timeZone))
+        let style = Date.FormatStyle(locale: locale, calendar: calendar, timeZone: calendar.timeZone)
+        switch day {
+        case nil: return time
+        case .weekday: return date.formatted(style.weekday(.abbreviated)) + " " + time
+        case .date: return date.formatted(style.day().month(.abbreviated)) + " " + time
+        }
+    }
+
+    /// One line for help and accessibility: "42% used · resets in 1 h".
+    static func describe(_ limit: RuntimeRateLimit, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let used = limit.reached && !limit.isStale(now: now) ? "Limit reached" : usedText(limit, now: now) + " used"
+        guard let reset = resetText(limit, now: now, calendar: calendar) else { return used }
+        return used + " · " + reset.prefix(1).lowercased() + reset.dropFirst()
     }
 
     static func describe(_ day: UsageDay) -> String {
@@ -151,6 +171,41 @@ struct UsageView: View {
     static func day(_ date: Date) -> String {
         Calendar.current.isDateInToday(date) ? "Today" : Calendar.current.isDateInYesterday(date) ? "Yesterday"
             : date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+    }
+}
+
+/// One account limit window: name and share used, a bar, then when it resets.
+/// The context bubble and the Usage page share it; the container sets the size.
+struct UsageLimitRow: View {
+    var limit: RuntimeRateLimit
+
+    static var captionFont: Font { PanelTheme.pick(CompanionStyle.caption, .system(size: 11), CompanionStyle.mono(10)) }
+    static var captionColor: Color { PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.faint) }
+
+    var body: some View {
+        // Redrawn each minute for the countdown; the schedule's own date is the minute's start.
+        TimelineView(.everyMinute) { _ in
+            let now = Date()
+            // A window that reset since the report is unknown again: a bare track.
+            let stale = limit.isStale(now: now)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(limit.name).fontWeight(.medium).foregroundStyle(CompanionStyle.text).lineLimit(1)
+                    Spacer(minLength: 0)
+                    // Instrument reads values in mono, names in SF like its other rows.
+                    Text(UsageView.usedText(limit, now: now)).monospacedDigit().lineLimit(1)
+                        .fontDesign(PanelTheme.current == .instrument ? .monospaced : nil)
+                        .foregroundStyle(limit.reached && !stale ? CompanionStyle.amber : CompanionStyle.secondary)
+                }
+                UsageBar(fraction: stale ? nil : limit.fraction)
+                if let reset = UsageView.resetText(limit, now: now) {
+                    Text(reset).font(Self.captionFont).foregroundStyle(Self.captionColor).lineLimit(1)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(limit.name)
+            .accessibilityValue(UsageView.describe(limit, now: now))
+        }
     }
 }
 

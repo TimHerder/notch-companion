@@ -290,6 +290,34 @@ struct SegmentMeter: View {
     }
 }
 
+/// A usage bar across the available width. The fill is the share used and
+/// takes the warning color from 90 %; unknown is a dim track, never 0 %.
+/// Refined: a thin capsule. Tahoe: an accent capsule. Instrument: segments.
+struct UsageBar: View {
+    var fraction: Double?
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            if PanelTheme.current == .instrument {
+                let count = max(1, Int((width + 1.5) / 7.5))
+                SegmentMeter(fraction: fraction, segments: count, segmentWidth: (width - 1.5 * CGFloat(count - 1)) / CGFloat(count), height: 6)
+            } else {
+                Capsule().fill(PanelTheme.pick(Color.white.opacity(0.1), Color.white.opacity(0.12), .clear))
+                    .opacity(fraction == nil ? 0.5 : 1)
+                    .overlay(alignment: .leading) {
+                        if let fraction, fraction > 0 {
+                            Capsule().fill(fraction >= 0.9 ? CompanionStyle.amber : PanelTheme.pick(CompanionStyle.text.opacity(0.75), CompanionStyle.accent, .clear))
+                                .frame(width: max(proxy.size.height, width * fraction))
+                        }
+                    }
+            }
+        }
+        .frame(height: PanelTheme.pick(4, 5, 6))
+        .accessibilityHidden(true)
+    }
+}
+
 /// Section rule: a micro-label, then a hairline running to the trailing edge.
 struct RuleLabel<Trailing: View>: View {
     var title: String

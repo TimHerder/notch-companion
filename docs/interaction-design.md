@@ -785,9 +785,15 @@ changing selection. Choosing a model with efforts keeps the picker open for
 Loading, errors and empty results stay visible. Choices apply on Send and are
 disabled during parent/child work or unresolved sends. Changing session or
 runtime, or collapsing, dismisses it. Model and context overlays render above
-the destination/folder row. The context gauge's content-sized bubble keeps its
-unknown/estimate, hover, accessibility and dismissal behavior. Opening one
-chooser closes the other; neither shifts the composer or transcript.
+the destination/folder row. The context gauge stays as it is (a ring, Instrument's
+segment meter). Its bubble has a fixed 264-point width, so it never jumps
+between states: a **Context** section label with Close, the percentage
+(unclamped, `≈` for estimates, `—` when unknown) with `42k / 200k` at the
+right, a [usage bar](#usage), and a caption (**Estimate**, **Window not
+reported**, **Over the reported window**, then **Updated** and the report time;
+**No report yet** before the first report). Hover, accessibility and dismissal
+are unchanged. Opening one chooser closes the other; neither shifts the
+composer or transcript.
 
 Clicking outside the runtime picker, model picker or context bubble dismisses
 it in both surfaces, including clicks in another window or app, and the click
@@ -823,17 +829,28 @@ for harnesses that map at least one mode, listing only those
 row, opening **Usage**, a scrolling page within the panel bounds; Back returns.
 
 - **Account limits**: each set-up harness that reports limits (Codex, Claude
-  Code), one row per window with percentage used or **Limit reached**, reset
-  time and when reported. Unknown values show `—`, never 0. Opening or
+  Code), headed by **Updated** and the report time (the date instead when not
+  today). One row per window, shortest window first, a plain window before its
+  per-model or per-bucket variants, **Extra usage** last. A row is the window
+  name with the percentage used (or **Limit reached** in amber) at the right, a
+  bar, and the reset: **Resets in 1 h 40 min** within a day, then weekday and
+  time, a date beyond six days, all in one time style. A reset already past
+  reads **Reset since last report** and shows the window as unknown. Opening or
   refreshing asks Codex again; Claude Code reports only during a turn. Errors
   show under their harness.
+- **Bars** fill with the share used and take the warning color (amber; the
+  signal in Instrument) when reached or from 90 %. Unknown is a dim track with
+  no fill and `—`, never 0 %. Refined draws a thin capsule, Tahoe an
+  accent-colored capsule, Instrument a segment meter across the width.
 - **Sessions started here**: tokens per day and harness for messages sent from
   the companion, newest first (30 rows). An unreported day shows `—`; a partly
   reported day adds “N unreported”.
 - **In a session** (with Show usage and **Show context usage** on), the context
-  bubble adds that harness's limits below the token count, **Limit reached** in
-  amber. Opening it asks Codex again; Claude Code's rows come from its last
-  turn.
+  bubble adds a **<Harness> usage** section below the context for a harness that
+  reports limits: Updated time (Instrument's rule label shows the bare time)
+  and a refresh button in its header, then the
+  same rows as the page. Past four windows the rows scroll inside the bubble.
+  Opening it asks Codex again; Claude Code's rows come from its last turn.
 
 ## SnapShot
 

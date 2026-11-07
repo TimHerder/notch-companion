@@ -28,11 +28,9 @@ struct ModelControlsView: View {
             let effort = shownOption?.reasoningEfforts.isEmpty == false ? shown?.reasoningEffort ?? shownOption?.defaultReasoningEffort : nil
             let permissionTitle = session.permissionMode?.title ?? "Default permissions"
             let context = session.runtimeInfo?.context
-            let percentage = context?.fraction.map { "\(context?.estimated == true ? "≈" : "")\(Int(($0 * 100).rounded()))%" }
+            // Unclamped, so an over-limit report reads as more than 100 %.
+            let percentage = context?.ratio.map { "\(context?.estimated == true ? "≈" : "")\(Int(($0 * 100).rounded()))%" }
             let contextCounts = context.map { "\($0.estimated ? "≈" : "")\($0.used?.formatted() ?? "—") / \($0.limit?.formatted() ?? "—")" }
-            let contextTokens = context.map {
-                "\($0.estimated ? "≈" : "")\($0.used.map(RuntimeContextUsage.tokens) ?? "—")/\($0.limit.map(RuntimeContextUsage.tokens) ?? "—") tokens used"
-            }
             let contextDetail = context.map { usage in
                 [percentage, usage.detail].compactMap { $0 }.joined(separator: " · ")
             } ?? "The runtime has not reported context usage yet. Send a message to receive a report."
@@ -156,23 +154,30 @@ struct ModelControlsView: View {
             .frame(height: 22)
             .overlay(alignment: .bottomTrailing) {
                 if showingContext && model.showContextUsage {
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 8) {
-                            Text(percentage ?? "Usage unavailable")
-                                .font(theme == .instrument ? CompanionStyle.mono(14, .semibold) : .system(size: 13, weight: .semibold)).monospacedDigit()
-                                .foregroundStyle(CompanionStyle.text)
-                            if theme == .instrument {
-                                SegmentMeter(fraction: context?.fraction, segments: 16, segmentWidth: 3, height: 10)
+                    VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            sectionHeader("Context") {
+                                QuietIconButton(symbol: "xmark", label: "Close context details", size: 18) {
+                                    showingContext = false
+                                }
                             }
-                            Spacer(minLength: 0)
-                            QuietIconButton(symbol: "xmark", label: "Close context details", size: 18) {
-                                showingContext = false
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(percentage ?? "—")
+                                        .font(theme == .instrument ? CompanionStyle.mono(14, .semibold) : .system(size: 15, weight: .semibold))
+                                        .monospacedDigit().foregroundStyle(CompanionStyle.text)
+                                    Spacer(minLength: 0)
+                                    if let context {
+                                        Text(context.label).monospacedDigit().lineLimit(1)
+                                            .fontDesign(theme == .instrument ? .monospaced : nil)
+                                    }
+                                }
+                                UsageBar(fraction: context?.fraction)
+                                Text(context.map { UsageView.contextCaption($0) } ?? "No report yet")
+                                    .font(UsageLimitRow.captionFont).foregroundStyle(UsageLimitRow.captionColor)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
-                        }
-                        if theme == .instrument {
-                            Text(contextTokens ?? "No token report yet").font(CompanionStyle.mono(10.5)).monospacedDigit()
-                        } else {
-                            Text(contextTokens ?? "No token report yet").monospacedDigit()
+                            .accessibilityElement(children: .combine)
                         }
                         if model.showUsage && session.runtime.capabilities.rateLimits == true {
                             accountLimits(session.runtime)
@@ -180,7 +185,9 @@ struct ModelControlsView: View {
                     }
                     .font(PanelTheme.pick(CompanionStyle.caption, .system(size: 11.5), .system(size: 11)))
                     .foregroundStyle(CompanionStyle.secondary).padding(PanelTheme.pick(12, 12, 10))
-                    .fixedSize(horizontal: true, vertical: true)
+                    // A fixed width, so the bubble never jumps between states.
+                    .frame(width: 264)
+                    .fixedSize(horizontal: false, vertical: true)
                     .popupSurface(cornerRadius: 12)
                     .background(PopupDismissalRegion(monitor: popupDismissal))
                     // Eight points above the 22-point control row.
@@ -229,62 +236,53 @@ struct ModelControlsView: View {
 
     /// The Usage page's account limits for this session's harness, asked again on open.
     private func accountLimits(_ runtime: RuntimeKind) -> some View {
-        let limits = model.rateLimits[runtime.rawValue] ?? []
-        let theme = PanelTheme.current
-        return VStack(alignment: .leading, spacing: 5) {
-            if theme == .tahoe {
-                Rectangle().fill(CompanionStyle.separator).frame(height: 0.5).padding(.vertical, 3)
-            } else {
-                Divider().padding(.vertical, 2)
+        let limits = RuntimeRateLimit.sorted(model.rateLimits[runtime.rawValue] ?? [])
+        let rows = VStack(alignment: .leading, spacing: 10) { ForEach(limits) { UsageLimitRow(limit: $0) } }
+        return VStack(alignment: .leading, spacing: 8) {
+            if PanelTheme.current != .instrument {
+                Rectangle().fill(PanelTheme.pick(CompanionStyle.hairline, CompanionStyle.separator, .clear)).frame(height: 0.5)
+                    .padding(.bottom, 2)
             }
-            HStack(spacing: 6) {
-                switch theme {
-                case .refined:
-                    Text("\(runtime.title) limits").font(.system(size: 11, weight: .medium)).foregroundStyle(CompanionStyle.text)
-                case .tahoe:
-                    Text("\(runtime.title) limits").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(CompanionStyle.text)
-                case .instrument:
-                    Text("\(runtime.title) limits").microLabel(9.5, weight: .semibold).foregroundStyle(CompanionStyle.text)
-                }
+            sectionHeader("\(runtime.title) usage") {
                 if let reported = limits.map(\.reportedAt).max() {
-                    if theme == .instrument {
-                        Text("· reported " + reported.formatted(date: .omitted, time: .shortened)).font(CompanionStyle.mono(10)).foregroundStyle(CompanionStyle.faint)
-                    } else {
-                        Text("· reported " + reported.formatted(date: .omitted, time: .shortened))
+                    // Instrument's rule label leaves room for the bare timestamp only.
+                    Text(PanelTheme.current == .instrument ? UsageView.reportedTime(reported) : UsageView.reportedText(reported))
+                        .font(UsageLimitRow.captionFont).foregroundStyle(UsageLimitRow.captionColor).lineLimit(1).fixedSize()
+                        .accessibilityLabel(UsageView.reportedText(reported))
+                }
+                if model.refreshingRateLimits { ProgressView().controlSize(.mini).frame(width: 18, height: 18) }
+                else {
+                    QuietIconButton(symbol: "arrow.clockwise", label: "Refresh \(runtime.title) usage", size: 18) {
+                        Task { await model.refreshRateLimits(runtime) }
                     }
                 }
-                if model.refreshingRateLimits { ProgressView().controlSize(.mini) }
             }
             if let error = model.rateLimitErrors[runtime.rawValue] {
-                Text(error).foregroundStyle(CompanionStyle.amber).frame(width: 240, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                Text(error).foregroundStyle(CompanionStyle.amber).fixedSize(horizontal: false, vertical: true)
             } else if limits.isEmpty {
                 Text(runtime == .claude ? "Claude Code reports its limits during a turn." : "Not reported yet.")
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            if theme == .instrument {
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-                    ForEach(limits) { limit in
-                        GridRow {
-                            Text(limit.name)
-                            SegmentMeter(fraction: limit.reached ? 1 : limit.usedPercent.map { min(1, max(0, $0 / 100)) }, height: 8)
-                            Text(UsageView.describe(limit)).monospacedDigit()
-                                .foregroundStyle(limit.reached ? CompanionStyle.amber : CompanionStyle.secondary)
-                        }
-                    }
-                }
-                .font(CompanionStyle.mono(10.5))
-            } else {
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
-                    ForEach(limits) { limit in
-                        GridRow {
-                            Text(limit.name)
-                            Text(UsageView.describe(limit)).monospacedDigit()
-                                .foregroundStyle(limit.reached ? CompanionStyle.amber : CompanionStyle.secondary)
-                        }
-                    }
-                }
-            }
+            // Claude can report six windows; past four the list scrolls inside the bubble.
+            if limits.count > 4 { ScrollView { rows }.frame(height: 200) } else { rows }
         }
         .task { await model.refreshRateLimits(runtime) }
+    }
+
+    /// A bubble section's label with trailing controls: Instrument's rule label,
+    /// a quiet secondary label elsewhere (like the picker's Reasoning effort).
+    @ViewBuilder
+    private func sectionHeader<Trailing: View>(_ title: String, @ViewBuilder trailing: () -> Trailing) -> some View {
+        if PanelTheme.current == .instrument {
+            RuleLabel(title: title, trailing: trailing).accessibilityAddTraits(.isHeader)
+        } else {
+            HStack(spacing: 6) {
+                Text(title).font(.system(size: PanelTheme.pick(11, 12, 11), weight: .semibold)).foregroundStyle(CompanionStyle.secondary)
+                    .lineLimit(1).layoutPriority(1).accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 0)
+                trailing()
+            }
+        }
     }
 
     @ViewBuilder
