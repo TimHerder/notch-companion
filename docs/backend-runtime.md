@@ -180,7 +180,11 @@ preserving changes and child ownership. Ordinary turn events cannot confirm it:
 only its correlated receipt or the explicit native-history check clears the
 intent. Definitive rejection restores the draft beside newer typing; ambiguous
 delivery blocks retries. Steering never silently becomes a new turn or an
-interrupt.
+interrupt. **Steer now** on a queued message takes the same path with that
+entry's ID, text and files: it leaves the queue in the save that stages it, a
+definitive refusal returns it to its place in the queue (the draft is
+untouched), and ambiguous delivery keeps the intent protected. **Edit** moves
+an entry back into an empty composer in one save.
 
 Claude: only human composer input takes the priority path with `origin: human`;
 delegation messages are never labeled human. The adapter waits for the exact
@@ -480,7 +484,12 @@ mode, or without one to return to Inherit after an override was sent this run.
 Nothing reaches the runtime on selection, and native configuration is never
 written. A failed or unverified change leaves the message unsent with the draft
 restored. Mode changes the agent makes itself are not tracked; the saved mode
-is reapplied on the next send. The persistent `always` approval is never
+is reapplied on the next send. Choosing Plan saves the mode it replaced as
+`prePlanPermissionMode` (none = Inherit) and marks the latest turn as having
+no plan; **Plan ready**'s Implement restores that mode, then sends “Implement
+the plan.” through the ordinary `submit`. Keep planning saves
+`planReadyDismissedTurnID`. Both fields are optional for older registries; an
+unknown saved mode decodes as none. The persistent `always` approval is never
 exposed.
 
 | Harness | Mapping |

@@ -418,7 +418,8 @@ struct SessionBrowserView: View {
         let archived = session.isArchived || model.isAutoArchived(session) ? " Archived." : ""
         let snoozed = session.snoozedUntil.map { " Snoozed until \(SnoozeChoice.time($0))." } ?? ""
         let runtime = session.isLegacyPrivate ? "Legacy Hermes" : session.runtime.title
-        return "\(entry.accessibilityLabel) \(runtime).\(archived)\(snoozed)"
+        let plan = Self.showsPlanReady(session) ? " Plan ready." : ""
+        return "\(entry.accessibilityLabel) \(runtime).\(plan)\(archived)\(snoozed)"
     }
 
     private func renameEditor(_ session: CompanionSession) -> some View {
@@ -462,8 +463,11 @@ struct SessionBrowserView: View {
         .accessibilityValue(open ? "Actions shown" : "Actions hidden")
     }
 
+    /// An unread plan waiting for Implement or Keep planning.
+    static func showsPlanReady(_ session: CompanionSession) -> Bool { session.planReadyTurnID != nil && session.hasUnreadCompletion }
+
     @ViewBuilder private func runtimeLabel(_ session: CompanionSession) -> some View {
-        let text = Text(session.isLegacyPrivate ? "Legacy Hermes" : session.runtime.title)
+        let text = Text(Self.showsPlanReady(session) ? "Plan ready" : session.isLegacyPrivate ? "Legacy Hermes" : session.runtime.title)
         switch PanelTheme.current {
         case .refined: text.foregroundStyle(CompanionStyle.faint)
         case .tahoe: text.foregroundStyle(CompanionStyle.faint)

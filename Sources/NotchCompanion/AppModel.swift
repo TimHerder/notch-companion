@@ -531,9 +531,14 @@ final class AppModel: ObservableObject {
             }
             guard confirmed else { return }
         }
-        update(id) {
-            $0.permissionMode = mode
-            if mode == .fullAccess { $0.fullAccessConfirmed = true }
+        update(id) { target in
+            if mode == .plan, target.permissionMode != .plan {
+                target.prePlanPermissionMode = target.permissionMode
+                // The turn before Plan was chosen made no plan to implement.
+                target.planReadyDismissedTurnID = target.messages.last { $0.role == "user" && SessionHistory.isVisibleConversation($0) }?.id
+            }
+            target.permissionMode = mode
+            if mode == .fullAccess { target.fullAccessConfirmed = true }
         }
         save()
     }
@@ -1267,6 +1272,23 @@ final class AppModel: ObservableObject {
         scheduleDeferredOperationIfIdle()
     }
 
+    /// Moves a queued message back into an empty composer, saved before the queue drops it.
+    @discardableResult
+    func editQueuedSend(_ id: String) -> Bool {
+        guard let session = current, !isSubmitting(session.id), session.attachments.isEmpty,
+              session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let send = session.queuedSends.first(where: { $0.id == id && $0.isUserMessage }) else { return false }
+        update(session.id) { $0.queuedSends.removeAll { $0.id == id }; $0.draft = send.text; $0.attachments = send.attachments ?? [] }
+        guard save() else { update(session.id) { $0.queuedSends = session.queuedSends; $0.draft = session.draft; $0.attachments = [] }; return false }
+        composerFocusRequest += 1
+        processDelegationWakes()
+        scheduleDeferredOperationIfIdle()
+        return true
+    }
+
+    /// Steer now: a queued message goes into the running turn through the steering path.
+    func steerQueuedSend(_ id: String) async { await steerDraft(queuedID: id) }
+
     func resumeQueuedSends() {
         guard let session = current, !isSubmitting(session.id) else { return }
         for send in session.queuedSends where send.isUserMessage { failedDeliveries.remove(send.id) }
@@ -1283,54 +1305,65 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func steerDraft() async {
+    /// Steers the draft, or with `queuedID` that queued message, which a
+    /// refusal returns to its place in the queue instead of the composer.
+    private func steerDraft(queuedID: String? = nil) async {
         guard let session = current, !isSubmitting(session.id), !submitting else { return }
-        guard session.canSteer, let sid = session.runtimeID else {
+        let queuedIndex = queuedID.flatMap { id in session.queuedSends.firstIndex { $0.id == id && $0.isUserMessage } }
+        let queued = queuedIndex.map { session.queuedSends[$0] }
+        guard queuedID == nil || queued != nil else { return }
+        let (draft, files) = queued.map { ($0.text, $0.attachments ?? []) } ?? (session.draft, session.attachments)
+        guard session.canSteer(files), let sid = session.runtimeID else {
             errorMessage = "This session cannot accept steering now. Use Command–Return to queue your message."
             return
         }
         guard !persistenceBlocked else { return }
-        let text = session.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        let id = UUID().uuidString
-        let message = ChatMessage(id: id, role: "user", text: text + (session.attachments.isEmpty ? "" : "\n\nAttached: " + session.attachments.map(\.name).joined(separator: ", ")),
+        let id = queued?.id ?? UUID().uuidString
+        let message = ChatMessage(id: id, role: "user", text: text + (files.isEmpty ? "" : "\n\nAttached: " + files.map(\.name).joined(separator: ", ")),
                                   turnID: session.latestUserTurnID ?? id)
+        let giveBack: (inout CompanionSession) -> Void = { target in
+            guard let queued, let queuedIndex else { target.restoreStagedSubmission(); return }
+            target.stagedSubmission = nil
+            target.queuedSends.insert(queued, at: min(queuedIndex, target.queuedSends.count))
+        }
         submitting = true
         submittingSessionID = session.id
         defer { submitting = false; submittingSessionID = nil; processDelegationWakes(); scheduleDeferredOperationIfIdle() }
         update(session.id) {
-            $0.stagedSubmission = StagedSubmission(message: message, draft: session.draft, attachments: session.attachments)
-            $0.draft = ""; $0.attachments = []
+            $0.stagedSubmission = StagedSubmission(message: message, draft: draft, attachments: files)
+            if queued != nil { $0.queuedSends.removeAll { $0.id == id } } else { $0.draft = ""; $0.attachments = [] }
         }
-        guard save() else { update(session.id) { $0.restoreStagedSubmission() }; return }
+        guard save() else { update(session.id, giveBack); return }
         var requested = false
         do {
             var references: [String] = []
-            for file in session.attachments where !file.isImage {
+            for file in files where !file.isImage {
                 let result = try await client.request("file.attach", params: ["session_id": sid, "path": file.url.path])
                 guard let reference = result["ref_text"] as? String else { throw BusyInputRejection(message: "The attachment could not be prepared.") }
                 references.append(reference)
             }
-            guard sessions.first(where: { $0.id == session.id })?.canSteer == true else {
-                throw BusyInputRejection(message: "The turn finished before steering. Your message is back in the composer.")
+            guard sessions.first(where: { $0.id == session.id })?.canSteer(files) == true else {
+                throw BusyInputRejection(message: "The turn finished before steering. Your message is back in the \(queued == nil ? "composer" : "queue").")
             }
             update(session.id) {
                 $0.messages.append(message)
-                $0.pendingSubmission = PendingSubmission(id: id, draft: session.draft,
+                $0.pendingSubmission = PendingSubmission(id: id, draft: draft,
                     userTurnCount: $0.messages.filter { $0.role == "user" && SessionHistory.isVisibleConversation($0) }.count,
-                    attachmentIDs: session.attachments.map(\.id), isSteering: true)
+                    attachmentIDs: files.map(\.id), isSteering: true)
             }
             guard save() else { throw BusyInputRejection(message: "The send could not be saved. No steering was sent.") }
             requested = true
             _ = try await client.request("prompt.steer", params: ["session_id": sid, "turn_id": id,
-                "text": ([text] + references).joined(separator: "\n\n"), "images": session.attachments.filter(\.isImage).map { $0.url.path }])
+                "text": ([text] + references).joined(separator: "\n\n"), "images": files.filter(\.isImage).map { $0.url.path }])
             confirmSubmission(session.id, includingSteering: true)
             errorMessage = nil
             play(.send)
         } catch {
             if !requested || Self.definitiveRejection(error) {
                 update(session.id) {
-                    $0.messages.removeAll { $0.id == id }; $0.pendingSubmission = nil; $0.restoreStagedSubmission()
+                    $0.messages.removeAll { $0.id == id }; $0.pendingSubmission = nil; giveBack(&$0)
                 }
                 errorMessage = error.localizedDescription
             } else {
