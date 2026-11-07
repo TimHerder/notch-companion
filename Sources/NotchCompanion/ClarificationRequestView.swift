@@ -92,6 +92,8 @@ private struct RequestAnswerForm: View {
     @State private var submitting = false
     /// Refined and Tahoe measure the details so the card hugs short ones.
     @State private var detailsHeight = CGFloat.infinity
+    /// Instrument: the fixed question area has more below its edge.
+    @State private var moreBelow = false
 
     /// Refined: the question scrolls past this height; shorter ones hug their content.
     private static let bodyCap: CGFloat = 132
@@ -203,7 +205,13 @@ private struct RequestAnswerForm: View {
                     ScrollView { requestBody }.frame(maxWidth: .infinity, maxHeight: 112, alignment: .topLeading)
                 }
             } else {
-                ScrollView { requestBody }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                // Wherever a row falls at the edge, a fade deep enough to dim the last visible
+                // row (while more is below) and a flash of the scroller say the choices go on.
+                ScrollView { requestBody }
+                    .onScrollGeometryChange(for: Bool.self) { $0.visibleRect.maxY < $0.contentSize.height - 1 } action: { moreBelow = $1 }
+                    .scrollIndicatorsFlash(onAppear: true)
+                    .scrollEdgeFade(top: 0, bottom: moreBelow ? 44 : 0)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
     }

@@ -199,7 +199,10 @@ Queue entries' attachment and pause fields are optional for older registries.
 Stop, failure, disconnect and restart pause the queue (with resume/cancel
 controls); a failed head blocks later entries. Delivery uses the ordinary
 staged/pending protections without overwriting the current draft; after restart
-a staged entry is kept once, not also restored into the editor. Paused queues do
+a staged entry is kept once, not also restored into the editor. An entry whose
+ID is already the unconfirmed send or a transcript message (a quit during
+delivery) is dropped on load, its staged copy left for Check last send, and
+Edit and Steer now refuse such an ID. Paused queues do
 not keep the app busy. Approval and question cards stay authoritative; sending
 cannot bypass them.
 
@@ -484,14 +487,16 @@ mode, or without one to return to Inherit after an override was sent this run.
 Nothing reaches the runtime on selection, and native configuration is never
 written. A failed or unverified change leaves the message unsent with the draft
 restored. Mode changes the agent makes itself are not tracked; the saved mode
-is reapplied on the next send. Choosing Plan saves the mode it replaced as
+is reapplied on the next send. A turn sent in Plan saves its ID as
+`planTurnID`. Choosing Plan saves the mode it replaced as
 `prePlanPermissionMode` (none = Inherit) and marks the latest turn as having
-no plan; **Plan ready**'s Implement restores that mode, then sends “Implement
+no plan unless it is the `planTurnID` turn; **Plan ready**'s Implement restores that mode, then sends “Implement
 the plan.” through the ordinary `submit`. Keep planning saves
 `planReadyDismissedTurnID`, and so does a successful `approval.respond` to a
 native plan approval: the Claude (`ExitPlanMode`) and Cursor
 (`cursor/create_plan`) adapters mark that `approval.request` with `plan: true`.
-Both fields are optional for older registries; an unknown saved mode decodes as
+These fields are optional for older registries (without `planTurnID`, choosing
+Plan again sets the latest turn aside as before); an unknown saved mode decodes as
 none. The persistent `always` approval is never
 exposed.
 

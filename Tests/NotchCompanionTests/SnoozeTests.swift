@@ -210,6 +210,23 @@ import XCTest
         XCTAssertTrue(model.visibleSessions.contains { $0.id == "later" })
     }
 
+    func testSteeringOrQueueingFromItsComposerEndsTheSnooze() async {
+        let model = makeModel([working("busy")])
+        await model.connect()
+        for queue in [false, true] {
+            model.snoozeSession("busy", until: Date().addingTimeInterval(hour))
+            XCTAssertNotNil(session(model, "busy").snoozedUntil)
+            model.selectSession("busy")
+            model.draft = queue ? "Queue this" : "Steer this"
+            await model.send(queue: queue)
+            XCTAssertNil(model.errorMessage)
+            XCTAssertNil(session(model, "busy").snoozedUntil, queue ? "Queueing ends the snooze" : "Steering ends the snooze")
+            XCTAssertTrue(model.visibleSessions.contains { $0.id == "busy" })
+        }
+        XCTAssertTrue(session(model, "busy").messages.contains { $0.text == "Steer this" }, "Steered into the running turn")
+        XCTAssertEqual(session(model, "busy").queuedSends.map(\.text), ["Queue this"])
+    }
+
     func testChoicesFollowTheLocalCalendar() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Europe/Zurich")!

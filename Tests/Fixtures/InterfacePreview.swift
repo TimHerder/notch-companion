@@ -798,6 +798,18 @@ import ImageIO
             context: RuntimeContextUsage(used: 42000, limit: 200000, estimated: true))
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-model-context", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-model-context", output: output)
+        // The narrowest window, a 64-character session name in the bar: a short model name and
+        // Runtime default keep their whole label.
+        let (modelInfo, sessionTitle, catalogKey) = (model.sessions[0].runtimeInfo, model.sessions[0].title, model.modelCatalogKey(for: model.sessions[0]))
+        let catalog = model.modelCatalogs[catalogKey]
+        model.sessions[0].title = String(String(repeating: "A long session name ", count: 4).prefix(64))
+        model.modelCatalogs[catalogKey] = nil
+        for (suffix, name) in [("short", "gpt-5.2"), ("default", nil)] {
+            model.sessions[0].runtimeInfo = RuntimeSessionInfo(model: name, provider: nil, context: modelInfo?.context)
+            try render(FullSessionView(model: model, tab: "Activity"), size: NSSize(width: 780, height: 550),
+                       name: "full-model-title-\(suffix)", output: output)
+        }
+        (model.sessions[0].runtimeInfo, model.sessions[0].title, model.modelCatalogs[catalogKey]) = (modelInfo, sessionTitle, catalog)
         try render(ModelControlsView(model: model, choosingModel: true).padding(20)
             .frame(width: 560, height: 350, alignment: .bottomTrailing).background(CompanionStyle.background)
             .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),

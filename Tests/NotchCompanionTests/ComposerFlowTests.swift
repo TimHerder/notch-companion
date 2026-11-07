@@ -206,6 +206,39 @@ import SwiftUI
         XCTAssertEqual(transport.calls.count, before, "Steering is never substituted on a queue-only harness")
     }
 
+    /// A quit during delivery leaves the queued entry beside its transcript message
+    /// and unconfirmed send: Edit and Steer refuse it, and a restart drops it.
+    func testAQueuedMessageDeliveredBeforeAQuitIsNeverSentAgain() throws {
+        working()
+        let sent = ChatMessage(id: "sent", role: "user", text: "In flight", turnID: "sent")
+        model.sessions[0].messages += [sent, ChatMessage(id: "confirmed", role: "user", text: "Delivered", turnID: "confirmed")]
+        model.sessions[0].queuedSends = ["sent", "confirmed", "later"].map { QueuedSend(id: $0, text: $0, attachments: []) }
+        model.draft = ""
+        XCTAssertFalse(model.editQueuedSend("confirmed"), "Already in the transcript")
+        model.sessions[0].pendingSubmission = PendingSubmission(id: "sent", draft: "In flight", userTurnCount: 3, attachmentIDs: [])
+        model.sessions[0].stagedSubmission = StagedSubmission(message: sent, draft: "In flight", attachments: [])
+        XCTAssertFalse(model.editQueuedSend("sent"), "The unconfirmed send")
+        XCTAssertEqual(model.draft, "")
+        XCTAssertTrue(model.save())
+
+        let restored = AppModel(storageURL: storage, playsSounds: false, client: ComposerFlowTransport(), preferences: preferences)
+        defer { restored.shutdown() }
+        XCTAssertEqual(restored.sessions[0].queuedSends.map(\.id), ["later"])
+        XCTAssertEqual(restored.sessions[0].pendingSubmission?.id, "sent")
+        XCTAssertEqual(restored.sessions[0].stagedSubmission?.draft, "In flight", "Check last send can still restore it")
+    }
+
+    func testSteerNowRefusesAQueuedMessageAlreadyInTheTranscript() async {
+        working()
+        model.sessions[0].messages.append(ChatMessage(id: "confirmed", role: "user", text: "Delivered", turnID: "confirmed"))
+        model.sessions[0].queuedSends = [QueuedSend(id: "confirmed", text: "Delivered", attachments: [])]
+        XCTAssertTrue(model.current!.canSteer([]))
+        await model.steerQueuedSend("confirmed")
+        XCTAssertFalse(transport.calls.contains { $0.0 == "prompt.steer" })
+        XCTAssertEqual(model.current?.messages.filter { $0.id == "confirmed" }.count, 1)
+        XCTAssertNil(model.current?.pendingSubmission)
+    }
+
     func testTheBusySendKeyNamesWhatReturnDoes() throws {
         working(.codex)
         XCTAssertEqual(model.current?.busySendLabel, "Steer message")
@@ -271,6 +304,8 @@ import SwiftUI
         XCTAssertEqual(named("Plan — migrate\n==="), "migrate", "Setext headings count")
         XCTAssertNil(named("## Plan"), "A heading that only says Plan adds nothing")
         XCTAssertEqual(named("# Planning notes"), "Planning notes")
+        XCTAssertEqual(named("# Plan-B rollout"), "Plan-B rollout", "A hyphenated name keeps its Plan")
+        XCTAssertEqual(named("# Plan - migrate"), "migrate")
         XCTAssertNil(named("```\n# not a heading\n```\nPlain"), "Code is not a heading")
         var dismissed = session
         dismissed.planReadyDismissedTurnID = "turn"
@@ -330,6 +365,26 @@ import SwiftUI
         XCTAssertEqual(model.current?.permissionMode, .autoEdit, "A rejected send shows its failure and keeps the chosen mode")
         XCTAssertEqual(model.errorMessage, "Rejected")
         XCTAssertEqual(model.draft, "", "Implement never puts its text into the composer")
+    }
+
+    func testSwitchingAwayFromPlanAndBackKeepsAPlanMadeInPlan() async throws {
+        await model.newSession(showPanel: false, runtime: .codex)
+        let id = try XCTUnwrap(model.currentID)
+        model.setPermissionMode(.plan, for: id)
+        model.draft = "Plan the release"
+        await model.send()
+        model.receive("message.complete", payload: ["session_id": "live", "text": "1. Tag it"])
+        let turn = try XCTUnwrap(model.current?.planReadyTurnID)
+        XCTAssertEqual(try saved.planTurnID, turn, "The turn that ran in Plan is saved")
+        model.setPermissionMode(.autoEdit, for: id)
+        XCTAssertNil(model.current?.planReadyTurnID)
+        model.setPermissionMode(.plan, for: id)
+        XCTAssertEqual(model.current?.planReadyTurnID, turn, "Its plan is still ready")
+        // An older save without the field keeps the earlier behaviour.
+        model.setPermissionMode(.autoEdit, for: id)
+        model.sessions[try XCTUnwrap(model.sessions.firstIndex { $0.id == id })].planTurnID = nil
+        model.setPermissionMode(.plan, for: id)
+        XCTAssertNil(model.current?.planReadyTurnID)
     }
 
     func testKeepPlanningPersistsAndOlderSavesDecodeWithoutPlanFields() throws {

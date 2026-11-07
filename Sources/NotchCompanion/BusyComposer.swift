@@ -43,7 +43,8 @@ extension CompanionSession {
                   if case .heading = $0.content { return true } else { return false }
               })?.content else { return nil }
         var name = (try? AttributedString(markdown: heading)).map { String($0.characters) } ?? heading
-        if let plan = name.range(of: #"^\s*plan(\s*[:·—–-]\s*|\s*$)"#, options: [.regularExpression, .caseInsensitive]) {
+        // A bare hyphen separates only with a space after it: "Plan-B rollout" keeps its name.
+        if let plan = name.range(of: #"^\s*plan(\s*[:·—–]\s*|\s*-\s+|\s*$)"#, options: [.regularExpression, .caseInsensitive]) {
             name.removeSubrange(plan)
         }
         name = name.trimmingCharacters(in: .whitespaces)
