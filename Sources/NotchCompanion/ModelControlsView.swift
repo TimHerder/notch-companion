@@ -29,7 +29,7 @@ struct ModelControlsView: View {
             let permissionTitle = session.permissionMode?.title ?? "Default permissions"
             let context = session.runtimeInfo?.context
             // Unclamped, so an over-limit report reads as more than 100 %.
-            let percentage = context?.ratio.map { "\(context?.estimated == true ? "≈" : "")\(Int(($0 * 100).rounded()))%" }
+            let percentage = context?.ratio == nil ? nil : UsageView.contextHeadline(context)
             let contextCounts = context.map { "\($0.estimated ? "≈" : "")\($0.used?.formatted() ?? "—") / \($0.limit?.formatted() ?? "—")" }
             let contextDetail = context.map { usage in
                 [percentage, usage.detail].compactMap { $0 }.joined(separator: " · ")
@@ -162,17 +162,19 @@ struct ModelControlsView: View {
                                 }
                             }
                             VStack(alignment: .leading, spacing: 6) {
+                                // A report without a window heads with what it knows and has no bar to fill.
+                                let partial = context != nil && percentage == nil
                                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                    Text(percentage ?? "—")
+                                    Text(UsageView.contextHeadline(context))
                                         .font(theme == .instrument ? CompanionStyle.mono(14, .semibold) : .system(size: 15, weight: .semibold))
                                         .monospacedDigit().foregroundStyle(CompanionStyle.text)
                                     Spacer(minLength: 0)
-                                    if let context {
+                                    if !partial, let context {
                                         Text(context.label).monospacedDigit().lineLimit(1)
                                             .fontDesign(theme == .instrument ? .monospaced : nil)
                                     }
                                 }
-                                UsageBar(fraction: context?.fraction)
+                                if !partial { UsageBar(fraction: context?.fraction) }
                                 Text(context.map { UsageView.contextCaption($0) } ?? "No report yet")
                                     .font(UsageLimitRow.captionFont).foregroundStyle(UsageLimitRow.captionColor)
                                     .fixedSize(horizontal: false, vertical: true)

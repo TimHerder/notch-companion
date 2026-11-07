@@ -130,7 +130,7 @@ struct RuntimeContextUsage: Codable, Equatable {
     var detail: String {
         let count = used.map { "\($0.formatted()) tokens used" } ?? "Usage not reported"
         let maximum = limit.map { " of \($0.formatted())" } ?? "; context window not reported"
-        return (estimated ? "Runtime estimate: " : "Last runtime report: ") + count + maximum + ". Updated \(reportedAt.formatted(date: .omitted, time: .shortened))."
+        return (estimated ? "Runtime estimate: " : "Last runtime report: ") + count + maximum + ". Updated \(reportedAt.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: .app)))."
     }
     static func tokens(_ value: Int) -> String {
         if value >= 1_000_000 { return String(format: "%.1fM", Double(value) / 1_000_000).replacingOccurrences(of: ".0M", with: "M") }

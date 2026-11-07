@@ -14,15 +14,8 @@ struct SessionBrowserView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: PanelTheme.pick(12, 10, 10)) {
-            // The Archived chip rides inside the search capsule where it is wide
-            // enough and moves below it in the full-session sidebar.
-            ViewThatFits(in: .horizontal) {
-                searchField { archivedChip }
-                VStack(alignment: .leading, spacing: 8) {
-                    searchField { EmptyView() }
-                    archivedChip
-                }
-            }
+            // The Archived chip stays inside the search capsule, typing or not.
+            searchField
             // Re-read each minute so ages stay current and quiet sessions move to Archived.
             TimelineView(.everyMinute) { _ in list }
         }.padding(.top, compact ? 6 : 0)
@@ -122,7 +115,9 @@ struct SessionBrowserView: View {
             VStack(alignment: .leading, spacing: 5) {
                 Text(emptyTitle).font(.system(size: 13, weight: .semibold))
                 Text(emptyDetail).font(CompanionStyle.callout).foregroundStyle(CompanionStyle.secondary)
-            }.padding(.vertical, 18).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            // Starts where the rows' status glyphs and the Archived row's icon do.
+            .padding(.vertical, 18).padding(.horizontal, 12).frame(maxWidth: .infinity, alignment: .leading)
         case .tahoe:
             VStack(spacing: 6) {
                 Image(systemName: !query.isEmpty ? "magnifyingglass" : model.sessionFilter == .archived ? "archivebox" : "tray")
@@ -138,11 +133,13 @@ struct SessionBrowserView: View {
                 Text("00 sessions").microLabel(9.5).foregroundStyle(CompanionStyle.faint)
                 Text(emptyTitle).font(.system(size: 15, weight: .semibold))
                 Text(emptyDetail).font(.system(size: 12.5)).foregroundStyle(CompanionStyle.secondary)
-            }.padding(.vertical, 18).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            // Shares the project headers' and Archived row's two-point inset.
+            .padding(.vertical, 18).padding(.horizontal, 2).frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func searchField<Trailing: View>(@ViewBuilder trailing: () -> Trailing) -> some View {
+    private var searchField: some View {
         searchChrome(HStack(spacing: 7) {
             switch PanelTheme.current {
             case .refined: Image(systemName: "magnifyingglass").foregroundStyle(CompanionStyle.tertiary)
@@ -151,14 +148,13 @@ struct SessionBrowserView: View {
             }
             TextField("Search sessions", text: $model.sessionSearch)
                 .textFieldStyle(.plain).focused($searchFocused).focusEffectDisabled()
-                // A fixed ideal width keeps the chip layout from jumping as you type.
-                .frame(minWidth: 100, idealWidth: 100, maxWidth: .infinity)
+                .frame(maxWidth: .infinity)
                 .accessibilityLabel("Search session titles and conversations")
                 .textCursor()
             if !model.sessionSearch.isEmpty {
                 QuietIconButton(symbol: "xmark", label: "Clear search", size: 20) { model.sessionSearch = "" }
             }
-            trailing()
+            archivedChip
         })
         .animation(.easeOut(duration: 0.15), value: searchFocused)
     }
@@ -258,7 +254,9 @@ struct SessionBrowserView: View {
                 Button { model.sessionActionsID = nil; model.selectSession(session.id) } label: {
                     rowLine(session, entry: entry, index: index, selected: selected, hidesTrailing: showsActions)
                         .padding(.horizontal, PanelTheme.pick(12, 10, 10))
-                        .frame(height: Self.rowHeight)
+                        // A two-line sidebar title keeps the single-line rows' first-line position.
+                        .padding(.vertical, compact ? 0 : 9)
+                        .frame(minHeight: Self.rowHeight)
                 }
                 .buttonStyle(NotchRowButtonStyle(selected: selected && !open, cornerRadius: PanelTheme.pick(10, 8, CompanionStyle.radius),
                                                  highlightsHover: !open))
@@ -276,7 +274,7 @@ struct SessionBrowserView: View {
                         }
                     }
                     .buttonStyle(NotchPillButtonStyle(small: true))
-                    .padding(.leading, PanelTheme.pick(37, 34, 54)).padding(.trailing, PanelTheme.pick(12, 10, 10)).padding(.bottom, 10)
+                    .padding(.leading, PanelTheme.pick(37, 34, instrumentTitleX)).padding(.trailing, PanelTheme.pick(12, 10, 10)).padding(.bottom, 10)
                     .transition(.opacity.combined(with: .offset(y: -4)))
                 }
             }
@@ -293,21 +291,25 @@ struct SessionBrowserView: View {
                 if inside { hoveredID = session.id } else if hoveredID == session.id { hoveredID = nil }
             }
             .overlay(alignment: .bottom) {
-                if theme == .instrument { Rectangle().fill(Color.white.opacity(0.07)).frame(height: 0.5).padding(.leading, 54) }
+                if theme == .instrument { Rectangle().fill(Color.white.opacity(0.07)).frame(height: 0.5).padding(.leading, instrumentTitleX) }
             }
         }
     }
 
     static var rowHeight: CGFloat { PanelTheme.pick(34, 32, 34) }
+    /// Where Instrument titles start: past the ordinal in the notch, past the lamp in the sidebar.
+    private var instrumentTitleX: CGFloat { compact ? 54 : 27 }
 
-    /// One line: status, title, then runtime and age (a live timer while working).
+    /// Status, title, then runtime and age (a live timer while working). The
+    /// notch keeps one line; the sidebar wraps titles to two, the rest on the first.
     private func rowLine(_ session: CompanionSession, entry: GlanceEntry, index: Int, selected: Bool, hidesTrailing: Bool) -> some View {
         let theme = PanelTheme.current
         // Read rows recede; what is new or needs you keeps full contrast.
         let quiet = !entry.unread && !selected
         let archived = model.sessionFilter != .archived && (session.isArchived || model.isAutoArchived(session))
-        return HStack(spacing: PanelTheme.pick(9, 8, 9)) {
-            if theme == .instrument {
+        return HStack(alignment: compact ? .center : .firstTextBaseline, spacing: PanelTheme.pick(9, 8, 9)) {
+            // The 252-point sidebar has no room for the ordinal beside a readable title.
+            if theme == .instrument && compact {
                 Text(String(format: "%02d", index)).font(CompanionStyle.mono(10.5).monospacedDigit())
                     .foregroundStyle(selected ? CompanionStyle.text : CompanionStyle.faint)
                     .frame(width: 18, alignment: .leading)
@@ -317,14 +319,15 @@ struct SessionBrowserView: View {
             Text(session.title)
                 .font(.system(size: 13, weight: PanelTheme.pick(.medium, .regular, .medium)))
                 .foregroundStyle(quiet ? CompanionStyle.secondary : CompanionStyle.text)
-                .lineLimit(1)
+                .lineLimit(compact ? 1 : 2)
             // Search results mark sessions that live under Archived.
             if archived {
                 Image(systemName: "archivebox").font(.system(size: PanelTheme.pick(10.5, 11, 10)))
                     .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.faint, CompanionStyle.faint))
                     .help("Archived")
             }
-            Spacer(minLength: 8)
+            // The sidebar gives the title every point the stack's spacing leaves.
+            Spacer(minLength: compact ? 8 : 0)
             // The actions button takes the age's place on hover.
             trailing(session, entry: entry).opacity(hidesTrailing ? 0 : 1)
         }
@@ -346,6 +349,8 @@ struct SessionBrowserView: View {
                 GlanceStatusGlyph(status: entry.status, unread: entry.unread, reducedMotion: model.reducedMotion, size: 16)
             }
         }
+        // On baseline-aligned rows, centred on the title's first line (13-point text's middle sits ~4.5 points above it).
+        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4.5 }
     }
 
     @ViewBuilder private func trailing(_ session: CompanionSession, entry: GlanceEntry) -> some View {

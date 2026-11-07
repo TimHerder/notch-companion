@@ -158,6 +158,35 @@ import XCTest
         XCTAssertEqual(caption(RuntimeContextUsage(used: 220_000, limit: 200_000)), "Over the reported window · Updated 10:00")
     }
 
+    func testDatesReadInTheAppLanguageWithTheSystemRegionAndClock() throws {
+        let now = Date(timeIntervalSince1970: 1_800_014_400) // Fri 15 Jan 2027 12:00 UTC
+        func calendar(system: String) -> Calendar {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.locale = Locale.app(language: "en", system: Locale(identifier: system))
+            calendar.timeZone = TimeZone(identifier: "UTC")!
+            return calendar
+        }
+        let reset = RuntimeRateLimit(name: "Weekly", usedPercent: 42, resetsAt: now.addingTimeInterval(2 * 86_400))
+        XCTAssertEqual(UsageView.resetText(reset, now: now, calendar: calendar(system: "de_DE")), "Resets Sun 12:00",
+                       "An English weekday on a German system, keeping its 24-hour clock")
+        XCTAssertEqual(UsageView.day(now.addingTimeInterval(-3 * 86_400), calendar: calendar(system: "de_DE")).prefix(4), "Tue ")
+        let twelveHour = try XCTUnwrap(UsageView.resetText(reset, now: now, calendar: calendar(system: "de_DE@hours=h12")))
+        XCTAssertTrue(twelveHour.hasPrefix("Resets Sun 12:00") && twelveHour.hasSuffix("PM"), "A 12-hour preference stays: \(twelveHour)")
+        // The shared default takes the bundle's language and the system's region and clock.
+        let app = try XCTUnwrap(Calendar.app.locale)
+        XCTAssertEqual(app.language.languageCode, Locale.Language(identifier: Bundle.main.preferredLocalizations.first ?? "en").languageCode)
+        XCTAssertEqual(app.region, Locale.autoupdatingCurrent.region)
+        XCTAssertEqual(app.hourCycle, Locale.autoupdatingCurrent.hourCycle)
+    }
+
+    func testContextHeadlineShowsWhatIsKnown() {
+        XCTAssertEqual(UsageView.contextHeadline(nil), "—", "No report yet")
+        XCTAssertEqual(UsageView.contextHeadline(RuntimeContextUsage(used: 42_000)), "42k used", "No window: the tokens, never a dash")
+        XCTAssertEqual(UsageView.contextHeadline(RuntimeContextUsage(used: 42_000, estimated: true)), "≈42k used")
+        XCTAssertEqual(UsageView.contextHeadline(RuntimeContextUsage(used: 42_000, limit: 200_000, estimated: true)), "≈21%")
+        XCTAssertEqual(UsageView.contextHeadline(RuntimeContextUsage(used: 220_000, limit: 200_000)), "110%", "Unclamped over the window")
+    }
+
     func testLimitWindowsShowShortestFirstAndExtraUsageLast() {
         // Claude's windows arrive sorted by native key, which puts overage second.
         let claude = RuntimeRateLimit.claude(["status": "allowed", "unifiedWindows": [

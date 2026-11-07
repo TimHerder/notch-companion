@@ -113,7 +113,7 @@ struct UsageView: View {
 
     /// Relative within a day ("Resets in 1 h 40 min"), then the weekday, or the
     /// date beyond six days, before the time; nil when not reported.
-    static func resetText(_ limit: RuntimeRateLimit, now: Date = Date(), calendar: Calendar = .current) -> String? {
+    static func resetText(_ limit: RuntimeRateLimit, now: Date = Date(), calendar: Calendar = .app) -> String? {
         guard let reset = limit.resetsAt else { return nil }
         let seconds = reset.timeIntervalSince(now)
         guard seconds > 0 else { return "Reset since last report" }
@@ -126,18 +126,26 @@ struct UsageView: View {
     }
 
     /// "Updated 2:20" today, else the date instead, so an old report never looks current.
-    static func reportedText(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+    static func reportedText(_ date: Date, now: Date = Date(), calendar: Calendar = .app) -> String {
         "Updated " + reportedTime(date, now: now, calendar: calendar)
     }
     /// The time today, else the day and month.
-    static func reportedTime(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+    static func reportedTime(_ date: Date, now: Date = Date(), calendar: Calendar = .app) -> String {
         guard !calendar.isDate(date, inSameDayAs: now) else { return stamp(date, day: nil, calendar: calendar) }
         return date.formatted(Date.FormatStyle(locale: calendar.locale ?? .autoupdatingCurrent, calendar: calendar,
                                                timeZone: calendar.timeZone).day().month(.abbreviated))
     }
 
+    /// The context bubble's headline: the share used (unclamped, `≈` for an
+    /// estimate), what is known without a window ("42k used"), or a dash.
+    static func contextHeadline(_ context: RuntimeContextUsage?) -> String {
+        guard let context else { return "—" }
+        guard let ratio = context.ratio else { return context.label }
+        return "\(context.estimated ? "≈" : "")\(Int((ratio * 100).rounded()))%"
+    }
+
     /// The context bubble's caption: what kind of report it is, and when.
-    static func contextCaption(_ context: RuntimeContextUsage, now: Date = Date(), calendar: Calendar = .current) -> String {
+    static func contextCaption(_ context: RuntimeContextUsage, now: Date = Date(), calendar: Calendar = .app) -> String {
         let notes = [context.used == nil ? "Usage not reported" : nil, context.limit == nil ? "Window not reported" : nil,
                      (context.ratio ?? 0) > 1 ? "Over the reported window" : nil, context.estimated ? "Estimate" : nil]
         return (notes.compactMap { $0 } + [reportedText(context.reportedAt, now: now, calendar: calendar)]).joined(separator: " · ")
@@ -157,7 +165,7 @@ struct UsageView: View {
     }
 
     /// One line for help and accessibility: "42% used · resets in 1 h".
-    static func describe(_ limit: RuntimeRateLimit, now: Date = Date(), calendar: Calendar = .current) -> String {
+    static func describe(_ limit: RuntimeRateLimit, now: Date = Date(), calendar: Calendar = .app) -> String {
         let used = limit.reached && !limit.isStale(now: now) ? "Limit reached" : usedText(limit, now: now) + " used"
         guard let reset = resetText(limit, now: now, calendar: calendar) else { return used }
         return used + " · " + reset.prefix(1).lowercased() + reset.dropFirst()
@@ -168,9 +176,34 @@ struct UsageView: View {
         return day.unreportedTurns > 0 && day.total != nil ? tokens + " · \(day.unreportedTurns) unreported" : tokens
     }
 
-    static func day(_ date: Date) -> String {
-        Calendar.current.isDateInToday(date) ? "Today" : Calendar.current.isDateInYesterday(date) ? "Yesterday"
-            : date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+    static func day(_ date: Date, calendar: Calendar = .app) -> String {
+        calendar.isDateInToday(date) ? "Today" : calendar.isDateInYesterday(date) ? "Yesterday"
+            : date.formatted(Date.FormatStyle(locale: calendar.locale ?? .autoupdatingCurrent, calendar: calendar, timeZone: calendar.timeZone)
+                .weekday(.abbreviated).day().month(.abbreviated))
+    }
+}
+
+extension Locale {
+    /// The app's language with the system region and clock, so dates in an
+    /// English interface never read in German while 24- or 12-hour time stays.
+    static var app: Locale { app(language: Bundle.main.preferredLocalizations.first ?? "en", system: .autoupdatingCurrent) }
+
+    static func app(language: String, system: Locale) -> Locale {
+        let language = Locale.Language(identifier: language)
+        var parts = Locale.Components(locale: system)
+        parts.languageComponents.languageCode = language.languageCode
+        parts.languageComponents.script = language.script
+        parts.hourCycle = system.hourCycle
+        return Locale(components: parts)
+    }
+}
+
+extension Calendar {
+    /// Every usage and context date: the user's calendar and time zone in `Locale.app`.
+    static var app: Calendar {
+        var calendar = Calendar.autoupdatingCurrent
+        calendar.locale = .app
+        return calendar
     }
 }
 
