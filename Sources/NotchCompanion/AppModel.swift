@@ -5,7 +5,13 @@ import UniformTypeIdentifiers
 @MainActor
 final class AppModel: ObservableObject {
     @Published var sessions: [CompanionSession] = [] { didSet { glanceCache = nil; liveCache = nil } }
-    @Published var currentID: String? { didSet { acknowledgeVisibleSession(); refreshConnection() } }
+    @Published var currentID: String? {
+        didSet {
+            // Leaving a session counts as seeing it, so it never archives the moment it stops being the selection.
+            if let oldValue, oldValue != currentID { update(oldValue) { $0.lastSeenAt = Date() } }
+            acknowledgeVisibleSession(); refreshConnection()
+        }
+    }
     @Published var expanded = false
     @Published var notchPresentation = NotchPresentation.restingPlaceholder
     @Published var composerFocusRequest = 0
@@ -815,9 +821,13 @@ final class AppModel: ObservableObject {
     /// saying what happened even if the session moves on during the hold.
     func announce(_ kind: NotchAnnouncement.Kind, sessionID: String, failure: String = "") {
         guard statusEffects, let session = sessions.first(where: { $0.id == sessionID }) else { return }
+        // The same request the detail snapshots: an approval's detail is its command.
+        let request = requests.first { $0.sessionID == session.runtimeID }
         announcement = NotchAnnouncement(kind: kind, sessionID: sessionID, title: session.title,
                                          detail: SessionDigest.announcementDetail(kind, session: session, requests: requests, failure: failure),
-                                         worked: SessionDigest.turnStart(session).map { Date().timeIntervalSince($0) })
+                                         worked: SessionDigest.turnStart(session).map { Date().timeIntervalSince($0) },
+                                         isApproval: kind == .needsInput && session.nativeActivityUnverified == nil
+                                            && request?.kind == .approval && !SessionDigest.oneLine(request?.detail ?? "").isEmpty)
     }
 
     func canChangeRuntime(_ id: String) -> Bool {

@@ -26,6 +26,8 @@ struct SessionBrowserView: View {
             // Re-read each minute so ages stay current and quiet sessions move to Archived.
             TimelineView(.everyMinute) { _ in list }
         }.padding(.top, compact ? 6 : 0)
+        // In the notch this page has no composer; opening it focuses search (a non-key panel ignores this).
+        .onAppear { if compact { searchFocused = true } }
     }
 
     @ViewBuilder private var list: some View {

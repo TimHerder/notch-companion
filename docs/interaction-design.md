@@ -411,7 +411,8 @@ open (the toast stands in) or over an open glance (the edge still lights).
 - Content is kind-aware. Results and failures show the announcement's snapshot
   (see [announcement](#island-tiers)), never live status such as “Thinking…”;
   a question shows the live request, so one answered meanwhile shows **Answer
-  sent**.
+  sent** (an answered approval keeps “Wants to run” and its snapshotted command
+  in the field).
 - The body height is measured from this content and the text width before the
   stage opens, and re-springs if it changes (the next question, a late change
   summary). With Eyes, the eyes stay in the band; the text starts 8 points below
@@ -780,7 +781,7 @@ identify selection.
     `lastSeenAt` is older than Settings → **Archive read sessions after**
     (`sessions.autoArchiveAfter`: 1 hour, 12 hours (default), 3 days, Never).
     The selection never auto-archives; `lastSeenAt` is set when a session is
-    opened, read or restored. The list re-evaluates every minute. Sending,
+    opened, read, restored or stops being the selection. The list re-evaluates every minute. Sending,
     opening or Restore brings it back.
   - Archived lists manual and auto-archived sessions by project; archived
     attention and unread results keep their dots. A search query covers every

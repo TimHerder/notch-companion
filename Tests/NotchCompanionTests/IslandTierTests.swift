@@ -398,6 +398,34 @@ final class IslandTierTests: XCTestCase {
         // The first-launch hello shows where to hover.
         XCTAssertEqual(AppModel.helloAnnouncement.title, "Hi!")
         XCTAssertEqual(AppModel.helloAnnouncement.detail, "Hover here to begin")
+        XCTAssertEqual(AppModel.helloAnnouncement.spoken, "Hi! Hover here to begin", "its title is its verb, said once")
+    }
+
+    @MainActor func testApprovalAnnouncementKeepsABoundedCommandForTheAnsweredStage() throws {
+        let (model, file) = makeModel()
+        let original = model.statusEffects
+        defer {
+            model.statusEffects = original
+            model.shutdown()
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        }
+        model.statusEffects = true
+        let heredoc = "cat <<'EOF' > notes.md\n" + String(repeating: "line of release notes\n", count: 300) + "EOF"
+        model.receive("approval.request", payload: ["session_id": "parent", "request_id": "r", "command": heredoc])
+        let asked = try XCTUnwrap(model.announcement)
+        XCTAssertEqual(asked.detail.count, 400, "VoiceOver hears a bounded command, like a failure's reason")
+        XCTAssertTrue(asked.detail.hasPrefix("cat <<'EOF' > notes.md line of"))
+        XCTAssertTrue(asked.isApproval)
+        // Answered: the stage keeps the field for its 'Answer sent' moment.
+        model.requests = []
+        model.sessions[0].state = .working
+        let landed = StageContent.make(asked, sessions: model.sessions, requests: model.requests)
+        XCTAssertTrue(landed.answered)
+        XCTAssertEqual(landed.detail, "Wants to run")
+        XCTAssertEqual(landed.command, asked.detail)
+        // A question is not an approval.
+        model.receive("clarify.request", payload: ["session_id": "parent", "request_id": "q", "question": "Which tag?"])
+        XCTAssertEqual(model.announcement?.isApproval, false)
     }
 
     @MainActor func testSettingsPreviewClosesThePanelAndAnnouncesWithoutTouchingSessions() {
