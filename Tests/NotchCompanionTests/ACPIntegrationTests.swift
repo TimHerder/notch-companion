@@ -286,6 +286,8 @@ final class ACPIntegrationTests: XCTestCase {
         _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "slow"])
         try await eventually { events.contains { $0.0 == "message.complete" } }
         XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "error")
+        let asked = try XCTUnwrap(events.firstIndex { ($0.1["message"] as? String)?.contains("asked to stop") == true }, "Expiry tells the user before agy confirms")
+        XCTAssertLessThan(asked, try XCTUnwrap(events.firstIndex { $0.0 == "message.complete" }))
         XCTAssertTrue((events.last { $0.0 == "runtime.notice" }?.1["message"] as? String)?.contains("did not finish this turn") == true)
         XCTAssertTrue(try wireLog(root).contains { $0["method"] as? String == "session/cancel" }, "The overdue turn is cancelled natively")
         XCTAssertFalse(disconnected, "The shared agy process keeps serving every session")
@@ -293,6 +295,67 @@ final class ACPIntegrationTests: XCTestCase {
         _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "ordinary"])
         try await eventually { events.contains { $0.0 == "message.complete" } }
         XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "complete")
+    }
+
+    @MainActor
+    func testAntigravityAnswerRestartsTheTurnDeadline() async throws {
+        let (root, client) = try antigravityFixture()
+        defer { client.disconnect(); try? FileManager.default.removeItem(at: root) }
+        client.promptTimeout = 1
+        var events: [(String, [String: Any])] = []
+        client.onEvent = { events.append(($0, $1)) }
+        try await client.connect()
+        let session = try await client.request("session.create", params: ["cwd": root.path, "project_trusted": true])
+        let sid = try XCTUnwrap(session["session_id"] as? String)
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "ask then work"])
+        try await eventually { events.contains { $0.0 == "clarify.request" } }
+        // Answered 0.4 s before the re-armed deadline; agy then works 0.7 s, less than one period.
+        try await Task.sleep(for: .seconds(1.6))
+        _ = try await client.request("clarify.respond", params: ["session_id": sid, "request_id": "s:ask-1", "question_id": "interaction_1", "answer": "Ink"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "complete", "The user's wait never counts against agy's working time")
+        XCTAssertFalse(try wireLog(root).contains { $0["method"] as? String == "session/cancel" })
+    }
+
+    @MainActor
+    func testAntigravityOverdueSilentTurnKeepsItsReceiptAndStaysBusyUntilConfirmed() async throws {
+        let (root, client) = try antigravityFixture()
+        defer { client.disconnect(); try? FileManager.default.removeItem(at: root) }
+        client.promptTimeout = 0.3
+        client.promptGrace = 0.3
+        var events: [(String, [String: Any])] = []
+        var disconnected = false
+        client.onEvent = { events.append(($0, $1)) }
+        client.onConnectionChange = { connected, _ in if !connected { disconnected = true } }
+        try await client.connect()
+        let session = try await client.request("session.create", params: ["cwd": root.path, "project_trusted": true])
+        let sid = try XCTUnwrap(session["session_id"] as? String)
+
+        // agy confirms the cancellation: its answer is the receipt, and the turn settles as failed.
+        let accepted = try await client.request("prompt.submit", params: ["session_id": sid, "text": "silent"])
+        XCTAssertEqual(accepted["accepted"] as? Bool, true, "A silent overdue turn is never a definitive rejection")
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "error")
+        XCTAssertFalse(disconnected)
+        events.removeAll()
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "ordinary"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "complete")
+
+        // agy never confirms: busy holds through the grace period, then only a restart proves the turn stopped.
+        events.removeAll()
+        let started = ContinuousClock.now
+        do {
+            _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "stuck"])
+            XCTFail("An unconfirmed overdue turn cannot report success")
+        } catch {
+            if case ACPClientError.rpc = error { XCTFail("The send stays unconfirmed, not rejected: \(error)") }
+            XCTAssertTrue(error.localizedDescription.contains("Check the native conversation"))
+        }
+        XCTAssertGreaterThanOrEqual(ContinuousClock.now - started, .seconds(0.6))
+        XCTAssertTrue(events.contains { ($0.1["message"] as? String)?.contains("asked to stop") == true })
+        XCTAssertFalse(events.contains { $0.0 == "message.complete" })
+        XCTAssertTrue(disconnected)
     }
 
     @MainActor

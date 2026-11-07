@@ -47,7 +47,7 @@ def release_events():
             target.put(frame)
 
 
-def done(sid, text, interrupted=False):
+def done(sid, text, interrupted=False, error=None):
     rows = history[sid]
     model = sessions[sid].get('model', dict(providerID='native', id='default'))
     info = dict(id='msg_response_' + str(len(rows)), sessionID=sid, role='assistant',
@@ -55,6 +55,8 @@ def done(sid, text, interrupted=False):
                 tokens=dict(input=123, output=4, reasoning=0, cache=dict(read=20, write=7)))
     if interrupted:
         info['error'] = dict(name='MessageAbortedError')
+    if error:
+        info['error'] = error
     rows.append(dict(info=info, parts=[dict(id='part_' + str(len(rows)), sessionID=sid, messageID=info['id'], type='text', text=text)]))
     statuses.pop(sid, None)
     save()
@@ -111,6 +113,9 @@ def work(sid, text):
             threading.Thread(target=release_child, daemon=True).start()
         elif text == 'delegate':
             delegate(sid)
+        elif text == 'terminal-error':
+            # The failure is only on the final message: no session.error frame.
+            done(sid, 'Partial answer', error=dict(name='APIError', data=dict(message='Provider rejected the request')))
         elif text == 'question':
             questions['question_root'] = dict(id='question_root', sessionID=sid, questions=[dict(question='Choose color', options=[dict(label='Sage'), dict(label='Pearl')], custom=False, multiple=False)])
             event('question.asked', **questions['question_root'])
