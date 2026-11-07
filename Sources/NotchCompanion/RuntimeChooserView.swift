@@ -23,13 +23,14 @@ struct RuntimeChooserView: View {
                 case .refined:
                     SettingsGroup {
                         ForEach(Array(ordered.enumerated()), id: \.element) { index, runtime in
-                            if index > 0 { Rectangle().fill(Color.white.opacity(0.06)).frame(height: 0.5).padding(.leading, 44) }
+                            if index > 0 { Rectangle().fill(Color.white.opacity(0.06)).frame(height: 0.5).padding(.leading, 72) }
                             HStack(spacing: 8) {
                                 choose(runtime) {
                                     HStack(spacing: 12) {
                                         Image(systemName: selected == runtime ? "checkmark.circle.fill" : "circle")
                                             .font(.system(size: 15))
                                             .foregroundStyle(selected == runtime ? CompanionStyle.text : CompanionStyle.tertiary)
+                                        AgentLogo(runtime: runtime)
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(runtime.title).font(.system(size: 13, weight: .medium))
                                             Text(detail(runtime)).font(CompanionStyle.caption).foregroundStyle(CompanionStyle.tertiary)
@@ -47,7 +48,7 @@ struct RuntimeChooserView: View {
                 case .tahoe:
                     VStack(spacing: 0) {
                         ForEach(Array(ordered.enumerated()), id: \.element) { index, runtime in
-                            if index > 0 { Rectangle().fill(CompanionStyle.separator).frame(height: 0.5).padding(.leading, 44) }
+                            if index > 0 { Rectangle().fill(CompanionStyle.separator).frame(height: 0.5).padding(.leading, 70) }
                             HStack(spacing: 8) {
                                 choose(runtime) {
                                     HStack(spacing: 10) {
@@ -55,6 +56,7 @@ struct RuntimeChooserView: View {
                                             .font(.system(size: 16))
                                             .foregroundStyle(selected == runtime ? CompanionStyle.accent : CompanionStyle.faint)
                                             .frame(width: 22)
+                                        AgentLogo(runtime: runtime)
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(runtime.title).font(.system(size: 13, weight: .medium))
                                             Text(detail(runtime)).font(.system(size: 11.5)).foregroundStyle(CompanionStyle.secondary)
@@ -73,6 +75,7 @@ struct RuntimeChooserView: View {
                                 HStack(spacing: 10) {
                                     Text(String(format: "%02d", index + 1)).font(CompanionStyle.mono(10.5)).foregroundStyle(CompanionStyle.faint)
                                     ChoiceMark(selected: selected == runtime, round: true)
+                                    AgentLogo(runtime: runtime)
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(runtime.title).font(.system(size: 13, weight: .medium))
                                         Text(detail(runtime))
@@ -135,6 +138,34 @@ extension RuntimeKind {
         return (try? RuntimeInstallation.executable(for: self))?.path
     }
     var installationFound: Bool { installationPath != nil }
+
+    /// The agent's official mark, bundled unmodified (docs/third-party-marks.md);
+    /// nil keeps the name-only presentation.
+    var logo: NSImage? { Self.logos[rawValue] }
+    private static let logos: [String: NSImage] = allCases.reduce(into: [:]) { logos, runtime in
+        let bundle = CompanionResources.bundle
+        if let url = bundle.url(forResource: runtime.rawValue, withExtension: "svg")
+            ?? bundle.url(forResource: runtime.rawValue, withExtension: "svg", subdirectory: "AgentLogos"),
+           let image = NSImage(contentsOf: url) { logos[runtime.rawValue] = image }
+    }
+}
+
+/// An agent's mark beside its name where the user picks an agent: its own colours, never
+/// tinted or cropped, and hidden from VoiceOver, which reads the name.
+struct AgentLogo: View {
+    var runtime: RuntimeKind
+    var size: CGFloat = 16
+
+    var body: some View {
+        if let logo = runtime.logo {
+            // Optical size: the Blossom and Antigravity files carry wide built-in padding.
+            let optical = size * (runtime == .codex ? 1.6 : runtime == .antigravity ? 1.25 : 1)
+            Image(nsImage: logo).renderingMode(.original).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+                .frame(width: optical, height: optical)
+                .frame(width: size, height: size)
+                .accessibilityHidden(true)
+        }
+    }
 }
 
 struct ProjectTrustView: View {

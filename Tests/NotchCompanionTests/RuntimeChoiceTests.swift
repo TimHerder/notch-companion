@@ -151,4 +151,15 @@ import XCTest
         model.setRuntime(.hermes, for: id)
         XCTAssertEqual(model.current?.runtime, .codex)
     }
+
+    /// The pickers show each agent's bundled mark; an unknown agent keeps its name alone.
+    func testEveryAgentLogoLoadsFromTheResourceBundle() throws {
+        for runtime in RuntimeKind.allCases {
+            let logo = try XCTUnwrap(runtime.logo, "\(runtime.title) has no bundled logo")
+            XCTAssertFalse(logo.representations.isEmpty, runtime.title)
+            XCTAssertGreaterThan(logo.size.width, 0, runtime.title)
+            XCTAssertGreaterThan(logo.size.height, 0, runtime.title)
+        }
+        XCTAssertNil(RuntimeKind(rawValue: "future-agent")?.logo)
+    }
 }

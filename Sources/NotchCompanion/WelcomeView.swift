@@ -108,7 +108,7 @@ struct WelcomeView: View {
                     ForEach(Array(rows.enumerated()), id: \.element.runtime) { index, row in
                         if index > 0 {
                             Rectangle().fill(PanelTheme.pick(Color.white.opacity(0.06), CompanionStyle.separator, Color.white.opacity(0.08)))
-                                .frame(height: 0.5).padding(.leading, PanelTheme.pick(44, 44, 0))
+                                .frame(height: 0.5).padding(.leading, PanelTheme.pick(72, 72, 0))
                         }
                         agentRow(row.runtime, path: row.path)
                     }
@@ -146,6 +146,7 @@ struct WelcomeView: View {
                     }
                     .frame(width: 18, height: 18)
                 }
+                AgentLogo(runtime: runtime)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(runtime.title).font(.system(size: 13, weight: .medium)).foregroundStyle(CompanionStyle.text)
                     Text((path as NSString).abbreviatingWithTildeInPath)
