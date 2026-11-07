@@ -516,13 +516,14 @@ drop opens its session).
   is a quiet line; a turn saved without its end reads “Worked · N steps”.
   Durations read 8s, 2:14, 1:02:10.
 - A turn that ended before writing any text has no answer: its work stays open
-  under its header. The latest turn's own failure or stop names it, “Failed after
-  1:03” or “Stopped after 12s”, on that header or on the fold above whatever
-  text it wrote (a failed delegated child does not). A steer or wake starts its
-  own block; blocks split from a running turn stay open until the turn ends, and
-  a block without its own end ends when the next one in its turn begins.
-- Persist turn IDs and end times with messages and tool metadata so blocks stay
-  correct after reconnect or resume.
+  under its header. A turn's own failure or stop names it, “Failed after 1:03”
+  or “Stopped after 12s”, on that header or on the fold above whatever text it
+  wrote (a failed delegated child does not, and a send that failed before it
+  became a turn never relabels the one before). A steer or wake starts its own
+  block; blocks split from a running turn stay open until the turn ends, and a
+  block without its own end ends when the next one in its turn begins.
+- Persist turn IDs, end times and outcomes with messages and tool metadata so
+  blocks stay correct after reconnect or resume.
 - Long tool labels truncate with a way to see the full text.
 - Streaming updates within the existing region, never resizing the notch.
 - Input and approval requests never rotate out with ordinary activity rows.
@@ -838,7 +839,8 @@ folder whose sessions are all archived leaves the default list.
   that message (options plus an always-allowed written answer). Reply sends one
   ordinary message (one answer alone; several as question/answer pairs) without
   touching the composer's draft or files, and waits while the session works or a
-  send is unconfirmed. Once a later message exists the card is read-only. The
+  send is unconfirmed. The card stays answerable while the agent writes or runs
+  more in that turn; once a later message of yours follows, it is read-only. The
   composer and Stop stay available. Question-only messages survive restart with
   their card.
 - **Approvals** describe a Claude Code tool in its own terms (command and

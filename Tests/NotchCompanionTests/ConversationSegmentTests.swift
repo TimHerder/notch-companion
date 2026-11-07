@@ -128,6 +128,61 @@ import XCTest
         XCTAssertNotNil(model.sessions[0].turnEndedAt["u2"], "A failure ends its turn too")
     }
 
+    func testTextAfterALaterToolDoesNotJoinAQuestionsOnlySegment() throws {
+        send("message.start", ["role": "assistant"])
+        send("tool.start", ["tool_id": "t1", "name": "terminal"])
+        send("message.questions", ["questions": [["title": "Which branch?"]]])
+        send("tool.start", ["tool_id": "t2", "name": "terminal"])
+        send("message.delta", ["text": "Found the cause."])
+        let assistant = model.sessions[0].messages.filter { $0.role == "assistant" }
+        XCTAssertEqual(assistant.map(\.text), ["", "Found the cause."])
+        XCTAssertEqual(assistant.first?.questions?.first?.title, "Which branch?")
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(assistant.last).createdAt, model.sessions[0].tools[1].startedAt,
+                                    "The text sorts after the call it followed")
+    }
+
+    func testQuestionsStayAnswerableWhileTheTurnGoesOnUntilAUserRowFollows() throws {
+        send("message.start", ["role": "assistant"])
+        send("message.delta", ["text": "Two questions while I start."])
+        send("message.questions", ["questions": [["title": "Which branch?"], ["title": "Run the slow tests?"]]])
+        send("tool.start", ["tool_id": "t1", "name": "terminal"])
+        send("tool.complete", ["tool_id": "t1", "result": "ok"])
+        send("message.delta", ["text": "\n\nStarted on it."])
+        let question = try XCTUnwrap(model.sessions[0].messages.first { $0.questions != nil })
+        XCTAssertNotEqual(model.sessions[0].messages.last?.id, question.id, "Later text took its own segment")
+        XCTAssertTrue(ConversationTimeline.questionsOpen(question.id, in: model.sessions[0]))
+        send("message.complete", ["text": "Two questions while I start.\n\nStarted on it.", "status": "complete"])
+        XCTAssertTrue(ConversationTimeline.questionsOpen(question.id, in: model.sessions[0]))
+        model.sessions[0].messages.append(ChatMessage(id: "reply", role: "user", text: "main", turnID: "reply"))
+        XCTAssertFalse(ConversationTimeline.questionsOpen(question.id, in: model.sessions[0]), "A later message of yours closes them")
+    }
+
+    func testASendThatFailsBeforeItsRowDoesNotRelabelTheFinishedTurn() throws {
+        func works() -> [TurnWork] {
+            ConversationTimeline.build(session: model.sessions[0]).compactMap { if case .work(let work) = $0 { return work }; return nil }
+        }
+        streamCommentaryToolAndAnswer()
+        send("message.complete", ["text": "All green.", "status": "complete"])
+        XCTAssertEqual(model.sessions[0].turnOutcome["u"], .finished)
+        // submit's catch when ensureRuntime or a guard throws before the new row is kept.
+        model.sessions[0].state = .failed
+        XCTAssertEqual(works().map(\.outcome), [.finished])
+        XCTAssertTrue(try XCTUnwrap(works().first).label.hasPrefix("Worked for"))
+
+        // A turn's own failure is kept with it, after later turns too, and is saved.
+        model.sessions[0].messages.append(ChatMessage(id: "u2", role: "user", text: "Again", turnID: "u2"))
+        send("error", ["message": "The provider is unavailable."])
+        XCTAssertEqual(model.sessions[0].turnOutcome["u2"], .failed)
+        model.sessions[0].messages.append(ChatMessage(id: "u3", role: "user", text: "Once more", turnID: "u3"))
+        model.sessions[0].state = .finished
+        XCTAssertEqual(works().map(\.outcome), [.finished, .failed])
+        let data = try JSONEncoder().encode(model.sessions[0])
+        XCTAssertEqual(try JSONDecoder().decode(CompanionSession.self, from: data).turnOutcome, model.sessions[0].turnOutcome)
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        legacy.removeValue(forKey: "turnOutcome")
+        XCTAssertEqual(try JSONDecoder().decode(CompanionSession.self, from: JSONSerialization.data(withJSONObject: legacy)).turnOutcome, [:])
+    }
+
     // MARK: Native history splits where live text split
 
     func testCodexHistorySplitsRepliesAtToolItemsWithUniqueIDs() {

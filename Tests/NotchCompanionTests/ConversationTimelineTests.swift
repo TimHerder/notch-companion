@@ -268,6 +268,20 @@ final class ConversationTimelineTests: XCTestCase {
         XCTAssertEqual(works(ConversationTimeline.build(session: session)).first?.outcome, .finished)
     }
 
+    func testTurnStartRunsFromThePromptASteerOrSteeredWakeContinued() {
+        var session = CompanionSession()
+        session.messages = [message("old", "user", 1, turn: "old"), message("a0", "assistant", 2, turn: "old"),
+                            message("u", "user", 10, turn: "u"), message("a1", "assistant", 11, turn: "u"),
+                            message("steer", "user", 20, turn: "u")]
+        session.turnEndedAt["old"] = Date(timeIntervalSince1970: 5)
+        XCTAssertEqual(SessionDigest.turnStart(session), Date(timeIntervalSince1970: 10), "A steer keeps the turn's clock")
+        session.messages.append(ChatMessage(id: "wake", role: "user", text: "Delegated task finished.",
+                                            createdAt: Date(timeIntervalSince1970: 30), turnID: "u", kind: ChatMessage.delegationResult))
+        XCTAssertEqual(SessionDigest.turnStart(session), Date(timeIntervalSince1970: 10), "So does a steered wake")
+        session.turnEndedAt["steer"] = Date(timeIntervalSince1970: 25)
+        XCTAssertEqual(SessionDigest.turnStart(session), Date(timeIntervalSince1970: 30), "A wake after the turn ended starts its own")
+    }
+
     func testWorkDurationFormatAndEndFallbacks() {
         XCTAssertEqual([8, 59, 60, 134, 3_730].map { TurnWork.format(TimeInterval($0)) }, ["8s", "59s", "1:00", "2:14", "1:02:10"])
         var session = CompanionSession()

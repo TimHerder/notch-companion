@@ -787,19 +787,20 @@ omits it). Images are implicit pending attachments, so removing one must call
 | `clarify.expire` | `request_id` to dismiss |
 
 **Reply segments.** The app keeps a turn's text in the order it was written,
-adapter-agnostically. Once a `tool.start` follows text in the current assistant
-message, the next text (delta, interim, completion or non-blocking questions)
-starts a new assistant message, dated when its first text arrives; a leading
-blank-line separator is dropped. `message.interim` and `message.complete` text
+adapter-agnostically. Once a `tool.start` follows text or non-blocking
+questions in the current assistant message, the next text (delta, interim,
+completion or non-blocking questions) starts a new assistant message, dated
+when its first text arrives; a leading blank-line separator is dropped. `message.interim` and `message.complete` text
 that the turn's segments already hold (compared without whitespace: all of them
 joined, as Codex, ACP and OpenCode report, or a suffix, as Claude and Hermes
 report only the final message) keeps them; other text replaces the current
 segment's, or starts a new one after a tool call. Calls still running at
 completion are finished with an end time. The latest visible user row's
 `turnEndedAt` is saved when the turn completes, fails (`error`), or is
-interrupted by a disconnect, so a steer or wake keys its own block. The final
-segment is the session's latest answer (`latestResponse`, delegation summaries
-and results). Native history splits replies at the same boundaries, keeping
+interrupted by a disconnect, so a steer or wake keys its own block; its
+`turnOutcome` saves how the turn itself ended (a failed delegated child leaves
+it finished). The final segment is the session's latest answer
+(`latestResponse`, delegation summaries and results). Native history splits replies at the same boundaries, keeping
 per-role counts aligned with saved messages: Codex rows end at tool items (a
 turn's first reply keeps the turn ID, later ones `turn:item`), OpenCode joins
 consecutive assistant messages and splits at tool parts (a refresh applies a

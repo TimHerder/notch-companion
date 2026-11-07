@@ -277,6 +277,9 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     /// When each turn ended (completed, failed or stopped), keyed by its visible user row:
     /// steering and wakes share a turn ID but each starts its own block.
     var turnEndedAt: [String: Date] = [:]
+    /// How each of those turns ended on its own (`.finished`, `.failed`, `.interrupted`), keyed alike,
+    /// so a later send that never became a turn cannot relabel it.
+    var turnOutcome: [String: WorkState] = [:]
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
     /// Last opened, read or restored; with `updatedAt` it starts the auto-archive clock.
@@ -423,7 +426,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -463,6 +466,7 @@ extension CompanionSession {
         fullAccessConfirmed = try values.decodeIfPresent(Bool.self, forKey: .fullAccessConfirmed) ?? false
         turnTokens = try values.decodeIfPresent([String: Int].self, forKey: .turnTokens) ?? [:]
         turnEndedAt = try values.decodeIfPresent([String: Date].self, forKey: .turnEndedAt) ?? [:]
+        turnOutcome = try values.decodeIfPresent([String: WorkState].self, forKey: .turnOutcome) ?? [:]
         runtimeInfo = try values.decodeIfPresent(RuntimeSessionInfo.self, forKey: .runtimeInfo)
         trustedProjectPath = try values.decodeIfPresent(String.self, forKey: .trustedProjectPath)
         nativeActivityUnverified = try values.decodeIfPresent(String.self, forKey: .nativeActivityUnverified)

@@ -49,7 +49,7 @@ struct TurnWork: Identifiable, Equatable {
     let entries: [ConversationTimelineItem]
     let startedAt: Date
     let endedAt: Date?
-    /// `.finished`, or `.failed`/`.interrupted` for the latest turn that ended that way.
+    /// `.finished`, or `.failed`/`.interrupted` for a turn that ended that way.
     let outcome: WorkState
     /// The block has an answer below: the work folds away above it. Otherwise it
     /// stays open under its header.
@@ -162,6 +162,13 @@ enum ConversationTimeline {
         return result
     }
 
+    /// A message's questions stay answerable until a visible user row follows it,
+    /// however much the agent writes or runs after them in the same turn.
+    static func questionsOpen(_ messageID: String, in session: CompanionSession) -> Bool {
+        guard let index = session.messages.firstIndex(where: { $0.id == messageID }) else { return false }
+        return !session.messages[(index + 1)...].contains { $0.role == "user" && SessionHistory.isVisibleConversation($0) }
+    }
+
     /// Text and consecutive tool runs in the order they began. Text followed by a
     /// run is commentary; the newest run of a live block shows its latest calls.
     private static func interleave(_ block: Block, live: Bool, session: String, usedIDs: inout Set<String>) -> [ConversationTimelineItem] {
@@ -202,10 +209,12 @@ enum ConversationTimeline {
     private static func finished(_ block: Block, entries: [ConversationTimelineItem], next: ChatMessage?,
                                  session: CompanionSession) -> [ConversationTimelineItem] {
         guard let boundary = block.boundary else { return entries }
-        // Only the latest turn's own outcome is known (a failed child is not its failure);
-        // older ones read as plain work.
-        let outcome: WorkState = next == nil && (session.state == .interrupted || session.state == .failed && session.failedCurrentAgents.isEmpty)
-            ? session.state : .finished
+        // A turn's recorded outcome wins. One that ended without it (a local Stop, a quit,
+        // an older save) takes the session's state if it is the latest (a failed child is
+        // not its failure); older unrecorded ones read as plain work.
+        let outcome: WorkState = session.turnOutcome[boundary.id]
+            ?? (next == nil && (session.state == .interrupted || session.state == .failed && session.failedCurrentAgents.isEmpty)
+                ? session.state : .finished)
         let answerID = block.messages.last(where: {
             !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || $0.questions != nil
         })?.id

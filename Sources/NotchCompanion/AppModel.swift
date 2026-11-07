@@ -1918,7 +1918,6 @@ final class AppModel: ObservableObject {
             let wasFinished = sessions[index].state == .finished && sessions[index].parentTurnComplete && !sessions[index].isBusy
             reconcileAssistantText(EventValue.string(payload["text"]), index: index, turnID: turnID)
             sessions[index].messages.removeAll { $0.role == "assistant" && $0.questions == nil && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            endTurn(index)
             let status = payload["status"] as? String ?? "complete"
             if status == "error" || status == "interrupted" { pauseQueuedSends(localID) }
             sessions[index].parentTurnComplete = true
@@ -1939,6 +1938,7 @@ final class AppModel: ObservableObject {
                 sessions[index].state = .finished
                 if !wasFinished { sessions[index].completionID = UUID().uuidString }
             }
+            endTurn(index)
             for tool in sessions[index].tools.indices where sessions[index].tools[tool].state == .working {
                 sessions[index].tools[tool].state = status == "interrupted" ? .interrupted : (status == "error" ? .failed : .finished)
                 sessions[index].tools[tool].finishedAt = Date()
@@ -2024,10 +2024,11 @@ final class AppModel: ObservableObject {
     }
 
     /// The assistant message new content belongs in. A tool that started after the
-    /// current one had text closes it, so text keeps its place between tool calls.
+    /// current one had text or questions closes it, so text keeps its place between tool calls.
     private func assistantSegment(_ index: Int, turnID: String?) -> Int {
         if let last = sessions[index].messages.last, last.role == "assistant",
-           last.text.allSatisfy(\.isWhitespace) || !(sessions[index].tools.last.map { $0.startedAt >= last.createdAt } ?? false) {
+           last.text.allSatisfy(\.isWhitespace) && last.questions == nil
+            || !(sessions[index].tools.last.map { $0.startedAt >= last.createdAt } ?? false) {
             return sessions[index].messages.count - 1
         }
         sessions[index].messages.append(ChatMessage(role: "assistant", text: "", turnID: turnID))
@@ -2054,10 +2055,15 @@ final class AppModel: ObservableObject {
         sessions[index].messages[segment].text = text
     }
 
-    /// Ends the latest block's work clock; its visible user row keys it.
+    /// Ends the latest block's work clock and keeps the turn's own outcome from the
+    /// state just set; its visible user row keys both.
     private func endTurn(_ index: Int) {
         guard let boundary = sessions[index].messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) }) else { return }
         sessions[index].turnEndedAt[boundary.id] = Date()
+        // A failed child is not the turn's own failure; children still at work leave it finished.
+        let state = sessions[index].state
+        sessions[index].turnOutcome[boundary.id] = state == .interrupted || state == .failed && sessions[index].failedCurrentAgents.isEmpty
+            ? state : .finished
     }
 
     private func receiveChanges(_ diff: String, sessionID: String, turnID: String) {
