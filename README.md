@@ -18,7 +18,7 @@ draws a small one.
   delegated agents run under their parent in **Team**. The parent picks up their
   results when they finish. Their questions and approvals come to you, and their
   file changes appear in the parent's change summary. A delegated agent can keep
-  or narrow its parent's permissions, never widen them. Claude Code, Codex, Pi and
+  or narrow its parent's permissions, never widen them. Claude Code, Codex, Hermes, Pi and
   DeepSeek Harness sessions can delegate, to any agent that's ready on your Mac.
 - **Glance, don't switch.** Hover to see what's happening, click to open the
   conversation. Each session has its own working and unread state, and closing

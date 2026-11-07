@@ -887,7 +887,7 @@ session inside its parent; notch silhouette and bounds are unchanged.
   Delegated a child task”, “Get / Getting / Got delegated task status”, and so
   on. While a turn waits on a delegation `wait`, the header reads **Waiting on a
   child**.
-- **Settings.** **Cross-agent delegation** (default on) lets Claude Code,
+- **Settings.** **Cross-agent delegation** (default on) lets Claude Code, Hermes,
   Codex, Pi and DeepSeek Harness sessions opened afterwards delegate.
 - **Delete.** Deleting a parent removes its children from the companion; native
   histories stay.

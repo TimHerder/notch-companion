@@ -202,7 +202,9 @@ NOTCH_RUN_BUSY_INPUT_TEST=1 NOTCH_LIVE_RUNTIMES=codex,claude swift test --filter
 ```
 
 Read the chosen test before enabling it. Other opt-ins cover Hermes startup,
-profile/catalog checks, questions, model selection and delegation. Native Hermes
+profile/catalog checks, questions, model selection and delegation;
+`python3 Tests/Backend/verify_hermes_delegation.py` checks Hermes's delegation
+tool hooks in a throwaway home without a prompt. Native Hermes
 Python checks need the interpreter from its installed dependency environment;
 no Hermes installation or credentials belong in GitHub CI. Preserve original
 profiles and existing conversations. A temporary companion registry separates

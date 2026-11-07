@@ -4,8 +4,9 @@ import CryptoKit
 extension RuntimeKind {
     /// Harnesses that take the companion's delegation server through a supported
     /// per-run option. OpenCode's only one is per folder, so one session's token
-    /// would serve all of them; Hermes, OpenClaw and Antigravity have none.
-    var hostsDelegation: Bool { [.claude, .codex, .deepseek, .pi].contains(self) }
+    /// would serve all of them; OpenClaw and Antigravity have none. Hermes gets
+    /// native tools from the companion's own frontend launcher.
+    var hostsDelegation: Bool { [.claude, .codex, .deepseek, .pi, .hermes].contains(self) }
     /// Harnesses that accept input into a running turn.
     var steersTurns: Bool { self == .codex }
 }

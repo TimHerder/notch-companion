@@ -28,6 +28,13 @@ final class SharedHermesClient: RuntimeTransport {
     private var generation = UUID()
     private var credential = ""
     private var computerUseRelay: ComputerUseLaunchRelay?
+    /// Pipe lines leave the main actor, in order; the pipe closes after them.
+    private let ownershipWrites = DispatchQueue(label: "NotchCompanion.SharedHermes.ownership")
+    /// The frontend registers delegation tools once, when the first session asks
+    /// for them: nil once Hermes confirmed them, else why it could not.
+    private var delegationTools: Task<String?, Never>?
+    private var delegationAck: CheckedContinuation<String?, Never>?
+    static let delegationUnavailable = "Hermes did not add Notch Companion's delegation tools, so this session cannot delegate. It works as usual otherwise."
 
     init(profileID: String? = nil) {
         self.profileID = URL(fileURLWithPath: profileID ?? RuntimeRoute.defaultProfile(.hermes))
@@ -242,6 +249,16 @@ final class SharedHermesClient: RuntimeTransport {
 
     func request(_ method: String, params: [String: Any]) async throws -> [String: Any] {
         guard ready, let socket else { throw HermesClientError.disconnected }
+        if method == "session.create" || method == "session.resume", let delegation = params["delegation"] as? [String: Any] {
+            let failure = await registerDelegationTools()
+            let result = try await request(method, params: params.filter { $0.key != "delegation" })
+            if let sid = result["session_id"] as? String {
+                if let failure { onEvent?("runtime.notice", ["session_id": sid, "message": failure]) }
+                // The token crosses only the ownership pipe and stays in the frontend's memory.
+                else { writeOwnership(Self.bindMessage(session: sid, delegation: delegation)) }
+            }
+            return result
+        }
         if method == "prompt.steer" {
             guard (params["images"] as? [String] ?? []).isEmpty else { throw BusyInputRejection(message: "Queue images for Hermes with Command–Return.") }
             let result = try await request("session.steer", params: ["session_id": params["session_id"] ?? "", "text": params["text"] ?? ""])
@@ -304,7 +321,7 @@ final class SharedHermesClient: RuntimeTransport {
 
     /// Fields other adapters consume. Hermes never read them, and builds with
     /// typed wire contracts reject unknown keys instead of ignoring them.
-    static let companionOnlyParams = ["project_trusted", "activity_unverified", "pending_turn_id", "turn_id"]
+    static let companionOnlyParams = ["project_trusted", "activity_unverified", "pending_turn_id", "turn_id", "delegation"]
 
     static func nativeParams(_ method: String, _ params: [String: Any]) -> [String: Any] {
         var values = params
@@ -436,6 +453,50 @@ final class SharedHermesClient: RuntimeTransport {
         onConnectionChange?(false, nil)
     }
 
+    /// Sends the companion's tools once and waits for the frontend to confirm
+    /// them before a session is opened, so its first agent already has them.
+    private func registerDelegationTools() async -> String? {
+        if let delegationTools { return await delegationTools.value }
+        let runID = generation
+        let task = Task { @MainActor [weak self] () -> String? in
+            await withCheckedContinuation { continuation in
+                guard let self, self.generation == runID else {
+                    return continuation.resume(returning: SharedHermesClient.delegationUnavailable)
+                }
+                self.delegationAck = continuation
+                self.writeOwnership(SharedHermesClient.toolsMessage)
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(15))
+                    guard let self, self.generation == runID else { return }
+                    self.settleDelegationTools(SharedHermesClient.delegationUnavailable)
+                }
+            }
+        }
+        delegationTools = task
+        return await task.value
+    }
+
+    /// What `hermes_frontend.py` reads from the ownership pipe, one JSON line each.
+    static var toolsMessage: [String: Any] { ["tools": Delegation.tools, "instructions": Delegation.instructions] }
+    static func bindMessage(session: String, delegation: [String: Any]) -> [String: Any] {
+        ["bind": session, "url": delegation["url"] ?? "", "token": delegation["token"] ?? ""]
+    }
+    /// The frontend's `NOTCH_DELEGATION` answer: nil once the tools are in place, else the notice.
+    static func delegationFailure(_ payload: [String: Any]) -> String? {
+        payload["ready"] as? Bool == true ? nil : payload["message"] as? String ?? delegationUnavailable
+    }
+
+    private func settleDelegationTools(_ failure: String?) {
+        delegationAck?.resume(returning: failure)
+        delegationAck = nil
+    }
+
+    private func writeOwnership(_ message: [String: Any]) {
+        guard let pipe = ownershipPipe, var line = try? JSONSerialization.data(withJSONObject: message) else { return }
+        line.append(0x0A)
+        ownershipWrites.async { try? pipe.write(contentsOf: line) }
+    }
+
     private func receiveStartup(_ bytes: Data, isError: Bool, generation runID: UUID) {
         guard generation == runID else { return }
         var buffer = isError ? stderrBuffer : stdoutBuffer
@@ -456,6 +517,10 @@ final class SharedHermesClient: RuntimeTransport {
                     // Hermes's original readiness timeout reports tool failure.
                     try? await relay.launch(payload)
                 }
+            } else if line.hasPrefix("NOTCH_DELEGATION "),
+                      let data = line.dropFirst("NOTCH_DELEGATION ".count).data(using: .utf8),
+                      let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                settleDelegationTools(Self.delegationFailure(payload))
             } else if let port = Self.readyPort(in: line), socket == nil {
                 openSocket(port: port, generation: runID)
             } else if line.hasPrefix("NOTCH_FRONTEND_ERROR "),
@@ -617,9 +682,12 @@ final class SharedHermesClient: RuntimeTransport {
         stderr = nil
         stdoutBuffer.removeAll()
         stderrBuffer.removeAll()
+        settleDelegationTools(Self.delegationUnavailable)
+        delegationTools = nil
         // This pipe owns only our frontend; neither this path nor SIGTERM ever
         // addresses the user's messaging gateway. The worker handles EOF too.
-        try? ownershipPipe?.close()
+        let pipe = ownershipPipe
+        ownershipWrites.async { try? pipe?.close() }
         ownershipPipe = nil
         if let child = process {
             child.terminationHandler = nil
