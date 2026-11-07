@@ -42,7 +42,11 @@ final class FileDropChoiceTests: XCTestCase {
         XCTAssertEqual(model.sessions.count, 1, "Hovering must not create a session.")
         XCTAssertTrue(model.acceptFileDrop([file, file]))
         XCTAssertEqual(model.sessions.count, 2)
-        XCTAssertEqual(model.sessions.first { $0.id == original.id }, original)
+        // Only its auto-archive clock restarts as it stops being the selection.
+        var left = original
+        left.lastSeenAt = model.sessions.first { $0.id == original.id }?.lastSeenAt
+        XCTAssertNotNil(left.lastSeenAt)
+        XCTAssertEqual(model.sessions.first { $0.id == original.id }, left)
         XCTAssertNotEqual(model.currentID, original.id)
         XCTAssertEqual(model.current?.attachments.map(\.url), [file])
         XCTAssertEqual(model.current?.draft, "")

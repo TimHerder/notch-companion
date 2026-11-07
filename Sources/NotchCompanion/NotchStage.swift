@@ -44,6 +44,10 @@ struct StageContent: Equatable {
             content.answered = CollapsedStatus.resolve(session: session) != .waiting
             guard !content.answered, session.nativeActivityUnverified == nil, session.runtimeID != nil,
                   let request = requests.first(where: { $0.sessionID == session.runtimeID }) else {
+                if content.answered, announcement.isApproval {
+                    content.detail = "Wants to run"
+                    content.command = announcement.detail
+                }
                 if content.detail.isEmpty { content.detail = SessionDigest.entry(session, requests: requests).detail }
                 break
             }

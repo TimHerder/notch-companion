@@ -480,6 +480,18 @@ final class SessionManagementTests: XCTestCase {
         XCTAssertEqual(model.visibleSessions.map(\.id), ["opened", "restored", "unread", "selected"])
     }
 
+    func testLeavingTheSelectionRestartsItsClock() {
+        let (model, _, _, _) = dormancyFixture([readSession("reading", hoursAgo: 48)])
+        // Selected without selectSession (as at launch), then read with nothing new to acknowledge.
+        model.currentID = "reading"
+        XCTAssertNil(model.sessions.first { $0.id == "reading" }?.lastSeenAt)
+        model.selectSession("selected")
+        XCTAssertNotNil(model.sessions.first { $0.id == "reading" }?.lastSeenAt)
+        XCTAssertFalse(model.isAutoArchived(model.sessions.first { $0.id == "reading" }!),
+                       "The session just being read stays in the list instead of vanishing on the switch")
+        XCTAssertTrue(model.visibleSessions.contains { $0.id == "reading" })
+    }
+
     func testSendingBringsAnAutoArchivedSessionBack() async {
         let (model, _, _, _) = dormancyFixture([readSession("old", hoursAgo: 48)])
         await model.connect()

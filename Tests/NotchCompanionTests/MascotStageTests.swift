@@ -152,6 +152,12 @@ final class MascotStageTests: XCTestCase {
         XCTAssertNil(answered.quickReply)
         XCTAssertNil(answered.request)
         XCTAssertEqual(answered.answerRows, 1, "the sent confirmation")
+        let approval = NotchAnnouncement(kind: .needsInput, sessionID: "plan", title: session.title,
+                                         detail: "Run swift test", isApproval: true)
+        let sent = StageContent.make(approval, sessions: [session], requests: [])
+        XCTAssertEqual(sent.detail, "Wants to run", "an answered approval keeps its label")
+        XCTAssertEqual(sent.command, "Run swift test", "and its command stays in the field, not prose")
+        XCTAssertEqual(sent.bodyHeight(mascot: false), content.bodyHeight(mascot: false), "the stage does not re-spring as it lands")
         XCTAssertEqual(StageContent.make(NotchAnnouncement(kind: .failed, sessionID: "plan", title: ""), sessions: [session],
                                          requests: []).answerRows, 0, "results carry no buttons")
         let hello = StageContent.make(NotchAnnouncement(kind: .hello, sessionID: AppModel.helloAnnouncementID, title: "Hover"),

@@ -854,6 +854,9 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
                     stageEndsAt = now + announcement.kind.stageDuration
                     setStaging(true)
                 }
+            } else if announcing {
+                // A replacement during the hold re-measures the band for its own label.
+                updateGeometry(animated: true)
             } else {
                 setAnnouncing(true)
             }

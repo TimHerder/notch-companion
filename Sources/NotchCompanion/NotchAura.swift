@@ -86,9 +86,15 @@ struct NotchAnnouncement: Identifiable, Equatable {
     var detail = ""
     /// How long the announced turn had been working, when known.
     var worked: TimeInterval? = nil
+    /// The question was an approval, so `detail` is its command; the stage
+    /// keeps it in its field once answered.
+    var isApproval = false
 
-    /// What VoiceOver hears; the verb stays in words here.
-    var spoken: String { detail.isEmpty ? "\(kind.verb): \(title)" : "\(kind.verb): \(title). \(detail)" }
+    /// What VoiceOver hears; the verb stays in words here. The hello's title is its verb.
+    var spoken: String {
+        if kind == .hello { return "\(title) \(detail)" }
+        return detail.isEmpty ? "\(kind.verb): \(title)" : "\(kind.verb): \(title). \(detail)"
+    }
 
     static let iconWidth: CGFloat = 15
     static let titleFont = NSFont.systemFont(ofSize: 11.5, weight: .medium)

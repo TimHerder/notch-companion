@@ -246,7 +246,7 @@ enum SessionDigest {
             let text = answer(session)
             return text.isEmpty ? "Something went wrong" : text
         case .needsInput:
-            return entry(session, requests: requests).detail
+            return String(entry(session, requests: requests).detail.prefix(400))
         case .hello:
             return ""
         }

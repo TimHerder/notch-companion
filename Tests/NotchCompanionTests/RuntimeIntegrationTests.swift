@@ -170,7 +170,11 @@ final class RuntimeIntegrationTests: XCTestCase {
         old.draft = "Continue this work"; old.attachments = [Attachment(url: URL(fileURLWithPath: "/tmp/previous.txt"))]
         model.sessions = [old]; model.currentID = old.id
         await model.continueLegacySession(old.id)
-        XCTAssertEqual(model.sessions.first { $0.id == old.id }, old)
+        // Leaving it restarts only its local auto-archive clock; its native identity and history are untouched.
+        var left = old
+        left.lastSeenAt = model.sessions.first { $0.id == old.id }?.lastSeenAt
+        XCTAssertNotNil(left.lastSeenAt)
+        XCTAssertEqual(model.sessions.first { $0.id == old.id }, left)
         let next = try XCTUnwrap(model.current)
         XCTAssertNotEqual(next.id, old.id)
         XCTAssertFalse(next.isLegacyPrivate)
