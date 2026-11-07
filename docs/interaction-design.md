@@ -500,13 +500,16 @@ drop opens its session).
   one step smaller and quieter, with no header or Copy. Consecutive calls form
   a run of single-line rows (status icon, name, middle-truncated detail; the
   status word is spoken, not shown) with no card in Refined and Tahoe and log
-  lines in Instrument; a finished run outside a fold reads “N tool calls”.
+  lines in Instrument; a finished run outside a fold reads “N tool calls”. In
+  Refined and Tahoe a failed call's name takes the failure colour beside its
+  icon; Instrument marks it with its signal tag.
 - **Live current-turn cap:** only the newest run shows its latest three calls,
   newest at the bottom, with older calls behind “N earlier tool calls”; new
   calls roll rows upward. Stable tool identities update rows in place. The cap
   limits only the live summary, never history. A footer under the newest
   content reads “Working for 42s”, ticking for the whole turn while text
-  streams (“Waiting for your reply…” while the agent waits on you), followed by
+  streams (“Waiting for your reply…” beside a still question mark in the
+  needs-you colour, not the spinner, while the agent waits on you), followed by
   any delegated agents still working.
 - **Finished turns** read: your message, a **Worked for 2:14** fold (collapsed
   by default), the answer, then its changes. The answer is the last text the
@@ -520,7 +523,10 @@ drop opens its session).
   under its header. A turn's own failure or stop names it, “Failed after 1:03”
   or “Stopped after 12s”, on that header or on the fold above whatever text it
   wrote (a failed delegated child does not, and a send that failed before it
-  became a turn never relabels the one before). A steer or wake starts its own
+  became a turn never relabels the one before: a turn ended by a quit, a
+  disconnect or a Stop the runtime never confirms keeps “Stopped”). A turn
+  whose questions above its answer are still open keeps its work unfolded, so
+  the card stays in view; it folds once you reply. A steer or wake starts its own
   block; blocks split from a running turn stay open until the turn ends, and a
   block without its own end ends when the next one in its turn begins.
 - Persist turn IDs, end times and outcomes with messages and tool metadata so
@@ -841,7 +847,9 @@ folder whose sessions are all archived leaves the default list.
   ordinary message (one answer alone; several as question/answer pairs) without
   touching the composer's draft or files, and waits while the session works or a
   send is unconfirmed. The card stays answerable while the agent writes or runs
-  more in that turn; once a later message of yours follows, it is read-only. The
+  more in that turn, and its turn's work stays unfolded while it is open; once
+  a later message of yours follows, it is read-only. A delegation result, a
+  delegated question or a message from another session does not close it. The
   composer and Stop stay available. Question-only messages survive restart with
   their card.
 - **Approvals** describe a Claude Code tool in its own terms (command and

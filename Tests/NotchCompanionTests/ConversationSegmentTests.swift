@@ -5,14 +5,16 @@ import XCTest
 /// authoritative text is reconciled with them, and how native history splits alike.
 @MainActor final class ConversationSegmentTests: XCTestCase {
     private var model: AppModel!
+    private var transport: SegmentTransport!
     private var folder: URL!
     private var suite = ""
 
     override func setUp() async throws {
         folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         suite = "notch-segments-\(UUID().uuidString)"
+        transport = SegmentTransport()
         model = AppModel(storageURL: folder.appendingPathComponent("sessions.json"), playsSounds: false,
-                         client: SegmentTransport(), preferences: UserDefaults(suiteName: suite)!)
+                         client: transport, preferences: UserDefaults(suiteName: suite)!)
         model.sessions[0].runtimeID = "live"
         model.sessions[0].messages = [ChatMessage(id: "u", role: "user", text: "Check it", turnID: "u")]
     }
@@ -27,6 +29,9 @@ import XCTest
         model.receive(name, payload: payload.merging(["session_id": "live"]) { old, _ in old })
     }
     private var replies: [String] { model.sessions[0].messages.filter { $0.role == "assistant" }.map(\.text) }
+    private func works() -> [TurnWork] {
+        ConversationTimeline.build(session: model.sessions[0]).compactMap { if case .work(let work) = $0 { return work }; return nil }
+    }
 
     private func streamCommentaryToolAndAnswer() {
         send("message.start", ["role": "assistant"])
@@ -153,14 +158,59 @@ import XCTest
         XCTAssertTrue(ConversationTimeline.questionsOpen(question.id, in: model.sessions[0]))
         send("message.complete", ["text": "Two questions while I start.\n\nStarted on it.", "status": "complete"])
         XCTAssertTrue(ConversationTimeline.questionsOpen(question.id, in: model.sessions[0]))
+        XCTAssertEqual(works().map(\.folds), [false], "Open questions above the answer keep the work unfolded")
         model.sessions[0].messages.append(ChatMessage(id: "reply", role: "user", text: "main", turnID: "reply"))
         XCTAssertFalse(ConversationTimeline.questionsOpen(question.id, in: model.sessions[0]), "A later message of yours closes them")
+        XCTAssertEqual(works().map(\.folds), [true], "Answered, the work folds away")
+    }
+
+    func testARowTheCompanionSentDoesNotCloseQuestions() throws {
+        send("message.start", ["role": "assistant"])
+        send("message.delta", ["text": "Which branch should I use?"])
+        send("message.questions", ["questions": [["title": "Which branch?"]]])
+        // A delegated child's result, steered into the running turn.
+        model.sessions[0].messages.append(ChatMessage(id: "wake", role: "user", text: "Delegated task \"Docs\" (sessionId c1) finished.",
+                                                      turnID: "u", kind: ChatMessage.delegationResult))
+        let question = try XCTUnwrap(model.sessions[0].messages.first { $0.questions != nil })
+        XCTAssertTrue(ConversationTimeline.questionsOpen(question.id, in: model.sessions[0]), "A delegation result is not your answer")
+        model.sessions[0].messages.append(ChatMessage(id: "reply", role: "user", text: "main", turnID: "reply"))
+        XCTAssertFalse(ConversationTimeline.questionsOpen(question.id, in: model.sessions[0]))
+    }
+
+    func testATurnEndedWithoutItsRuntimeKeepsItsOutcome() async throws {
+        streamCommentaryToolAndAnswer()
+        // A local Stop the runtime never confirms; a send that then fails does not relabel it.
+        model.sessions[0].state = .working
+        await model.interrupt()
+        XCTAssertEqual(model.sessions[0].turnOutcome["u"], .interrupted)
+        model.sessions[0].state = .failed
+        XCTAssertEqual(works().map(\.label), ["Stopped"])
+
+        // The whole client disconnecting mid-turn.
+        model.sessions[0].turnOutcome = [:]
+        model.sessions[0].state = .working
+        transport.onConnectionChange?(false, nil)
+        XCTAssertEqual(model.sessions[0].turnOutcome["u"], .interrupted)
+
+        // A quit mid-turn, and older saves whose last turn ended without an outcome.
+        var busy = model.sessions[0]
+        busy.turnOutcome = [:]
+        busy.state = .working
+        var failed = busy, childFailed = busy, recorded = busy
+        (failed.id, failed.state) = ("failed", .failed)
+        (childFailed.id, childFailed.state) = ("child-failed", .failed)
+        childFailed.agents = [ChildAgent(id: "child", title: "Docs", state: .failed, turnID: "u")]
+        (recorded.id, recorded.state, recorded.turnOutcome) = ("recorded", .failed, ["u": .finished])
+        model.sessions = [busy, failed, childFailed, recorded]
+        XCTAssertTrue(model.save())
+        let relaunched = AppModel(storageURL: folder.appendingPathComponent("sessions.json"), playsSounds: false,
+                                  client: SegmentTransport(), preferences: UserDefaults(suiteName: suite)!)
+        defer { relaunched.shutdown() }
+        XCTAssertEqual(relaunched.sessions.map { $0.turnOutcome["u"] }, [.interrupted, .failed, nil, .finished],
+                       "A failed child is not the turn's failure, and a recorded outcome is kept")
     }
 
     func testASendThatFailsBeforeItsRowDoesNotRelabelTheFinishedTurn() throws {
-        func works() -> [TurnWork] {
-            ConversationTimeline.build(session: model.sessions[0]).compactMap { if case .work(let work) = $0 { return work }; return nil }
-        }
         streamCommentaryToolAndAnswer()
         send("message.complete", ["text": "All green.", "status": "complete"])
         XCTAssertEqual(model.sessions[0].turnOutcome["u"], .finished)

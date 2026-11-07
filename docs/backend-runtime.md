@@ -803,7 +803,11 @@ completion are finished with an end time. The latest visible user row's
 `turnEndedAt` is saved when the turn completes, fails (`error`), or is
 interrupted by a disconnect, so a steer or wake keys its own block; its
 `turnOutcome` saves how the turn itself ended (a failed delegated child leaves
-it finished). The final segment is the session's latest answer
+it finished). A turn the runtime never reports ending (a relaunch while busy,
+the client disconnecting, a Stop it never confirms) records `interrupted` unless
+an outcome is already saved, and loading an older save records its latest
+turn's stop or own failure the same way; a turn without an outcome reads as
+finished, so the session's later state never relabels it. The final segment is the session's latest answer
 (`latestResponse`, delegation summaries and results). Native history splits replies at the same boundaries, keeping
 per-role counts aligned with saved messages: Codex rows end at tool items (a
 turn's first reply keeps the turn ID, later ones `turn:item`), OpenCode joins

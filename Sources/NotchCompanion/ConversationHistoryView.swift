@@ -628,7 +628,8 @@ private struct TurnWorkView<Content: View>: View {
     }
 }
 
-/// Under the newest content while the turn runs: how long it has been working.
+/// Under the newest content while the turn runs: how long it has been working. While
+/// the turn waits on you nothing is running, so a still question mark replaces the spinner.
 private struct LiveTurnFooter: View {
     var since: Date
     var waiting: Bool
@@ -639,9 +640,16 @@ private struct LiveTurnFooter: View {
         let theme = PanelTheme.current
         HStack(spacing: 8) {
             switch theme {
-            case .refined: ProgressView().controlSize(.mini).tint(CompanionStyle.secondary)
-            case .tahoe: ProgressView().controlSize(.mini)
-            case .instrument: LED(color: waiting ? CompanionStyle.signal : CompanionStyle.text, pulsing: true, size: 5)
+            case .refined, .tahoe:
+                if waiting {
+                    Image(systemName: "questionmark.circle.fill").font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(CompanionStyle.color(.waiting)).accessibilityHidden(true)
+                } else if theme == .refined {
+                    ProgressView().controlSize(.mini).tint(CompanionStyle.secondary)
+                } else {
+                    ProgressView().controlSize(.mini)
+                }
+            case .instrument: LED(color: waiting ? CompanionStyle.signal : CompanionStyle.text, pulsing: !waiting, size: 5)
             }
             Group {
                 if waiting {

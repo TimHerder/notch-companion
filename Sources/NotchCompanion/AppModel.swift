@@ -329,6 +329,8 @@ final class AppModel: ObservableObject {
                 if copy.isBusy { copy.state = .interrupted }
                 for index in copy.tools.indices where [.working, .waiting].contains(copy.tools[index].state) { copy.tools[index].state = .interrupted }
                 for index in copy.agents.indices where [.working, .waiting].contains(copy.agents[index].state) { copy.agents[index].state = .interrupted }
+                // A turn the quit cut short, or an older save's last one, keeps how it ended.
+                copy.recordUnreportedOutcome()
                 return copy
             }
         }
@@ -367,7 +369,7 @@ final class AppModel: ObservableObject {
                 for session in self.sessions { self.delegationServer.revoke(sessionID: session.id) }
                 for index in self.sessions.indices {
                     self.sessions[index].runtimeID = nil
-                    if self.sessions[index].isBusy { self.sessions[index].state = .interrupted }
+                    if self.sessions[index].isBusy { self.sessions[index].state = .interrupted; self.sessions[index].recordUnreportedOutcome() }
                     for child in self.sessions[index].agents.indices where [.working, .waiting].contains(self.sessions[index].agents[child].state) { self.sessions[index].agents[child].state = .interrupted }
                     for tool in self.sessions[index].tools.indices where [.working, .waiting].contains(self.sessions[index].tools[tool].state) { self.sessions[index].tools[tool].state = .interrupted }
                 }
@@ -1558,6 +1560,8 @@ final class AppModel: ObservableObject {
             update(localID) {
                 $0.state = .interrupted
                 $0.parentTurnComplete = true
+                // The runtime may never confirm a Stop; a later message.complete still overrides this.
+                if session.isBusy { $0.recordUnreportedOutcome() }
                 for child in $0.agents.indices where [.working, .waiting].contains($0.agents[child].state) { $0.agents[child].state = .interrupted }
                 for tool in $0.tools.indices where [.working, .waiting].contains($0.tools[tool].state) { $0.tools[tool].state = .interrupted }
             }
