@@ -328,10 +328,12 @@ final class AppModel: ObservableObject {
                     if copy.queuedSends.contains(where: { $0.id == copy.stagedSubmission?.message.id }) { copy.stagedSubmission = nil }
                     else { copy.restoreStagedSubmission() }
                 }
-                // Delivered before the quit, or the user's own unconfirmed send (its staged copy backs Check last send).
-                // An agent's or notice's unconfirmed send has no staged text: it waits for Check last send.
+                // Delivered before the quit, or an unconfirmed send whose staged copy holds its text for Check last send.
+                // Without staged text (an agent's message, a notice, an older registry's entry) it waits for Check last send.
                 copy.queuedSends.removeAll { queued in
-                    session.pendingSubmission?.id == queued.id ? queued.isUserMessage : session.messages.contains { $0.id == queued.id }
+                    session.pendingSubmission?.id == queued.id
+                        ? session.stagedSubmission?.message.id == queued.id && session.stagedSubmission?.draft != nil
+                        : session.messages.contains { $0.id == queued.id }
                 }
                 if copy.runtime == .opencode, !["opencode-http-v1", "opencode-http-v2"].contains(copy.runtimeInfo?.nativeInterface ?? ""),
                    copy.isBusy, copy.nativeActivityUnverified == nil {

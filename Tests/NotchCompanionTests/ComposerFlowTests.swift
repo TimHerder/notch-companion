@@ -252,6 +252,34 @@ import SwiftUI
         XCTAssertTrue(restoredTransport.calls.contains { $0.0 == "prompt.submit" && $0.1["turn_id"] as? String == "agent" })
     }
 
+    func testAnOlderQueuedMessageInFlightAtAQuitKeepsItsText() async throws {
+        working()
+        model.sessions[0].runtimeID = nil
+        model.sessions[0].trustedProjectPath = folder.standardizedFileURL.resolvingSymlinksInPath().path
+        model.sessions[0].messages = []
+        model.sessions[0].state = .idle
+        model.sessions[0].parentTurnComplete = true
+        // An older registry's entry has no attachments, so delivery stages it without its text.
+        model.sessions[0].queuedSends = [QueuedSend(id: "old", text: "Older queued text")]
+        transport.pausedMethod = "prompt.submit"
+        model.processDelegationWakes()
+        try await waitForRequest()
+        XCTAssertEqual(model.sessions[0].pendingSubmission?.id, "old")
+        XCTAssertNil(model.sessions[0].stagedSubmission?.draft)
+
+        let restoredTransport = ComposerFlowTransport()
+        let restored = AppModel(storageURL: storage, playsSounds: false, client: restoredTransport, preferences: preferences)
+        defer { restored.shutdown() }
+        await restored.connect()
+        XCTAssertEqual(restored.sessions[0].queuedSends.map(\.id), ["old"], "Kept: nothing else holds its text")
+        restored.selectSession(restored.sessions[0].id)
+        await restored.send()
+        for _ in 0..<200 where restored.sessions[0].pendingSubmission != nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNil(restored.sessions[0].pendingSubmission)
+        XCTAssertTrue(restored.sessions[0].queuedSends.contains { $0.id == "old" && $0.text == "Older queued text" })
+        transport.finish(.failure(AppError("quit")))
+    }
+
     func testSteerNowRefusesAQueuedMessageAlreadyInTheTranscript() async {
         working()
         model.sessions[0].messages.append(ChatMessage(id: "confirmed", role: "user", text: "Delivered", turnID: "confirmed"))

@@ -201,10 +201,10 @@ controls); a failed head blocks later entries. Delivery uses the ordinary
 staged/pending protections without overwriting the current draft; after restart
 a staged entry is kept once, not also restored into the editor. After a quit
 during delivery, an entry already in the transcript is dropped on load, and so
-is a user entry that is the unconfirmed send (its staged copy holds the text for
-Check last send). An agent or notice entry that is the unconfirmed send has no
-staged text, so it stays queued: it waits for Check last send, which drops it
-once delivery is confirmed or lets it be delivered when the send proves absent.
+is the unconfirmed send when its staged copy holds the text for Check last send.
+An unconfirmed send without staged text (an agent's message, a notice, or an
+older registry's user entry) stays queued: it waits for Check last send, which
+drops it once delivery is confirmed or lets it be delivered when the send proves absent.
 Edit and Steer refuse an ID that is the unconfirmed send or in the transcript. Paused queues do
 not keep the app busy. Approval and question cards stay authoritative; sending
 cannot bypass them.
