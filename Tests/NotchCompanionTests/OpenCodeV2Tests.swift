@@ -12,14 +12,22 @@ final class OpenCodeV2Tests: XCTestCase {
 
         let saved: [[String: Any]] = [["action": "bash", "resource": "rm *", "effect": "ask"],
                                       ["action": "notch-*", "resource": "*", "effect": "deny"],
+                                      ["action": "notch-????????????????_*", "resource": "*", "effect": "deny"],
                                       ["action": OpenCodeClient.delegationServerName("ses_old") + "_*", "resource": "*", "effect": "allow"],
                                       ["action": "notch-docs_*", "resource": "*", "effect": "allow"]]
         let rules = OpenCodeClient.delegationRules(saved, server: name)
-        XCTAssertEqual(rules.compactMap { $0["action"] as? String }, ["bash", "notch-docs_*", "notch-*", name + "_*"],
-                       "The session's other rules stay; the companion's are replaced and come last, so they win")
+        let deny = "notch-????????????????_*"
+        XCTAssertEqual(rules.compactMap { $0["action"] as? String }, ["bash", "notch-docs_*", deny, name + "_*"],
+                       "The session's other rules stay; the companion's, old `notch-*` included, are replaced and come last, so they win")
         XCTAssertEqual(rules.suffix(2).compactMap { $0["effect"] as? String }, ["deny", "allow"])
-        XCTAssertEqual(OpenCodeClient.delegationRules([], server: nil).compactMap { $0["action"] as? String }, ["notch-*"],
+        XCTAssertEqual(OpenCodeClient.delegationRules([], server: nil).compactMap { $0["action"] as? String }, [deny],
                        "A session without the tools still cannot use another session's")
+        // OpenCode's wildcard: `*` any run, `?` one character, whole action `<server>_<tool>`.
+        let matches = { (action: String) in
+            action.range(of: "^" + NSRegularExpression.escapedPattern(for: deny).replacingOccurrences(of: "\\*", with: ".*").replacingOccurrences(of: "\\?", with: ".") + "$", options: .regularExpression) != nil
+        }
+        XCTAssertTrue(matches(OpenCodeClient.delegationServerName("ses_other") + "_delegate_task"), "Another session's companion tools stay denied")
+        XCTAssertFalse(matches("notch-docs_search"), "A user's own `notch-…` server stays usable")
 
         let launch: [String: Any] = ["url": "http://127.0.0.1:9/mcp", "token": "secret-token", "instructions": "Rules."]
         let request = try XCTUnwrap(OpenCodeClient.delegationRegistration(launch, server: name, location: "/Users/me/My Project"))

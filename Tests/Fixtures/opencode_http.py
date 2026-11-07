@@ -74,8 +74,34 @@ def delegate(sid):
     done(sid, 'Parent has replied; child is still waiting')
 
 
+def split_tail(sid):
+    # Each step is one poll: a text tail plus a new call, then a new call plus later text.
+    info = dict(id='msg_split', sessionID=sid, role='assistant', time=dict(created=1))
+    bash = dict(id='call_bash', type='tool', tool='bash', state=dict(status='completed', input=dict(command='swift test'), output='ok'))
+    read = dict(id='call_read', type='tool', tool='read', state=dict(status='completed', input=dict(path='a.swift'), output='ok'))
+    head, row = dict(type='text', text="I'll run the tests now."), dict(info=info, parts=[])
+    with lock:
+        history[sid].append(row)
+    for parts in [[dict(type='text', text="I'll run the tests")], [head, bash], [head, bash, read, dict(type='text', text='Found it.')]]:
+        with lock:
+            row['parts'] = parts
+            event('message.updated', sessionID=sid, info=info)
+        time.sleep(.3)
+    with lock:
+        info['time']['completed'] = 2
+        statuses.pop(sid, None)
+        save()
+        event('session.status', sessionID=sid, status=dict(type='idle'))
+
+
 def work(sid, text):
     time.sleep(.10)
+    if text == 'split-tail':
+        return split_tail(sid)
+    if text == 'session-error':
+        with lock:
+            event('session.error', sessionID=sid, error=dict(name='ProviderAuthError', data=dict(providerID='native', message='Native provider credentials expired')))
+        time.sleep(.2)
     with lock:
         if text == 'delayed-child':
             child = 'ses_child'
