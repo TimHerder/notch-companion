@@ -52,7 +52,7 @@ final class OpenClawClient: RuntimeTransport {
         guard try OpenClawConfiguration.configuredAgents(profileID: directory).contains(agent) else { throw AppError("The selected OpenClaw agent is no longer configured. Choose an existing agent in Settings; saved sessions retain their original agent.") }
         let endpoint = try config.endpoint()
         let account = OpenClawDevice.account(directory: directory, endpoint: endpoint)
-        var device = try deviceOverride ?? OpenClawDevice.load(account: account)
+        let device = try deviceOverride ?? OpenClawDevice.load(account: account)
         let auth = try device.token.map { ["token": $0] } ?? config.auth(environment: ProcessInfo.processInfo.environment)
         let scopes = device.token == nil ? OpenClawDevice.requiredScopes : device.scopes
         guard Set(OpenClawDevice.requiredScopes).isSubset(of: Set(scopes)) else { throw AppError("This OpenClaw pairing lacks the chat, approval or question scopes implemented by the companion. Review this device's pairing in OpenClaw, then reconnect.") }
@@ -88,9 +88,11 @@ final class OpenClawClient: RuntimeTransport {
             guard result["type"] as? String == "hello-ok", result["protocol"] as? Int == 4 else { throw AppError("This OpenClaw Gateway is incompatible. Notch Companion implements Gateway wire protocol 4.") }
             let granted = result["auth"] as? [String: Any] ?? [:]
             guard Set(OpenClawDevice.requiredScopes).isSubset(of: Set(granted["scopes"] as? [String] ?? [])) else { throw AppError("OpenClaw did not grant the companion's required chat, approval and question scopes. Review device pairing in OpenClaw.") }
-            if let token = granted["deviceToken"] as? String, token != device.token {
-                device.token = token; device.scopes = granted["scopes"] as? [String] ?? []
-                if deviceOverride == nil { try device.save(account: account) }
+            if let token = granted["deviceToken"] as? String, token != device.token, deviceOverride == nil {
+                // Read-modify-write, so a node token the shared link saved meanwhile is kept.
+                var latest = try OpenClawDevice.load(account: account)
+                latest.token = token; latest.scopes = granted["scopes"] as? [String] ?? []
+                try latest.save(account: account)
             }
             features = Set((result["features"] as? [String: Any])?["methods"] as? [String] ?? [])
             let required: Set<String> = ["chat.send", "chat.history", "chat.abort", "sessions.create", "sessions.messages.subscribe", "question.resolve", "exec.approval.resolve"]
@@ -255,18 +257,18 @@ final class OpenClawClient: RuntimeTransport {
                 "messages": OpenClawProtocolState.history(history), "history_complete": false, "running": state.busy(key), "info": OpenClawProtocolState.info(info)]
     }
 
-    /// A session launched with delegation gets the tools through the node link,
-    /// which opens with the first such session and closes with this connection.
+    /// A session launched with delegation gets the tools through the account's
+    /// shared node link, which opens with the first such session and closes with
+    /// the last connection using it.
     private func offerTools(to key: String, _ launch: Any?) {
         guard let launch = launch as? [String: Any], let url = (launch["url"] as? String).flatMap(URL.init(string:)),
               let token = launch["token"] as? String, !token.isEmpty, let setup = nodeSetup else { return }
         grants[key] = OpenClawNodeLink.Grant(url: url, token: token)
         noticeKey = key
-        let link = nodeLink ?? OpenClawNodeLink(endpoint: setup.endpoint, config: setup.config, account: setup.account, device: deviceOverride)
+        let link = nodeLink ?? OpenClawNodeLink.shared(endpoint: setup.endpoint, config: setup.config, account: setup.account, device: deviceOverride)
         nodeLink = link
         // Only a companion-owned session with its own grant may call; any other agent on the Gateway sees the tools but is refused.
-        link.grant = { [weak self] key in self?.state.owned.contains(key) == true ? self?.grants[key] : nil }
-        link.onNotice = { [weak self] message in
+        link.attach(self, grant: { [weak self] key in self?.state.owned.contains(key) == true ? self?.grants[key] : nil }) { [weak self] message in
             guard let self, let key = self.noticeKey else { return }
             self.onEvent?("runtime.notice", ["session_id": key, "message": message])
         }
@@ -366,7 +368,7 @@ final class OpenClawClient: RuntimeTransport {
         urlSession?.invalidateAndCancel(); urlSession = nil
         state = OpenClawProtocolState(); images.removeAll(); nativeIDs.removeAll(); leafIDs.removeAll(); features.removeAll()
         // The Gateway withdraws a node's tools when it disconnects.
-        nodeLink?.close(); nodeLink = nil; grants.removeAll(); noticeKey = nil; nodeSetup = nil
+        nodeLink?.detach(self); nodeLink = nil; grants.removeAll(); noticeKey = nil; nodeSetup = nil
     }
 }
 
@@ -375,12 +377,14 @@ final class OpenClawClient: RuntimeTransport {
 /// `node.pluginTools.update`. The agent calls one through `node.invoke`, which
 /// arrives here with the calling session's key. Pairing and command approval
 /// stay with OpenClaw; a failure is a notice and never affects chat.
+/// Every agent profile of a Gateway shares the Keychain device and so the node
+/// id, so one link per account serves all their clients.
 @MainActor
 final class OpenClawNodeLink {
     nonisolated static let command = "mcp.tools.call.v1"
     struct Grant { var url: URL; var token: String }
-    var grant: (String) -> Grant? = { _ in nil }
-    var onNotice: (String) -> Void = { _ in }
+    private static var links: [String: OpenClawNodeLink] = [:]
+    private var clients: [ObjectIdentifier: (grant: (String) -> Grant?, notice: (String) -> Void)] = [:]
     private(set) var isOpen = false
     private let endpoint: URL
     private let config: OpenClawConfiguration
@@ -400,6 +404,28 @@ final class OpenClawNodeLink {
         self.endpoint = endpoint; self.config = config; self.account = account
         self.device = device; persists = device == nil
     }
+
+    static func shared(endpoint: URL, config: OpenClawConfiguration, account: String, device: OpenClawDevice?) -> OpenClawNodeLink {
+        if let link = links[account] { return link }
+        let link = OpenClawNodeLink(endpoint: endpoint, config: config, account: account, device: device)
+        links[account] = link
+        return link
+    }
+
+    func attach(_ client: AnyObject, grant: @escaping (String) -> Grant?, notice: @escaping (String) -> Void) {
+        clients[ObjectIdentifier(client)] = (grant, notice)
+    }
+
+    /// The last client closes the link, so the Gateway withdraws the tools.
+    func detach(_ client: AnyObject) {
+        clients.removeValue(forKey: ObjectIdentifier(client))
+        guard clients.isEmpty else { return }
+        close()
+        if Self.links[account] === self { Self.links.removeValue(forKey: account) }
+    }
+
+    private func grant(_ key: String) -> Grant? { clients.values.lazy.compactMap { $0.grant(key) }.first }
+    private func onNotice(_ message: String) { for client in clients.values { client.notice(message) } }
 
     /// Descriptors for the Gateway's reserved `node-mcp` plugin id, which
     /// requires this command and an `mcp` route (`node-plugin-tool-snapshot.ts`).

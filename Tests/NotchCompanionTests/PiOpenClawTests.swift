@@ -860,4 +860,150 @@ extension PiOpenClawTests {
         XCTAssertEqual(calls.first { $0.1 == "orchestrator_capabilities" }?.2["search"] as? String, "fixture")
         XCTAssertTrue(gateway.isRunning, "The existing Gateway is never stopped")
     }
+
+    @MainActor
+    func testOpenClawAgentProfilesOfOneGatewayShareOneNodeLink() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let script = directory.appendingPathComponent("gateway.py"), portFile = directory.appendingPathComponent("port")
+        let log = directory.appendingPathComponent("node.log"), trigger = directory.appendingPathComponent("round")
+        // Each round written to `trigger` invokes a tool once for every session key on the node that published.
+        let source = #"""
+        import socket,hashlib,base64,json,struct,sys,threading,time
+        server=socket.socket();server.bind(('127.0.0.1',0));server.listen(8)
+        open(sys.argv[1],'w').write(str(server.getsockname()[1]))
+        log=open(sys.argv[2],'a');lock=threading.Lock();keys=[]
+        methods=['chat.send','chat.history','chat.abort','sessions.create','sessions.messages.subscribe','question.resolve','exec.approval.resolve']
+        scopes=['operator.read','operator.write','operator.approvals','operator.questions']
+        def record(kind,value):
+          with lock: log.write(json.dumps({'kind':kind,'value':value})+'\n');log.flush()
+        def exact(c,n):
+          result=b''
+          while len(result)<n:
+            part=c.recv(n-len(result))
+            if not part: raise EOFError()
+            result+=part
+          return result
+        def frame(c,value):
+          data=json.dumps(value).encode();n=len(data)
+          header=bytes([129,n]) if n<126 else bytes([129,126])+struct.pack('!H',n) if n<65536 else bytes([129,127])+struct.pack('!Q',n)
+          with lock: c.sendall(header+data)
+        def reply(c,r,payload): frame(c,{'type':'res','id':r['id'],'ok':True,'payload':payload})
+        def read(c):
+          a,b=exact(c,2)
+          if a&15==8: raise EOFError()
+          n=b&127
+          if n==126:n=struct.unpack('!H',exact(c,2))[0]
+          elif n==127:n=struct.unpack('!Q',exact(c,8))[0]
+          mask=exact(c,4) if b&128 else None;data=exact(c,n)
+          if mask:data=bytes(x^mask[i%4] for i,x in enumerate(data))
+          return json.loads(data)
+        def rounds(c,node):
+          done=0
+          while True:
+            time.sleep(0.01)
+            try: wanted=int(open(sys.argv[3]).read())
+            except Exception: continue
+            while done<wanted:
+              done+=1
+              with lock: current=list(keys)
+              for i,key in enumerate(current):
+                call={'server':'notch','tool':'notch_session_list','arguments':{}}
+                frame(c,{'type':'event','event':'node.invoke.request','payload':{'id':'%d-%d'%(done,i),'nodeId':node,'command':'mcp.tools.call.v1','paramsJSON':json.dumps(call),'timeoutMs':120000,'sessionKey':key}})
+        def handle(c):
+          node=None
+          try:
+            header=b''
+            while b'\r\n\r\n' not in header:header+=c.recv(4096)
+            key=[line.split(b':',1)[1].strip() for line in header.split(b'\r\n') if line.lower().startswith(b'sec-websocket-key:')][0]
+            accept=base64.b64encode(hashlib.sha1(key+b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
+            c.sendall(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+accept+b'\r\n\r\n')
+            frame(c,{'type':'event','event':'connect.challenge','payload':{'nonce':'fixture-challenge','ts':123456789}})
+            while True:
+              r=read(c);m=r['method'];p=r['params']
+              if m=='connect' and p['role']=='node':
+                record('node.connect',p);node=p['device']['id']
+                reply(c,r,{'type':'hello-ok','protocol':4,'auth':{'role':'node','scopes':[],'deviceToken':'node-token'},'features':{'methods':[]},'policy':{}})
+              elif m=='connect':reply(c,r,{'type':'hello-ok','protocol':4,'auth':{'scopes':scopes},'features':{'methods':methods},'policy':{'tickIntervalMs':30000}})
+              elif m=='sessions.create':
+                with lock: keys.append(p['key'])
+                reply(c,r,{'key':p['key'],'sessionId':'native-'+p['key']})
+              elif m=='sessions.messages.subscribe':reply(c,r,{})
+              elif m=='chat.history':reply(c,r,{'sessionKey':p['sessionKey'],'messages':[],'sessionInfo':{'hasActiveRun':False}})
+              elif m=='node.pluginTools.update':
+                reply(c,r,{'nodeId':node,'tools':p['tools']})
+                threading.Thread(target=rounds,args=(c,node),daemon=True).start()
+              elif m=='node.invoke.result':record('node.invoke.result',p);reply(c,r,{'ok':True})
+              else:raise Exception('unhandled method '+m)
+          except EOFError:pass
+          finally:
+            if node: record('node.closed',{'id':node})
+            c.close()
+        while True:
+          c,_=server.accept();threading.Thread(target=handle,args=(c,),daemon=True).start()
+        """#
+        try source.write(to: script, atomically: true, encoding: .utf8)
+        let gateway = Process(); gateway.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        gateway.arguments = [script.path, portFile.path, log.path, trigger.path]
+        gateway.standardOutput = FileHandle.nullDevice; gateway.standardError = FileHandle.nullDevice
+        try gateway.run()
+        defer { if gateway.isRunning { gateway.terminate() } }
+        for _ in 0..<100 {
+            if FileManager.default.fileExists(atPath: portFile.path) { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let port = try XCTUnwrap(Int(String(contentsOf: portFile, encoding: .utf8)))
+        let config: [String: Any] = ["gateway": ["port": port, "auth": ["mode": "none"]],
+                                     "agents": ["list": [["id": "main", "workspace": directory.path], ["id": "work", "workspace": directory.path]]]]
+        try JSONSerialization.data(withJSONObject: config).write(to: directory.appendingPathComponent("openclaw.json"))
+
+        let server = DelegationServer()
+        var callers: [String] = []
+        server.tools = { _ in Delegation.tools }
+        server.call = { caller, _, _ in callers.append(caller.sessionID); return [:] }
+        let url = try await server.start()
+        defer { server.stop() }
+        // Both agent profiles find the same Keychain device, as `OpenClawDevice.account` hashes only folder and endpoint.
+        let device = OpenClawDevice(privateKey: Curve25519.Signing.PrivateKey().rawRepresentation)
+        let main = OpenClawClient(profileID: RuntimeProfileIdentity.openClaw(directory: directory.path, agent: "main"), device: device)
+        let work = OpenClawClient(profileID: RuntimeProfileIdentity.openClaw(directory: directory.path, agent: "work"), device: device)
+        defer { main.disconnect(); work.disconnect() }
+        try await main.connect()
+        try await work.connect()
+        for (client, companion) in [(main, "companion-main"), (work, "companion-work")] {
+            let token = server.issueToken(for: DelegationCaller(sessionID: companion, runtime: .openclaw, subagent: false))
+            _ = try await client.request("session.create", params: ["delegation": ["url": url.absoluteString, "token": token]])
+        }
+        func frames(_ kind: String) -> [[String: Any]] {
+            ((try? String(contentsOf: log, encoding: .utf8)) ?? "").split(separator: "\n").compactMap {
+                let row = try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+                return row?["kind"] as? String == kind ? row?["value"] as? [String: Any] : nil
+            }
+        }
+        func eventually(_ condition: () -> Bool) async {
+            for _ in 0..<300 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
+        }
+        func denied(_ id: String) -> Bool? {
+            guard let payload = frames("node.invoke.result").first(where: { $0["id"] as? String == id })?["payload"] as? [String: Any] else { return nil }
+            return payload["isError"] as? Bool == true
+        }
+
+        try "1".write(to: trigger, atomically: true, encoding: .utf8)
+        await eventually { frames("node.invoke.result").count >= 2 }
+        XCTAssertEqual(frames("node.connect").count, 1, "One node per device, whichever agent delegates")
+        XCTAssertEqual(denied("1-0"), false, "The main agent's session is served")
+        XCTAssertEqual(denied("1-1"), false, "And so is the work agent's, on the same link")
+        XCTAssertEqual(Set(callers), ["companion-main", "companion-work"])
+
+        main.disconnect()
+        try "2".write(to: trigger, atomically: true, encoding: .utf8)
+        await eventually { frames("node.invoke.result").count >= 4 }
+        XCTAssertTrue(frames("node.closed").isEmpty, "The link stays while another agent still uses it")
+        XCTAssertEqual(denied("2-0"), true, "A disconnected agent's sessions are refused")
+        XCTAssertEqual(denied("2-1"), false)
+        work.disconnect()
+        await eventually { !frames("node.closed").isEmpty }
+        XCTAssertEqual(frames("node.closed").count, 1, "The last connection closes the link")
+    }
 }

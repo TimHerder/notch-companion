@@ -365,6 +365,18 @@ import XCTest
         XCTAssertEqual(otherTransport.prompts(otherParent).count, 1)
     }
 
+    func testAWaitCountsChildCreationAgainstItsTimeout() async throws {
+        let (model, transport, _, _) = makeModel()
+        let (_, caller) = try await activeParent(model)
+        transport.createDelay = .milliseconds(800)
+        let started = Date()
+        let waited = try await model.handleDelegationTool(caller, name: "delegate_task", arguments: ["task": "Slow start", "mode": "wait", "timeoutMs": 600])
+        XCTAssertEqual(waited["waitTimedOut"] as? Bool, true)
+        XCTAssertEqual(waited["next"] as? String, Delegation.next)
+        // One budget from the call, so an OpenClaw wait answers inside the Gateway's node deadline.
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.2, "A 0.8 s creation uses up the 0.6 s budget, so the wait returns at once")
+    }
+
     func testAGrandchildKeepsEveryoneBusyUntilItEnds() async throws {
         let (model, transport, _, _) = makeModel()
         let (parentID, caller) = try await activeParent(model)
