@@ -256,6 +256,33 @@ import SwiftUI
         XCTAssertEqual(next.planReadyTurnID, "turn-2", "Keep planning hides one turn's banner only")
     }
 
+    func testPlanReadyIsNamedByTheAnswersFirstHeading() {
+        var session = CompanionSession()
+        session.runtime = .claude
+        planTurn(&session)
+        XCTAssertNil(session.planReadyTitle, "An answer without a heading reads Plan ready")
+        func named(_ answer: String, in base: CompanionSession? = nil) -> String? {
+            var copy = base ?? session
+            copy.messages[copy.messages.count - 1].text = answer
+            return copy.planReadyTitle
+        }
+        XCTAssertEqual(named("Intro\n\n## Ready for **review**\n\nSteps\n\n# Later"), "Ready for review", "The first heading, as plain text")
+        XCTAssertEqual(named("# Plan: Add `welcome()`"), "Add welcome()")
+        XCTAssertEqual(named("Plan — migrate\n==="), "migrate", "Setext headings count")
+        XCTAssertNil(named("## Plan"), "A heading that only says Plan adds nothing")
+        XCTAssertEqual(named("# Planning notes"), "Planning notes")
+        XCTAssertNil(named("```\n# not a heading\n```\nPlain"), "Code is not a heading")
+        var dismissed = session
+        dismissed.planReadyDismissedTurnID = "turn"
+        XCTAssertNil(named("# Ship it", in: dismissed), "No ready plan, no name")
+        var next = session
+        next.messages[next.messages.count - 1].text = "# Earlier plan"
+        planTurn(&next, id: "turn-2")
+        XCTAssertNil(next.planReadyTitle, "An earlier turn's heading never names the latest plan")
+        next.messages.append(ChatMessage(role: "assistant", text: "# Final plan", turnID: "turn-2"))
+        XCTAssertEqual(next.planReadyTitle, "Final plan", "The turn's last answer names it")
+    }
+
     func testImplementRestoresThePrePlanModeAndSendsThroughTheNormalPath() async throws {
         await model.newSession(showPanel: false, runtime: .codex)
         let id = try XCTUnwrap(model.currentID)

@@ -815,12 +815,17 @@ identify selection.
   them until **Resume queued messages**. A refused queued send keeps its one
   saved copy and pauses the rest. Unconfirmed sends keep **Check last send**
   protection. A normal idle send works while the queue is paused.
-- **Plan ready.** When a turn finishes in Plan, a banner above the composer
-  reads **Plan ready** with **Keep planning** and **Implement**. Implement
+- **Plan ready.** When a turn finishes in Plan, the composer field gains a
+  slim first row on its own surface, above a hairline: **Plan ·** and the
+  plan's name, the first heading of the turn's last answer (as plain text,
+  without a leading “Plan:”), or **Plan ready** when it has none; then **Keep
+  planning** as quiet text and **Implement** as its one action (Refined's
+  neutral pill, so sage stays with Send; the accent key in Tahoe and
+  Instrument). It is never a separate band or tint. Implement
   returns to the permission mode used before Plan was chosen (Default
   permissions when there was none) and sends “Implement the plan.” through the
   normal send path, leaving the draft alone; when nothing could start it stays
-  in Plan and the banner returns. Keep planning hides it for that turn, across
+  in Plan and the row returns. Keep planning hides it for that turn, across
   restarts. It is not shown while busy, after a failure or Stop, for a turn
   that ran before Plan was chosen, or once that turn's native plan approval
   (Claude `ExitPlanMode`, Cursor `create_plan`) was answered, allowed or
@@ -966,8 +971,9 @@ folder whose sessions are all archived leaves the default list.
 
 ## Composer model controls
 
-The composer is **one field in every design**: attachments and the editor on
-top, and one bar along its bottom edge holding every control:
+The composer is **one field in every design**: a ready plan's row,
+attachments and the editor on top, and one bar along its bottom edge holding
+every control:
 `[+] [SnapShot] [harness (drafts) · folder · session (secondary pages)] …
 [model] [permission mode] [context gauge] [Send/Stop]`. Nothing sits in a row
 above or under the field, so a tall draft, a queue or a banner can never push a
