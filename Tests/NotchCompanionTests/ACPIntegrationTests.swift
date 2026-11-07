@@ -130,6 +130,113 @@ final class ACPIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testAntigravityHostsDelegationAnswersNativeQuestionsAndResumesOnlyListedConversations() async throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else { throw XCTSkip("Offline agy peer needs system Python 3.") }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("notch-agy-fixture-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Fixtures/antigravity_acp.py")
+        let executable = root.appendingPathComponent("agy")
+        try FileManager.default.copyItem(at: source, to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let profile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gemini/antigravity-cli").path
+        do {
+            try await ACPRuntimeClient(runtime: .antigravity, profileID: root.path, executableOverride: executable).connect()
+            XCTFail("Only the native profile")
+        } catch {}
+        let client = ACPRuntimeClient(runtime: .antigravity, profileID: profile, executableOverride: executable)
+        defer { client.disconnect() }
+        var events: [(String, [String: Any])] = []
+        client.onEvent = { events.append(($0, $1)) }
+        try await client.connect()
+        let trusted: [String: Any] = ["cwd": root.path, "project_trusted": true]
+        let models = try await client.request("runtime.models", params: trusted)
+        let discovered = try XCTUnwrap(models["catalog"] as? RuntimeModelCatalog)
+        XCTAssertEqual(discovered.defaultModel?.model, "gemini-3.8-flash-high")
+        do {
+            _ = try await client.request("session.create", params: ["cwd": root.path])
+            XCTFail("Native tools start only in a trusted project")
+        } catch {}
+
+        let delegation: [String: Any] = ["url": "http://127.0.0.1:9/mcp", "token": "tok", "bridge": "/bin/bridge", "instructions": Delegation.instructions]
+        let session = try await client.request("session.create", params: trusted.merging(["delegation": delegation]) { $1 })
+        let sid = try XCTUnwrap(session["session_id"] as? String)
+        let reloaded = try await client.request("session.resume", params: trusted.merging(["session_id": sid, "native_submission_attempted": true]) { $1 })
+        XCTAssertEqual(reloaded["stored_session_id"] as? String, sid, "A live reload (Check last send) needs no native list entry")
+        let capabilities = try XCTUnwrap((session["info"] as? [String: Any])?["capabilities"] as? [String: Any])
+        XCTAssertEqual(capabilities["questions"] as? Bool, true)
+        XCTAssertEqual(capabilities["permissionModes"] as? [String], [PermissionMode.autoEdit.rawValue, PermissionMode.plan.rawValue],
+                       "`default` follows native settings, so it is Inherit, not Ask")
+        let catalog = try XCTUnwrap(session["catalog"] as? RuntimeModelCatalog)
+        XCTAssertEqual(catalog.models.map(\.choice.model), discovered.models.map(\.choice.model),
+                       "A model picked before the first send stays valid once the session opens")
+        do {
+            _ = try await client.request("session.model.set", params: ["session_id": sid, "model": "gemini-3.8-flash"])
+            XCTFail("A config family is not one of the session's exact models")
+        } catch {}
+        _ = try await client.request("session.model.set", params: ["session_id": sid, "model": "claude-sonnet-4-6"])
+
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "ordinary"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["text"] as? String, "reply:claude-sonnet-4-6")
+        let tool = try XCTUnwrap(events.first { $0.0 == "tool.start" }?.1["name"] as? String)
+        XCTAssertEqual(ToolActivity.delegationTool(tool), "delegate_task", "Labelled as the companion's tool")
+
+        events.removeAll()
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "question"])
+        try await eventually { events.contains { $0.0 == "clarify.request" } }
+        let question = try XCTUnwrap((events.first { $0.0 == "clarify.request" }?.1["questions"] as? [[String: Any]])?.first)
+        XCTAssertEqual(question["choices"] as? [String], ["Sage", "Ink"])
+        XCTAssertEqual(question["allows_free_text"] as? Bool, false)
+        do {
+            _ = try await client.request("approval.respond", params: ["session_id": sid, "request_id": "s:ask-1", "choice": "once"])
+            XCTFail("A native question's options are answers, never an approval")
+        } catch {}
+        _ = try await client.request("clarify.respond", params: ["session_id": sid, "request_id": "s:ask-1", "question_id": "interaction_1", "answer": "Ink"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["text"] as? String, "opt-ink")
+
+        events.removeAll()
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "permission"])
+        try await eventually { events.contains { $0.0 == "approval.request" } }
+        XCTAssertEqual(events.first { $0.0 == "approval.request" }?.1["choices"] as? [String], ["once", "deny"])
+        _ = try await client.request("approval.respond", params: ["session_id": sid, "request_id": "s:perm-1", "choice": "deny"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["text"] as? String, "reject")
+        client.disconnect()
+
+        let resumed = ACPRuntimeClient(runtime: .antigravity, profileID: profile, executableOverride: executable)
+        defer { resumed.disconnect() }
+        try await resumed.connect()
+        let reopened = try await resumed.request("session.resume", params: trusted.merging(["session_id": sid, "delegation": delegation,
+                                                                                            "native_submission_attempted": true]) { $1 })
+        XCTAssertEqual(reopened["stored_session_id"] as? String, sid)
+        XCTAssertEqual(reopened["history_complete"] as? Bool, false)
+        XCTAssertEqual((reopened["info"] as? [String: Any])?["model"] as? String, "gemini-3.8-flash-high", "A cold resume reports the native default")
+        let missing = UUID().uuidString.lowercased()
+        do {
+            _ = try await resumed.request("session.resume", params: trusted.merging(["session_id": missing, "native_submission_attempted": true]) { $1 })
+            XCTFail("An ID agy does not list would silently become an empty conversation")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("no longer lists")) }
+        let neverPrompted = try await resumed.request("session.resume", params: trusted.merging(["session_id": missing, "native_submission_attempted": false]) { $1 })
+        XCTAssertEqual(neverPrompted["stored_session_id"] as? String, missing, "Nothing was sent there, so its empty conversation keeps the ID")
+
+        let wire = try String(contentsOf: root.appendingPathComponent("wire.jsonl"), encoding: .utf8).split(separator: "\n").compactMap {
+            try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+        }
+        let opens = wire.filter { ["session/new", "session/resume"].contains($0["method"] as? String) }.compactMap { $0["params"] as? [String: Any] }
+        XCTAssertEqual(opens.count, 4, "The unlisted resume was refused before reaching agy")
+        for open in opens.prefix(3) {
+            XCTAssertEqual((open["mcpServers"] as? [[String: Any]])?.first?["name"] as? String, "notch", "A reload keeps its bridge")
+            let meta = ((open["_meta"] as? [String: Any])?["antigravity"] as? [String: Any])?["systemPrompt"] as? [String: Any]
+            XCTAssertEqual(meta?["append"] as? String, Delegation.instructions, "Appended on every open: agy keeps it only per process")
+        }
+        XCTAssertNil(opens[3]["_meta"], "No delegation, no appended instructions")
+        XCTAssertTrue(wire.contains { $0["method"] as? String == "session/list" && ($0["params"] as? [String: Any])?["cursor"] != nil },
+                      "The native list is followed across pages")
+    }
+
+    @MainActor
     private func eventually(_ predicate: () -> Bool) async throws {
         for _ in 0..<100 {
             if predicate() { return }

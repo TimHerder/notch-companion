@@ -827,12 +827,12 @@ folder whose sessions are all archived leaves the default list.
 
 - **Blocking questions** (Hermes `clarify`, Claude Code `AskUserQuestion`,
   Codex `requestUserInput`, Pi `notch_ask_user`/extension dialogs, OpenCode
-  questions/forms) use the card that replaces the composer. A native question
-  header joins the runtime name in the title; option descriptions sit under
-  their options. Pi's written-answer choice opens an input dialog in the same
-  card. OpenCode replies keep native option values and multiple selections.
-  Antigravity does not expose question contents in JSON mode; its setup note
-  and opaque-step notice say to ask and answer as ordinary messages.
+  questions/forms, Antigravity `ask_question`) use the card that replaces the
+  composer. A native question header joins the runtime name in the title; option
+  descriptions sit under their options. Pi's written-answer choice opens an input
+  dialog in the same card. OpenCode replies keep native option values and
+  multiple selections. Antigravity questions offer one choice from their options
+  and no written answer.
 - **Non-blocking questions** (Codex `request_user_input_async`) arrive with the
   answer that asked them and do not hold the turn. They render as a card under
   that message (options plus an always-allowed written answer). Reply sends one

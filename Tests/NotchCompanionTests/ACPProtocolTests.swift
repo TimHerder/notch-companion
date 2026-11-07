@@ -71,6 +71,25 @@ final class ACPProtocolTests: XCTestCase {
         XCTAssertEqual(unsupported.events.first?.name, "runtime.notice")
     }
 
+    func testAntigravityQuestionsNeverBecomeApprovalsAndItsExactModelOutranksTheConfigFamily() throws {
+        let options: [[String: Any]] = [["optionId": "a", "name": "Same", "kind": "allow_once"], ["optionId": "b", "name": "Same", "kind": "allow_once"]]
+        let params: [String: Any] = ["sessionId": "one", "toolCall": ["toolCallId": "interaction_9", "title": "Pick one"], "options": options]
+        var state = ACPProtocolState(antigravity: true); state.owned = ["one"]; try state.begin("one")
+        let ambiguous = state.serverRequest(id: 1, method: "session/request_permission", params: params)
+        XCTAssertEqual(ambiguous.events.map(\.name), ["runtime.notice"], "Indistinguishable answers are cancelled, not approved")
+        XCTAssertEqual(((ambiguous.reply?["result"] as? [String: Any])?["outcome"] as? [String: Any])?["outcome"] as? String, "cancelled")
+        var other = ACPProtocolState(); other.owned = ["one"]; try other.begin("one")
+        XCTAssertEqual(other.serverRequest(id: 1, method: "session/request_permission", params: params).events.first?.name, "approval.request",
+                       "Other agents' requests keep their permission meaning")
+
+        state.models["one"] = ["availableModels": [["modelId": "gemini-3.8-flash-low", "name": "Low"]], "currentModelId": "gemini-3.8-flash-low"]
+        let family = state.notification("session/update", ["sessionId": "one", "update": ["sessionUpdate": "config_option_update",
+            "configOptions": [["id": "model", "currentValue": "gemini-3.8-flash", "options": [["value": "gemini-3.8-flash"]]]]]])
+        XCTAssertTrue(family.isEmpty, "The model family must not replace the exact model")
+        XCTAssertEqual(state.catalog("one").defaultModel?.model, "gemini-3.8-flash-low")
+        XCTAssertEqual(state.catalog("two").note, "This ACP runtime has not reported a session model catalog.")
+    }
+
     func testCursorRequestsWithoutAnAttributableSessionAreDeclined() throws {
         var state = ACPProtocolState(); state.owned = ["one", "two"]; try state.begin("one"); try state.begin("two")
         let result = state.serverRequest(id: 9, method: "cursor/create_plan", params: ["toolCallId": "unknown", "plan": "Edit"])

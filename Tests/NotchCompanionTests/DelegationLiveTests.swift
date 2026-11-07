@@ -3,11 +3,12 @@ import XCTest
 
 /// Opt-in checks against the installed harnesses. The connection checks send
 /// no prompt: Codex opens an ephemeral thread, Claude a session without
-/// persistence, each in a temporary folder with the existing profile.
+/// persistence, Antigravity an empty conversation, each in a temporary folder
+/// with the existing profile.
 @MainActor final class DelegationLiveTests: XCTestCase {
     private func requireLive() throws {
         guard ProcessInfo.processInfo.environment["NOTCH_RUN_LIVE_DELEGATION_TEST"] == "1" else {
-            throw XCTSkip("Set NOTCH_RUN_LIVE_DELEGATION_TEST=1 to check the installed Claude Code and Codex.")
+            throw XCTSkip("Set NOTCH_RUN_LIVE_DELEGATION_TEST=1 to check the installed Claude Code, Codex and Antigravity CLI.")
         }
     }
 
@@ -230,5 +231,34 @@ import XCTest
         let status = ((result["status"] as? [String: Any])?["response"] as? [String: Any])?["mcpServers"] as? [[String: Any]] ?? []
         let notch = try XCTUnwrap(status.first { $0["name"] as? String == "notch" }, "\(result)")
         XCTAssertEqual(notch["status"] as? String, "connected", "\(notch)")
+    }
+
+    /// No prompt: `agy acp` opens one empty conversation in a temporary folder, starts
+    /// the companion's stdio bridge from `session/new` and lists the tools with the session's token.
+    func testInstalledAntigravityStartsTheBridgeFromItsACPSession() async throws {
+        try requireLive()
+        let bridge = ProcessInfo.processInfo.environment["NOTCH_TEST_APP_EXECUTABLE"].map { URL(fileURLWithPath: $0) }
+            ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent(".build/debug/NotchCompanion")
+        guard FileManager.default.isExecutableFile(atPath: bridge.path) else { throw XCTSkip("Build the app product first.") }
+        let server = DelegationServer()
+        defer { server.stop() }
+        var listed: [DelegationCaller] = []
+        server.tools = { caller in listed.append(caller); return Delegation.tools }
+        server.instructions = Delegation.instructions
+        let url = try await server.start()
+        let caller = DelegationCaller(sessionID: "live-antigravity", runtime: .antigravity, subagent: false)
+        let delegation: [String: Any] = ["url": url.absoluteString, "token": server.issueToken(for: caller), "bridge": bridge.path,
+                                         "instructions": Delegation.instructions]
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("notch-live-antigravity-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let client = ACPRuntimeClient(runtime: .antigravity, profileID: RuntimeRoute.defaultProfile(.antigravity))
+        defer { client.disconnect() }
+        try await client.connect()
+        let opened = try await client.request("session.create", params: ["cwd": folder.path, "project_trusted": true, "delegation": delegation])
+        XCTAssertNotNil(opened["session_id"] as? String)
+        for _ in 0..<150 where listed.isEmpty { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertEqual(listed.first, caller, "agy started the bridge with this session's token and listed the tools")
     }
 }

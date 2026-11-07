@@ -128,7 +128,7 @@ extension RuntimeKind {
         case .deepseek:
             return .init(resume: true, attachments: true, approvals: true, modelSelection: true)
         case .antigravity:
-            return .init(resume: true, attachments: true, modelSelection: true, contextUsage: true)
+            return .init(resume: true, attachments: true, approvals: true, questions: true, modelSelection: true, contextUsage: true)
         case .cursor:
             return .init(resume: true, attachments: true, approvals: true, questions: true, modelSelection: true, contextUsage: true,
                          permissionModes: [PermissionMode.plan.rawValue])
@@ -159,7 +159,7 @@ extension RuntimeKind {
         case .openclaw: address = "https://docs.openclaw.ai/gateway/clients"
         case .claude: address = "https://code.claude.com/docs/en/headless"
         case .deepseek: address = "https://github.com/deepseek-ai/deepseek-harness/tree/master/apps/cli"
-        case .antigravity: address = "https://www.antigravity.google/docs/cli/headless/"
+        case .antigravity: address = "https://antigravity.google/docs/ide/extensions/acp/"
         case .cursor: address = "https://cursor.com/docs/cli/acp"
         default: return nil
         }

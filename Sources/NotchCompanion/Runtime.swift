@@ -113,11 +113,10 @@ final class RuntimeRouter: RuntimeTransport {
             case .hermes: return SharedHermesClient(profileID: route.profileID)
             case .codex: return CodexClient(profileID: route.profileID)
             case .opencode: return OpenCodeClient(profileID: route.profileID, supervisorURL: opencodeSupervisorURL)
-            case .deepseek, .cursor: return ACPRuntimeClient(runtime: route.runtime, profileID: route.profileID)
+            case .deepseek, .cursor, .antigravity: return ACPRuntimeClient(runtime: route.runtime, profileID: route.profileID)
             case .pi: return PiClient(profileID: route.profileID)
             case .openclaw: return OpenClawClient(profileID: route.profileID)
             case .claude: return ClaudeClient(profileID: route.profileID)
-            case .antigravity: return AntigravityClient(profileID: route.profileID)
             default: return UnavailableRuntimeClient(runtime: route.runtime)
             }
         }

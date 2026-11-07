@@ -49,15 +49,16 @@ and the version/capability checks implemented in the adapter.
 | OpenClaw | [Gateway protocol](https://docs.openclaw.ai/gateway/protocol) and [client guide](https://docs.openclaw.ai/gateway/clients) |
 | DeepSeek Harness | [ACP](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/acp/acp/README.md) and [native profiles](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/cli/README.md) |
 | Claude Code | [Unmodified programmatic CLI](https://code.claude.com/docs/en/headless) |
-| Antigravity CLI | [Headless interface](https://www.antigravity.google/docs/cli/headless/) |
+| Antigravity CLI | [`agy acp` server](https://antigravity.google/docs/ide/extensions/acp/) and [CLI reference](https://antigravity.google/docs/cli/reference) |
 | Cursor CLI | [ACP interface](https://cursor.com/docs/cli/acp) |
 
 ACP capabilities are negotiated; a shared protocol does not guarantee identical
 profile composition, approval behavior, extensions or persistence. In particular,
 DeepSeek's existing selected profile must remain intact. Do not create a minimal
 replacement profile to make its ACP startup succeed. Record Cursor's evidence as
-protocol fixtures until its installed CLI has passed live acceptance. Antigravity's opaque question
-steps cannot be treated as answered questions or approvals.
+protocol fixtures until its installed CLI has passed live acceptance. Antigravity sends its questions
+as `interaction_` permission requests: their options are answers, never approvals,
+and its `load` accepts IDs it never saved, so check the native session list first.
 
 Claude uses the installed unmodified CLI, not `--bare`, copied credentials or a
 separate SDK agent. Normal default authentication must leave `CLAUDE_CONFIG_DIR`
