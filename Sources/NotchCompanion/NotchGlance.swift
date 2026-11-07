@@ -108,8 +108,8 @@ enum SessionDigest {
                         limit: Int = NotchGeometry.glanceMaxRows) -> [GlanceEntry] {
         let ranked: [(rank: Int, session: CompanionSession)] = sessions.compactMap { session in
             let rank = rank(session)
-            // Quiet archived sessions and untouched drafts are not activity.
-            if rank >= 4 && (session.isArchived || session.messages.isEmpty) { return nil }
+            // Quiet archived or snoozed sessions and untouched drafts are not activity.
+            if rank >= 4 && (session.isArchived || session.snoozedUntil != nil || session.messages.isEmpty) { return nil }
             return (rank, session)
         }
         return ranked

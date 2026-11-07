@@ -733,8 +733,7 @@ extension AppModel {
                             parent.completionID = UUID().uuidString
                             if parent.parentSessionID == nil {
                                 lastCompletion[parent.id] = Date()
-                                play(.complete)
-                                announce(.finished, sessionID: parent.id)
+                                announceCompletion(parent.id)
                             }
                         } else if !parent.hasUnreadFailure { parent.completionID = UUID().uuidString }
                     }

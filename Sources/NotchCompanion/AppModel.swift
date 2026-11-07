@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var sessions: [CompanionSession] = [] { didSet { glanceCache = nil; liveCache = nil } }
+    @Published var sessions: [CompanionSession] = [] { didSet { glanceCache = nil; liveCache = nil; wakeSessionsThatNeedYou(since: oldValue) } }
     @Published var currentID: String? {
         didSet {
             // Leaving a session counts as seeing it, so it never archives the moment it stops being the selection.
@@ -118,7 +118,11 @@ final class AppModel: ObservableObject {
         didSet { preferences.set(autoArchiveAfter.rawValue, forKey: SessionAutoArchive.key); glanceCache = nil }
     }
     /// The one session row whose inline actions are open.
-    @Published var sessionActionsID: String?
+    @Published var sessionActionsID: String? { didSet { snoozeChoicesShown = false } }
+    /// That row shows its snooze choices in place of its actions.
+    @Published var snoozeChoicesShown = false
+    /// Sleeps until the earliest snoozed session's wake.
+    var snoozeTimer: Task<Void, Never>?
     @Published private(set) var deferredOperation: DeferredOperation?
     @Published private(set) var answeringRequestIDs: Set<String> = []
     @Published private(set) var runtimeSettingsRevision = 0
@@ -213,10 +217,11 @@ final class AppModel: ObservableObject {
             let matchesFilter: Bool
             switch sessionFilter {
             // A search covers every session, archived ones included.
-            case .all: matchesFilter = !query.isEmpty || !(session.isArchived || isAutoArchived(session, now: now))
+            case .all: matchesFilter = !query.isEmpty || !(session.isArchived || session.snoozedUntil != nil || isAutoArchived(session, now: now))
             case .needsYou: matchesFilter = session.displayState == .waiting || session.hasUnreadFailure
             case .unread: matchesFilter = session.hasUnreadResult && !session.isBusy
             case .archived: matchesFilter = session.isArchived || isAutoArchived(session, now: now)
+            case .snoozed: matchesFilter = session.snoozedUntil != nil
             }
             return matchesFilter && (query.isEmpty || session.title.localizedCaseInsensitiveContains(query)
                 || session.messages.contains(where: { $0.text.localizedCaseInsensitiveContains(query) }))
@@ -253,17 +258,17 @@ final class AppModel: ObservableObject {
     /// App-owned children appear only inside their parent, never as rows or indicators of their own.
     var topLevelSessions: [CompanionSession] { sessions.filter { $0.parentSessionID == nil } }
     var activeCount: Int { topLevelSessions.filter(\.isBusy).count }
-    var collapsedStatus: CollapsedStatus { CollapsedStatus.resolve(sessions: topLevelSessions) }
-    var sessionIndicators: [SessionIndicator] { SessionIndicator.resolve(sessions: topLevelSessions) }
-    var unreadResultCount: Int { topLevelSessions.filter { $0.hasUnreadResult && !$0.isBusy }.count }
+    var collapsedStatus: CollapsedStatus { CollapsedStatus.resolve(sessions: noticedSessions) }
+    var sessionIndicators: [SessionIndicator] { SessionIndicator.resolve(sessions: noticedSessions) }
+    var unreadResultCount: Int { noticedSessions.filter { $0.hasUnreadResult && !$0.isBusy }.count }
     var glanceEntries: [GlanceEntry] {
         if let glanceCache { return glanceCache }
         // shortcut: cached until sessions change, so a session turning dormant meanwhile stays until then.
-        let entries = SessionDigest.entries(sessions: topLevelSessions.filter { !isAutoArchived($0) }, requests: requests)
+        let entries = SessionDigest.entries(sessions: noticedSessions.filter { !isAutoArchived($0) }, requests: requests)
         glanceCache = entries
         return entries
     }
-    var glanceSummary: GlanceSummary { GlanceSummary(sessions: topLevelSessions) }
+    var glanceSummary: GlanceSummary { GlanceSummary(sessions: noticedSessions) }
     /// The working and waiting sessions' glyphs, when the setting allows it.
     var liveActivity: LiveActivity? {
         guard liveActivityEnabled else { return nil }
@@ -350,7 +355,8 @@ final class AppModel: ObservableObject {
             }
             preferences.set(configuredRuntimeProfiles, forKey: "runtime.configuredProfiles")
         }
-        currentID = sessions.first(where: { !$0.isArchived && $0.parentSessionID == nil })?.id ?? topLevelSessions.first?.id ?? sessions.first?.id
+        wakeDueSessions()
+        currentID = sessions.first(where: { !$0.isArchived && $0.snoozedUntil == nil && $0.parentSessionID == nil })?.id ?? topLevelSessions.first?.id ?? sessions.first?.id
         if sessions.isEmpty { var session = CompanionSession(); session.runtime = newDraftRuntime; session.profileID = RuntimeRoute.defaultProfile(session.runtime, defaults: preferences); applyNativeWorkspace(to: &session); sessions = [session]; currentID = session.id }
         delegationEnabled = preferences.object(forKey: "delegation.enabled") as? Bool ?? true
         configureDelegation()
@@ -692,7 +698,7 @@ final class AppModel: ObservableObject {
         cancelDelegationPreparations()
         connectGeneration = UUID(); connecting = false; cancelDeferredOperation()
         changeTasks.values.forEach { $0.cancel() }; changeTasks.removeAll()
-        persistTask?.cancel(); save(); client.disconnect(); delegationServer.stop()
+        persistTask?.cancel(); snoozeTimer?.cancel(); save(); client.disconnect(); delegationServer.stop()
     }
 
     /// `workspace` starts the draft in a project's folder instead of the default.
@@ -892,7 +898,7 @@ final class AppModel: ObservableObject {
 
     func archiveSession(_ id: String) {
         guard canArchiveSession(id) else { return }
-        update(id) { $0.isArchived = true }
+        update(id) { $0.isArchived = true; $0.snoozedUntil = nil }
         if currentID == id {
             page = .sessions
         }
@@ -1461,6 +1467,7 @@ final class AppModel: ObservableObject {
             // Mark working before the RPC response: streaming events may arrive first.
             update(localID) { target in
                 target.isArchived = false
+                if !background { target.snoozedUntil = nil }
                 target.state = .working
                 target.parentTurnComplete = false
                 target.completionID = nil
@@ -1962,8 +1969,7 @@ final class AppModel: ObservableObject {
             // A child's result reaches its parent as a wake, not as its own announcement.
             if status == "complete", sessions[index].state == .finished, sessions[index].parentSessionID == nil,
                Date().timeIntervalSince(lastCompletion[localID] ?? .distantPast) > 1 {
-                lastCompletion[localID] = Date(); play(.complete)
-                announce(.finished, sessionID: localID)
+                lastCompletion[localID] = Date(); announceCompletion(localID)
             }
         case "message.questions":
             // Non-blocking questions belong to this turn's answer; the turn goes on.
@@ -2181,8 +2187,7 @@ final class AppModel: ObservableObject {
                     if sessions[index].state == .finished {
                         sessions[index].completionID = UUID().uuidString
                         lastCompletion[sessions[index].id] = Date()
-                        play(.complete)
-                        announce(.finished, sessionID: sessions[index].id)
+                        announceCompletion(sessions[index].id)
                     }
                 }
             }

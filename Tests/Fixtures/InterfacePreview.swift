@@ -965,6 +965,17 @@ import ImageIO
         model.endFileDrop()
         model.eating = false
         model.page = .sessions
+        // Snoozed sessions leave the list for a Snoozed row above Archived; one has a result waiting.
+        let snoozedIDs = ["snoozed", "snoozed-unread"]
+        model.sessions += [
+            CompanionSession(id: "snoozed", title: "Draft the launch post", state: .finished,
+                             messages: [ChatMessage(role: "user", text: "Draft the launch post."), ChatMessage(role: "assistant", text: "Here is a first draft for review.")],
+                             workspacePath: "/tmp/Website", completionID: "snoozed-result", acknowledgedCompletionID: "snoozed-result",
+                             snoozedUntil: Date().addingTimeInterval(3 * 3_600 - 30)),
+            CompanionSession(id: "snoozed-unread", title: "Quarterly metrics summary", state: .finished,
+                             messages: [ChatMessage(role: "user", text: "Summarize the quarter's metrics."), ChatMessage(role: "assistant", text: "Revenue grew 12%.")],
+                             completionID: "metrics-result", snoozedUntil: Date().addingTimeInterval(2 * 86_400 - 30))
+        ]
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions", output: output)
         let unreadSessions = model.sessions
         // Projects: sessions group under their working folders.
@@ -986,7 +997,7 @@ import ImageIO
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-session-actions", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-session-actions", output: output)
         model.sessionActionsID = nil
-        // A search covers archived sessions too and marks them.
+        // A search covers archived and snoozed sessions too and marks them.
         model.sessionSearch = "review"
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-filtered", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-sessions-filtered", output: output)
@@ -994,7 +1005,20 @@ import ImageIO
         model.sessionFilter = .archived
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-archived", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-sessions-archived", output: output)
+        model.sessionFilter = .snoozed
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-snoozed", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-sessions-snoozed", output: output)
+        // A snoozed row offers Wake now.
+        model.sessionActionsID = "snoozed"
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-session-wake", output: output)
         model.sessionFilter = .all
+        // Snooze's choices take an open row's actions' place, wrapping in the sidebar.
+        model.sessionActionsID = "review"
+        model.snoozeChoicesShown = true
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-session-snooze", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-session-snooze", output: output)
+        model.sessionActionsID = nil
+        model.sessions.removeAll { snoozedIDs.contains($0.id) }
         // Nothing active: the default list says so and links to Archived.
         let caughtUp = AppModel(storageURL: temporary.appendingPathComponent("caught-up.json"), playsSounds: false,
                                 client: PreviewTransport(), preferences: preferences)
