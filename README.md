@@ -45,7 +45,7 @@ Companion doesn't bundle agents, sell model access or sign in for you.
 | OpenCode | Local HTTP server | Supported |
 | Pi | RPC frontend | Supported |
 | OpenClaw | Local Gateway | Supported |
-| Antigravity CLI | Streaming CLI | Supported. Can't ask questions, request approvals or take images |
+| Antigravity CLI | `agy acp` | Supported. Can't take images |
 | DeepSeek Harness | ACP | Experimental |
 | Cursor CLI | `cursor-agent acp` | Experimental |
 

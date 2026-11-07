@@ -1581,7 +1581,8 @@ final class AppModel: ObservableObject {
         var params: [String: Any] = ["companion_id": localID, "runtime": session.runtime.rawValue,
                                      "profile_id": session.route.profileID, "legacy_private": session.isLegacyPrivate,
                                      "cwd": requestedCwd, "project_trusted": isProjectTrusted(session),
-                                     "activity_unverified": session.nativeActivityUnverified != nil]
+                                     "activity_unverified": session.nativeActivityUnverified != nil,
+                                     "native_submission_attempted": session.nativeSubmissionAttempted]
         if let pending = session.pendingSubmission { params["pending_turn_id"] = pending.id }
         if let mode = session.permissionMode { params["permission_mode"] = mode.rawValue }
         let delegation = await delegationLaunch(for: session)

@@ -141,29 +141,6 @@ final class ClaudeAntigravityClientTests: XCTestCase {
         XCTAssertEqual(resumed["history_complete"] as? Bool, false)
     }
 
-    func testAntigravityProductionTransportExactNativeIdentityAndResult() async throws {
-        let (directory, executable) = try fixture()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let profile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gemini/antigravity-cli").path
-        let client = AntigravityClient(profileID: profile, executableURL: executable)
-        defer { client.disconnect() }
-        try await client.connect()
-        let opened = try await client.request("session.create", params: ["cwd": directory.path, "project_trusted": true])
-        let id = try XCTUnwrap(opened["session_id"] as? String)
-        var response: String?
-        let selected = try await client.request("session.model.set", params: ["session_id": id, "model": "fixture-selected"])
-        XCTAssertEqual(selected["session_id"] as? String, id)
-        XCTAssertEqual((selected["info"] as? [String: Any])?["model"] as? String, "fixture-selected")
-        client.onEvent = { name, payload in if name == "message.complete" { response = payload["text"] as? String } }
-        _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "hello", "turn_id": "test-turn"])
-        try await wait { response != nil }
-        XCTAssertEqual(response, "fixture answer")
-        client.disconnect(); try await client.connect()
-        let resumed = try await client.request("session.resume", params: ["session_id": id, "cwd": directory.path, "project_trusted": true])
-        XCTAssertEqual(resumed["stored_session_id"] as? String, id)
-        XCTAssertNil(resumed["messages"])
-    }
-
     func testClaudeRejectsUnappliedEffort() async throws {
         let (directory, executable) = try fixture(ignoresEffort: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -192,35 +169,20 @@ final class ClaudeAntigravityClientTests: XCTestCase {
         let executable = directory.appendingPathComponent("native-cli")
         let source = #"""
         #!/usr/bin/env python3
-        import json, sys, uuid
+        import json, sys
         def emit(value):
             print(json.dumps(value), flush=True)
-        if 'models' in sys.argv or '/model' in sys.argv:
-            name = 'models' if 'models' in sys.argv else 'model'
-            data = {'models':[{'id':'fixture-model','label':'Default'},{'id':'fixture-selected','label':'Selected'}]} if name=='models' else {'id':'fixture-model'}
-            emit({'status':'SUCCESS','command':{'name':name,'data':data}});sys.exit(0)
-        claude = '--print' in sys.argv
-        if claude:
-            sid = next((a.split('=',1)[1] for a in sys.argv if a.startswith(('--session-id=','--resume='))), None)
-            assert sid or {'--no-session-persistence','--strict-mcp-config'} <= set(sys.argv), 'A catalog probe must not save a session or start MCP servers'
-            selected_model = 'fixture-model'
-            effort = None
-        else:
-            sid = sys.argv[sys.argv.index('--conversation')+1] if '--conversation' in sys.argv else str(uuid.uuid4())
-            selected_model = sys.argv[sys.argv.index('--model')+1] if '--model' in sys.argv else 'fixture-model'
-            emit({'event':'init','conversation_id':sid,'init':{'cwd':'.','model':selected_model}})
+        sid = next((a.split('=',1)[1] for a in sys.argv if a.startswith(('--session-id=','--resume='))), None)
+        assert sid or {'--no-session-persistence','--strict-mcp-config'} <= set(sys.argv), 'A catalog probe must not save a session or start MCP servers'
+        selected_model = 'fixture-model'
+        effort = None
         def finish():
             emit({'type':'assistant','session_id':sid,'message':{'model':selected_model,'content':[], 'usage':{'input_tokens':12,'cache_creation_input_tokens':70,'cache_read_input_tokens':110,'output_tokens':900}}})
             emit({'type':'result','session_id':sid,'is_error':False,'result':'fixture answer','usage':{'input_tokens':90000},'modelUsage':{selected_model:{'contextWindow':16000,'inputTokens':90000}}})
             emit({'type':'system','subtype':'session_state_changed','state':'idle','session_id':sid})
         for line in sys.stdin:
             frame=json.loads(line)
-            if not claude:
-                assert frame['event']=='user'
-                emit({'event':'step_update','step_update':{'conversation_id':sid,'step_type':'user_input','state':'DONE'}})
-                emit({'event':'step_update','step_update':{'conversation_id':sid,'step_type':'agent_response','state':'DONE','usage':{'input_tokens':12,'cache_read_tokens':80}}})
-                emit({'event':'result','result':{'conversation_id':sid,'status':'SUCCESS','response':'fixture answer','usage':{'total_tokens':100000}}})
-            elif frame['type']=='control_request':
+            if frame['type']=='control_request':
                 kind=frame['request']['subtype']
                 if kind=='set_model':
                     selected_model=frame['request']['model']

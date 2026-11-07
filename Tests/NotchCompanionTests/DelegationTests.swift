@@ -1059,7 +1059,7 @@ import XCTest
         var untouched = ["PATH": "/usr/bin"]
         XCTAssertTrue(PiClient.delegationArguments(nil, environment: &untouched).isEmpty)
         XCTAssertEqual(untouched, ["PATH": "/usr/bin"])
-        XCTAssertEqual(RuntimeKind.allCases.filter(\.hostsDelegation), [.codex, .pi, .claude, .deepseek])
+        XCTAssertEqual(RuntimeKind.allCases.filter(\.hostsDelegation), [.codex, .pi, .claude, .deepseek, .antigravity])
     }
 
     func testTheStdioBridgeRelaysEachLineWithTheSessionToken() async throws {

@@ -51,7 +51,7 @@ project invalidates it.
 | Pi | `pi --mode rpc`; `PI_CODING_AGENT_DIR`, native session file | Native extensions/dialogs, tools, per-session models, images, settled lifecycle. Context from `get_session_stats.contextUsage` only. Bundled process-only extension provides `notch_ask_user`. Terminal-rendered extension UI and built-in tool approvals are unavailable. |
 | OpenClaw | Authenticated WebSocket to the existing loopback Gateway; selected agent | Protocol 4 pairing, sessions/history, chat, approvals/questions, models, tool/child activity. Never starts/stops the Gateway. Remote/TLS unsupported. |
 | Claude Code | Installed unmodified `claude --print` stream-json; `CLAUDE_CONFIG_DIR`, trusted `cwd` | Native hooks/memory, exact UUID resume, models, permissions/questions, child events. Context = latest parent request's input/cache counts against the reported window. Never `--bare`, an SDK replacement or copied credentials; bypass only for confirmed [Full access](#permission-modes). |
-| Antigravity CLI | Installed `agy` streaming I/O; original `~/.gemini/antigravity-cli` | Conversation IDs/resume, file references, tools, model discovery and exact-ID switching. Context estimate from latest parent-response counts; window unknown. Native `ask_question` is opaque, so questions, approvals and images are unsupported; it shows a limitation notice. Native policy can soft-deny tools on a successful turn. |
+| Antigravity CLI | Installed [`agy acp`](https://antigravity.google/docs/ide/extensions/acp/) (ACP v1, shared ACP adapter) with its cached sign-in, never `authenticate`; original `~/.gemini/antigravity-cli`, trusted `cwd` | Exact conversation IDs and resume, file references, tools, approvals, native questions, Auto-edit/Plan modes, model discovery and exact-ID switching, delegation hosting. Context only from ACP `usage_update`. No images. Native permission rules still decide which actions ask. |
 | Cursor CLI | Installed `cursor-agent acp` after `authenticate` with `cursor_login`; native `~/.cursor`, trusted `cwd` | Experimental, not yet run against an installed CLI. Shared ACP adapter. `cursor/ask_question` → question card, `cursor/create_plan` → plan approval, answered in the documented `outcome` shape; requests without `sessionId` are attributed by `toolCallId` or the sole active session, else declined. Sign-in stays with `cursor-agent login`; no profile override. |
 
 ### Installed harness compatibility
@@ -96,11 +96,24 @@ failure. Context refreshes after responses, compaction and settlement from
 `--extension` without editing the profile or replacing existing extensions.
 Question choices include a written answer.
 
-**Antigravity.** Models come from `agy --output-format json models` and
-`--print /model`. A model change restarts only an idle owned frontend with the
-exact saved `--conversation` and `--model`, and the native init must confirm both
-before a prompt. The global model setting is never changed. Checkpoint and
-cumulative result usage never enter the gauge.
+**Antigravity.** One owned `agy acp` process serves every session of the native
+profile. Before a session opens, models come from `agy --output-format json
+models` and `--print /model`, which start no turn and save no conversation. An
+open session's catalog is its ACP `models` state, which uses the same IDs; its
+`model` config option names only the family (the thinking level is separate), so
+it never replaces the exact model. A change on an idle session uses
+`session/set_model`; agy keeps it per session and its empty reply is the only
+readback. A cold resume reports the native default, so the saved choice is
+applied again before the next send. The global model setting is never changed.
+agy's load accepts an ID it never saved, so a resume first pages
+`session/list` and refuses an ID agy does not list, unless nothing was ever sent
+to that conversation (an unprompted conversation is not listed yet). Resume
+replays no history, so history stays incomplete. Questions arrive as
+`session/request_permission` with `interaction_` tool-call IDs, because the
+companion advertises no elicitation form to agy; their options are answers (one
+choice, no written answer), never approvals, and an ambiguous one is cancelled
+with a notice. Tool titles drop agy's `Running ` prefix, so the companion's own
+tools get their labels.
 
 **OpenClaw.** The companion reads only the selected Gateway/agent configuration
 and connects to loopback. It owns a separate device identity and scoped Gateway
@@ -150,7 +163,7 @@ owned children as well as the parent.
 | OpenCode 1 HTTP | Queue only | No delivery distinction. |
 | Claude Code | Text/files/images | User input with `priority: now`, `origin: {kind: human}` ([SDK changelog](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md#03286)). Enabled only when `system/init` reports CLI 2.x ≥ 2.1.286. |
 | DeepSeek and Cursor ACP v1 | Queue only | Standard [`session/prompt`](https://agentclientprotocol.com/protocol/v1/prompt-turn) has no same-turn steering. |
-| Antigravity | Queue only | No steering operation in its [headless interface](https://www.antigravity.google/docs/cli/headless/). |
+| Antigravity ACP v1 | Queue only | agy [steers](https://antigravity.google/docs/ide/extensions/acp/) with a second `session/prompt` during a turn; the shared ACP adapter allows one prompt per session, so it queues. |
 | OpenClaw Gateway | Queue only | Upstream [`/steer`](https://docs.openclaw.ai/tools/steer) can fall back to a normal turn and has no verified receipt/run mapping here. |
 | Legacy Hermes | Queue only | Protected bridge. |
 
@@ -457,7 +470,8 @@ exposed.
 | Claude Code | `set_permission_mode` (`default`, `acceptEdits`, `plan`, `bypassPermissions`), verified against the echo. Before the first override the profile mode is read from `get_settings` (`effective.permissions.defaultMode`, `manual` = `default`); Inherit restores it once. `--allow-dangerously-skip-permissions` is passed only to a session opened with Full access or an idle session switched to it, which reopens its process (resuming if history exists). The reopen rechecks ownership after the old process exits; a disconnect during it cancels the launch. |
 | ACP (DeepSeek) | Advertised `modes.availableModes` matching a known name (`default`/`ask`, `acceptEdits`/`auto-edit`, `plan`, `bypassPermissions`/`full-access`/`yolo`) are offered via `session/set_mode`; Inherit restores the opening `currentModeId` once. |
 | ACP (Cursor) | Only `plan` (Cursor's `ask` is read-only Q&A, not Ask); Inherit restores the opening mode. |
-| Others | Hermes, Pi, OpenClaw, OpenCode and Antigravity map none. OpenCode V2 prompts have no agent/permission field; Antigravity's `--mode` and `--dangerously-skip-permissions` are launch-only. |
+| ACP (Antigravity) | Advertised `accept-edits` → Auto-edit and `plan` → Plan (agy 1.5). Its `default` mode follows the native permission rules, which may never ask, so it is Inherit, not Ask; Inherit restores it once. 1.4 advertises no modes. |
+| Others | Hermes, Pi, OpenClaw and OpenCode map none. OpenCode V2 prompts have no agent/permission field. |
 
 ## Usage
 
@@ -605,7 +619,7 @@ sends a child (created worktrees remain). A client closing its connection
 cancels its tool call; an abandoned `wait` never acknowledges a result. An ACP
 session reloaded while live keeps the bridge it was opened with.
 
-**Injection** (`hostsDelegation`: Claude, Codex, DeepSeek, Pi; version-specific,
+**Injection** (`hostsDelegation`: Claude, Codex, DeepSeek, Pi, Antigravity; version-specific,
 rerun native acceptance before release):
 
 | Harness | Mechanism |
@@ -613,9 +627,10 @@ rerun native acceptance before release):
 | Claude Code 2.1.287 | `--allowedTools mcp__notch__*` (Plan: only `orchestrator_capabilities`, `notch_session_list`, `notch_session_wait`, `pending_request_list`, `pending_request_read`); instructions as `appendSystemPrompt` in `initialize`; then the server, bearer header and 65-minute `timeout` via `mcp_set_servers`, so the token never enters argv. No `--mcp-config`/`--strict-mcp-config`: user servers stay. A failed registration leaves the session usable with a notice. |
 | Codex 0.162.1 | Per-thread `config` on `thread/start`/`thread/resume` with only `mcp_servers.notch` (`url`, `http_headers.Authorization`, `tool_timeout_sec: 3900`), keeping user servers. Instructions as `additionalContext` `notch_delegation` (`kind: application`) on the thread's first turn in this process; `developerInstructions` untouched. |
 | ACP (DeepSeek) | A stdio MCP server in `session/new`/`session/load` `mcpServers`: the companion executable with `--notch-delegation-bridge`, endpoint and token in its `env`. It relays JSON-RPC lines concurrently (65-minute timeout) and answers a revoked token with an error. Instructions come from the server's `initialize`. Without delegation `mcpServers` is `[]`. |
+| Antigravity CLI 1.5.2 | The same stdio bridge in `session/new`/`session/resume` `mcpServers`; agy starts it when the session opens and caches the tool descriptors and server instructions (never the endpoint or token) under its app data `mcp/notch/`. Instructions also go in `_meta.antigravity.systemPrompt.append` on every open when `initialize` advertises it, since agy keeps them only for its process. Nothing is written to its configuration (`agy mcp add` would). |
 | Pi 1.3.0 | Bundled `pi_delegation.mjs` via `--extension`, endpoint and token in the process environment (deleted before the agent runs commands). Registers tools as `mcp__notch__<tool>`; `before_agent_start` appends instructions. Uses `node:http`, not `fetch`, so hour-long waits are not cut. Nothing written to the Pi home. |
 | OpenCode | Not hosting: its runtime MCP option (`PUT /api/experimental/mcp/{server}`) is folder-scoped and shared by all sessions there, which would share one session's token. |
-| Hermes, OpenClaw, Antigravity, Cursor | Not hosting (Hermes/OpenClaw/Antigravity have no per-run MCP option; `agy mcp add` writes configuration). All can be children. |
+| Hermes, OpenClaw, Cursor | Not hosting (Hermes/OpenClaw have no per-run MCP option). All can be children. |
 
 ## Capability boundaries
 
