@@ -488,8 +488,11 @@ is reapplied on the next send. Choosing Plan saves the mode it replaced as
 `prePlanPermissionMode` (none = Inherit) and marks the latest turn as having
 no plan; **Plan ready**'s Implement restores that mode, then sends “Implement
 the plan.” through the ordinary `submit`. Keep planning saves
-`planReadyDismissedTurnID`. Both fields are optional for older registries; an
-unknown saved mode decodes as none. The persistent `always` approval is never
+`planReadyDismissedTurnID`, and so does a successful `approval.respond` to a
+native plan approval: the Claude (`ExitPlanMode`) and Cursor
+(`cursor/create_plan`) adapters mark that `approval.request` with `plan: true`.
+Both fields are optional for older registries; an unknown saved mode decodes as
+none. The persistent `always` approval is never
 exposed.
 
 | Harness | Mapping |

@@ -117,7 +117,7 @@ struct ClaudeProtocolState {
         }
         requests[id] = Interaction(input: input, tool: name)
         return ([event("approval.request", ["request_id": id, "choices": ["once", "deny"],
-            "command": Self.describeTool(name, input)])], nil)
+            "command": Self.describeTool(name, input), "plan": name == "ExitPlanMode"])], nil)
     }
 
     /// What a permission request will do, in the words of its arguments. Known

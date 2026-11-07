@@ -224,6 +224,8 @@ struct PendingRequest: Identifiable, Equatable {
     var allowsFreeText: Bool = true
     /// Native option descriptions, shown under their choice.
     var choiceDetails: [String: String] = [:]
+    /// The turn's native plan approval (Claude `ExitPlanMode`, Cursor `create_plan`).
+    var isPlan: Bool = false
 }
 
 struct Attachment: Identifiable, Codable, Equatable {

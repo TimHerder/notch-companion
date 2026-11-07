@@ -390,9 +390,10 @@ struct NativeComposerEditor: NSViewRepresentable {
         editor.setAccessibilityHelp(accessibilityHint)
         // Do not destroy marked text while an input method is composing.
         if !editor.hasMarkedText(), editor.string != text {
-            let selection = editor.selectedRange()
+            // Text restored into an empty composer (a queued message's Edit) keeps typing after it.
+            let location = editor.string.isEmpty ? (text as NSString).length : min(editor.selectedRange().location, (text as NSString).length)
             editor.string = text
-            editor.setSelectedRange(NSRange(location: min(selection.location, (text as NSString).length), length: 0))
+            editor.setSelectedRange(NSRange(location: location, length: 0))
         }
         context.coordinator.updateHeight()
         if focused.wrappedValue, editor.window?.firstResponder !== editor {

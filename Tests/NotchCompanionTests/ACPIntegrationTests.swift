@@ -130,6 +130,43 @@ final class ACPIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testAnsweredCursorPlanLeavesNoPlanReadyBanner() async throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else { throw XCTSkip("Offline Cursor peer needs system Python 3.") }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("notch-cursor-plan-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Fixtures/cursor_acp.py")
+        let executable = root.appendingPathComponent("cursor-agent")
+        try FileManager.default.copyItem(at: source, to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let suite = "cursor-plan-" + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let storage = root.appendingPathComponent("sessions.json")
+        let model = AppModel(storageURL: storage, playsSounds: false,
+                             client: ACPRuntimeClient(runtime: .cursor, profileID: root.path, executableOverride: executable), preferences: preferences)
+        defer { model.shutdown() }
+        await model.connect()
+        await model.newSession(showPanel: false, runtime: .cursor, workspace: root.path)
+        let id = try XCTUnwrap(model.currentID)
+        model.update(id) { $0.trustedProjectPath = root.standardizedFileURL.resolvingSymlinksInPath().path }
+        model.setPermissionMode(.plan, for: id)
+
+        for choice in ["once", "deny"] {
+            model.draft = "plan"
+            let send = Task { await model.send() }
+            try await eventually { model.requests.contains { $0.isPlan } }
+            await model.answer(try XCTUnwrap(model.requests.first { $0.isPlan }), choice: choice)
+            await send.value
+            try await eventually { model.current?.displayState == .finished }
+            XCTAssertEqual(model.current?.permissionMode, .plan)
+            XCTAssertNil(model.current?.planReadyTurnID, "An answered native plan (\(choice)) needs no Plan ready banner")
+        }
+        let saved = try JSONDecoder().decode([CompanionSession].self, from: Data(contentsOf: storage)).first { $0.id == id }
+        XCTAssertEqual(saved?.planReadyDismissedTurnID, model.current?.messages.last { $0.role == "user" }?.id)
+    }
+
+    @MainActor
     func testAntigravityHostsDelegationAnswersNativeQuestionsAndResumesOnlyListedConversations() async throws {
         guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else { throw XCTSkip("Offline agy peer needs system Python 3.") }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("notch-agy-fixture-" + UUID().uuidString)

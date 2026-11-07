@@ -24,7 +24,8 @@ extension CompanionSession {
     var busySendLabel: String { canSteer ? "Steer message" : "Queue message" }
 
     /// The latest turn finished in Plan, its plan was neither answered natively
-    /// (Claude's `ExitPlanMode` approval) nor set aside with Keep planning.
+    /// (answering a plan approval saves the dismissal; the `ExitPlanMode` scan
+    /// covers turns answered before that) nor set aside with Keep planning.
     var planReadyTurnID: String? {
         guard permissionMode == .plan, displayState == .finished,
               let boundary = messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) }),

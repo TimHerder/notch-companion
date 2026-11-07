@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import SwiftUI
 @testable import NotchCompanion
 
 @MainActor private final class ComposerFlowTransport: RuntimeTransport {
@@ -103,6 +104,27 @@ import AppKit
         XCTAssertEqual(try saved.queuedSends.map(\.text), ["Second"])
         XCTAssertFalse(model.editQueuedSend(ids[1]), "Files in the composer block Edit too")
         XCTAssertFalse(transport.calls.contains { ["prompt.submit", "prompt.steer"].contains($0.0) })
+    }
+
+    func testEditPutsTheCaretAfterTheRestoredMessage() async throws {
+        _ = NSApplication.shared
+        working()
+        await queue("Then run the full test suite")
+        let hosting = NSHostingView(rootView: SendComposerFixture(model: model, compact: true))
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 560, height: 160), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        defer { window.close() }
+        func findEditor(_ view: NSView) -> ComposerTextView? { view as? ComposerTextView ?? view.subviews.lazy.compactMap(findEditor).first }
+        hosting.layoutSubtreeIfNeeded()
+        let editor = try XCTUnwrap(findEditor(hosting))
+        XCTAssertTrue(model.editQueuedSend(try XCTUnwrap(model.current?.queuedSends.first?.id)))
+        for _ in 0..<100 where editor.string != model.draft {
+            hosting.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(editor.string, "Then run the full test suite")
+        XCTAssertEqual(editor.selectedRange(), NSRange(location: (editor.string as NSString).length, length: 0), "Typing goes on after the message")
     }
 
     func testOptionUpAndCommandShiftReturnReachTheQueueOnlyFromAnEmptyComposer() throws {

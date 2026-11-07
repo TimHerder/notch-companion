@@ -807,7 +807,8 @@ identify selection.
   over the draft), **Edit** (its text and files move back into the composer and
   out of the queue; disabled with “Send or clear your draft first” unless the
   draft and files are empty) and Cancel. In an empty composer Option–↑ edits
-  the newest queued message and Command–Shift–Return steers the oldest. Text
+  the newest queued message and Command–Shift–Return steers the oldest; the
+  caret lands after the restored text. Text
   and attachments are saved before the composer clears, and before an edit
   leaves the queue. Queues wait for parent
   and child work. Stop, a failed turn, a disconnected frontend or restart pauses
@@ -822,7 +823,8 @@ identify selection.
   in Plan and the banner returns. Keep planning hides it for that turn, across
   restarts. It is not shown while busy, after a failure or Stop, for a turn
   that ran before Plan was chosen, or once that turn's native plan approval
-  (Claude `ExitPlanMode`) was answered. The island tiers are unchanged.
+  (Claude `ExitPlanMode`, Cursor `create_plan`) was answered, allowed or
+  denied. The island tiers are unchanged.
 - **Sending.** After validation, text and files leave the composer immediately
   while setup continues. The message enters the transcript with an 8-point
   upward arrival and fade over 180 ms (immediate under Reduce Motion), with a

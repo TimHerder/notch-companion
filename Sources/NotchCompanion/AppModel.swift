@@ -1628,6 +1628,11 @@ final class AppModel: ObservableObject {
             _ = try await client.request(method, params: params)
             play(.send)
             requests.removeAll { $0.id == request.id }
+            // An answered native plan approval leaves no Plan ready banner for its turn.
+            if request.isPlan, let index = sessions.firstIndex(where: { $0.runtimeID == request.sessionID }) {
+                sessions[index].planReadyDismissedTurnID = sessions[index].messages.last { $0.role == "user" && SessionHistory.isVisibleConversation($0) }?.id
+                save()
+            }
             if !requests.contains(where: { $0.sessionID == request.sessionID }),
                let index = sessions.firstIndex(where: { $0.runtimeID == request.sessionID }), sessions[index].state == .waiting {
                 sessions[index].state = .working
@@ -2045,7 +2050,7 @@ final class AppModel: ObservableObject {
             } else {
                 let detail = EventValue.string(payload[isApproval ? "command" : "question"])
                 let choices = payload["choices"] as? [String] ?? (isApproval ? ["once", "deny"] : [])
-                requests.append(PendingRequest(id: id, kind: isApproval ? .approval : .clarification, title: isApproval ? "\(sessions[index].runtime.title) needs permission" : "\(sessions[index].runtime.title) has a question", detail: detail, choices: choices, sessionID: sid, multiSelect: payload["multi_select"] as? Bool ?? false, allowsFreeText: payload["allows_free_text"] as? Bool ?? true))
+                requests.append(PendingRequest(id: id, kind: isApproval ? .approval : .clarification, title: isApproval ? "\(sessions[index].runtime.title) needs permission" : "\(sessions[index].runtime.title) has a question", detail: detail, choices: choices, sessionID: sid, multiSelect: payload["multi_select"] as? Bool ?? false, allowsFreeText: payload["allows_free_text"] as? Bool ?? true, isPlan: payload["plan"] as? Bool == true))
             }
             sessions[index].state = .waiting
             play(.attention)
