@@ -103,6 +103,8 @@ struct ToolActivity: Identifiable, Codable, Equatable {
         }
         // OpenCode 2 gives each session its own server, `notch-<16 hex>`.
         if let match = name.prefixMatch(of: #/notch-[0-9a-f]{16}_/#) { return String(name[match.range.upperBound...]) }
+        // OpenClaw node tools are `notch_<tool>`; a bare `notch_session_*` is the tool itself.
+        if name.hasPrefix(server + "_"), delegationLabels[String(name.dropFirst(server.count + 1))] != nil { return String(name.dropFirst(server.count + 1)) }
         return delegationLabels[name] == nil ? nil : name
     }
     var displayName: String {

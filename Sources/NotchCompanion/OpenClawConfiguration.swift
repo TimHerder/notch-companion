@@ -111,6 +111,8 @@ struct OpenClawDevice: Codable {
     var privateKey: Data
     var token: String?
     var scopes: [String] = []
+    /// The Gateway issues tokens per device and role; this one is the node link's.
+    var nodeToken: String?
     static let requiredScopes = ["operator.read", "operator.write", "operator.approvals", "operator.questions"]
     static func account(directory: String, endpoint: URL) -> String {
         SHA256.hash(data: Data((directory + "|" + endpoint.absoluteString).utf8)).map { String(format: "%02x", $0) }.joined()
@@ -139,11 +141,11 @@ struct OpenClawDevice: Codable {
     private static func keychainQuery(_ account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "NotchCompanion.OpenClaw", kSecAttrAccount as String: account]
     }
-    func proof(nonce: String, timestamp: Int, token: String?, scopes: [String]) throws -> [String: Any] {
+    func proof(nonce: String, timestamp: Int, token: String?, scopes: [String], mode: String = "ui", role: String = "operator") throws -> [String: Any] {
         let key = try Curve25519.Signing.PrivateKey(rawRepresentation: privateKey)
         let publicKey = key.publicKey.rawRepresentation
         let id = SHA256.hash(data: publicKey).map { String(format: "%02x", $0) }.joined()
-        let payload = ["v3", id, "gateway-client", "ui", "operator", scopes.joined(separator: ","), String(timestamp), token ?? "", nonce, "macos", "mac"].joined(separator: "|")
+        let payload = ["v3", id, "gateway-client", mode, role, scopes.joined(separator: ","), String(timestamp), token ?? "", nonce, "macos", "mac"].joined(separator: "|")
         return ["id": id, "publicKey": Self.base64url(publicKey), "signature": Self.base64url(try key.signature(for: Data(payload.utf8))), "signedAt": timestamp, "nonce": nonce]
     }
     static func base64url(_ data: Data) -> String {

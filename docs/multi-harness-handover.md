@@ -64,7 +64,9 @@ Claude uses the installed unmodified CLI, not `--bare`, copied credentials or a
 separate SDK agent. Normal default authentication must leave `CLAUDE_CONFIG_DIR`
 implicit. Headless hooks require deliberate saved project trust; a changed
 project/profile invalidates it. OpenClaw pairs as a scoped client to an existing
-loopback Gateway, without taking its process ownership.
+loopback Gateway, without taking its process ownership. Delegation adds a
+role-`node` connection with the same device; its pairing and command approval
+stay with OpenClaw.
 
 ## Acceptance checklist
 

@@ -418,6 +418,25 @@ import XCTest
         XCTAssertEqual((capabilities["features"] as? [String: Any])?["maxBatchThreads"] as? Int, 20)
     }
 
+    func testOpenClawCallersWaitInsideTheGatewayDeadlineAndGetTheInstructions() async throws {
+        // A node tool call ends at 120 s, so every OpenClaw wait returns `next` before that.
+        XCTAssertEqual(AppModel.waitTimeout([:], runtime: .openclaw), Delegation.openClawMaxWait)
+        XCTAssertEqual(AppModel.waitTimeout(["timeoutMs": 3_600_000], runtime: .openclaw), Delegation.openClawMaxWait)
+        XCTAssertEqual(AppModel.waitTimeout(["timeoutMs": 5_000], runtime: .openclaw), 5)
+        XCTAssertEqual(AppModel.waitTimeout([:], runtime: .codex), Delegation.defaultWait)
+        XCTAssertEqual(AppModel.waitTimeout(["timeoutMs": 3_600_000], runtime: .codex), Delegation.maxWait)
+        XCTAssertLessThan(Delegation.openClawMaxWait, 120)
+
+        let (model, _, _, _) = makeModel()
+        let (_, caller) = try await activeParent(model, runtime: .openclaw)
+        let capabilities = try await model.handleDelegationTool(caller, name: "orchestrator_capabilities", arguments: [:])
+        XCTAssertEqual(capabilities["instructions"] as? String, Delegation.instructions, "Node tools carry no server instructions")
+        let (other, _, _, _) = makeModel()
+        let (_, codex) = try await activeParent(other)
+        let codexCapabilities = try await other.handleDelegationTool(codex, name: "orchestrator_capabilities", arguments: [:])
+        XCTAssertNil(codexCapabilities["instructions"], "Other harnesses already have them in their own prompt")
+    }
+
     func testRegistryRoundTripsDelegationAndOldRegistriesDecode() throws {
         var child = CompanionSession()
         child.parentSessionID = "parent"
@@ -439,10 +458,14 @@ import XCTest
     }
 
     func testCompanionToolsAreLabelledUnderEveryPrefix() {
-        for name in ["mcp__notch__delegate_task", "notch.delegate_task", "delegate_task", OpenCodeClient.delegationServerName("ses_x") + "_delegate_task"] {
+        for name in ["mcp__notch__delegate_task", "notch.delegate_task", "delegate_task", "notch_delegate_task", OpenCodeClient.delegationServerName("ses_x") + "_delegate_task"] {
             XCTAssertEqual(ToolActivity(id: "a", name: name, detail: "").displayName, "Delegating a child task", name)
         }
         XCTAssertNil(ToolActivity.delegationTool("notch-docs_search"), "Only a companion server's tools, not a user's server named notch-…")
+        // OpenClaw's `notch_` prefix, and the bare tools that already start with `notch_`.
+        XCTAssertEqual(ToolActivity.delegationTool("notch_notch_session_list"), "notch_session_list")
+        XCTAssertEqual(ToolActivity.delegationTool("notch_session_list"), "notch_session_list")
+        XCTAssertNil(ToolActivity.delegationTool("notch_unrelated"))
         XCTAssertEqual(ToolActivity(id: "a", name: "mcp__notch__task_status", detail: "", state: .finished).displayName, "Got delegated task status")
         XCTAssertEqual(NotchHeaderView.status(state: .working, session: CompanionSession(), waitingOnChild: true).text, "Waiting on a child")
         XCTAssertLessThan(Delegation.instructions.utf8.count, 4_000, "Codex truncates a longer context entry")
@@ -1145,7 +1168,7 @@ import XCTest
         var untouched = ["PATH": "/usr/bin"]
         XCTAssertTrue(PiClient.delegationArguments(nil, environment: &untouched).isEmpty)
         XCTAssertEqual(untouched, ["PATH": "/usr/bin"])
-        XCTAssertEqual(RuntimeKind.allCases.filter(\.hostsDelegation), [.hermes, .codex, .opencode, .pi, .claude, .deepseek, .antigravity, .cursor])
+        XCTAssertEqual(RuntimeKind.allCases.filter(\.hostsDelegation), RuntimeKind.allCases, "Every harness hosts delegation")
     }
 
     func testTheStdioBridgeRelaysEachLineWithTheSessionToken() async throws {

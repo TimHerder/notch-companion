@@ -994,9 +994,8 @@ session inside its parent; notch silhouette and bounds are unchanged.
   Delegated a child task”, “Get / Getting / Got delegated task status”, and so
   on. While a turn waits on a delegation `wait`, the header reads **Waiting on a
   child**.
-- **Settings.** **Cross-agent delegation** (default on) lets Claude Code,
-  Codex, OpenCode 2, Hermes, Pi, DeepSeek Harness, Antigravity CLI and Cursor
-  CLI sessions opened afterwards delegate.
+- **Settings.** **Cross-agent delegation** (default on) lets sessions of every
+  harness (OpenCode from 2.0) opened afterwards delegate.
 - **Delete.** Deleting a parent removes its children from the companion; native
   histories stay.
 - **Changes.** The delegating parent turn folds each child's changed files into
