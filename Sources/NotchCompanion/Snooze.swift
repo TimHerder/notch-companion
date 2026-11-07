@@ -80,6 +80,8 @@ extension AppModel {
     func wakeSession(_ id: String) {
         guard sessions.contains(where: { $0.id == id && $0.snoozedUntil != nil }) else { return }
         update(id) { $0.snoozedUntil = nil; $0.acknowledgedCompletionID = nil; $0.lastSeenAt = Date() }
+        // A conversation already on screen counts as read.
+        acknowledgeVisibleSession()
         scheduleSave()
     }
 

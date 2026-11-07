@@ -992,7 +992,7 @@ import ImageIO
         model.setSessionVisibility(notchVisible: false)
         model.sessions = unreadSessions
         model.currentID = "review"
-        // Inline row actions; the legacy row has all three, which stack in the sidebar.
+        // Inline row actions; the legacy row has all four, which wrap in the sidebar.
         model.sessionActionsID = "failure"
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-session-actions", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-session-actions", output: output)
@@ -1011,6 +1011,7 @@ import ImageIO
         // A snoozed row offers Wake now.
         model.sessionActionsID = "snoozed"
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-session-wake", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-session-wake", output: output)
         model.sessionFilter = .all
         // Snooze's choices take an open row's actions' place, wrapping in the sidebar.
         model.sessionActionsID = "review"

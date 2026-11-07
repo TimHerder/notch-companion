@@ -819,11 +819,13 @@ identify selection.
     running turn keeps its timer. A snoozed row offers **Wake now**.
   - A session wakes when its time passes (a timer while running, and at
     launch for anything already due), or early when a new question, approval
-    or failure arrives; a completion does not wake it. Waking clears
+    or failure arrives, including one that launch restores (an unconfirmed
+    send, unverified native work); a completion does not wake it. Waking clears
     `snoozedUntil` and the read receipt, so it returns unread and needs a read
-    before it can auto-archive again; a session without a result restarts its
-    auto-archive clock instead. Sending from its composer also ends the
-    snooze. While snoozed, its completion makes no sound or announcement, its
+    before it can auto-archive again, unless its conversation is on screen;
+    a session without a result restarts its auto-archive clock instead.
+    Sending from its composer also ends the snooze, and New session never
+    reuses a snoozed draft. While snoozed, its completion makes no sound or announcement, its
     unread result stays out of the dots, glance and unread counts, and it
     never auto-archives. Its work, busy tracking, quit protection, receipts,
     queued messages and delegated children are unchanged.
@@ -837,8 +839,9 @@ identify selection.
     The latest message is the tooltip and part of the accessibility label.
     Hover, focus or open swaps the age for the ellipsis, which expands Rename,
     Snooze or Wake now, Archive or Restore, and Continue in Hermes… (legacy
-    only) inline. Snooze swaps those actions for its four choices and Cancel
-    (wrapping in the sidebar); the right-click menu shows them as a submenu.
+    only) inline, wrapping onto further rows in the sidebar rather than
+    truncating. Snooze swaps those actions for its four choices and Cancel
+    (wrapping the same way); the right-click menu shows them as a submenu.
   - Order keeps the stable order used by the dots. Archiving keeps history,
     drafts, selection and receipts; active work cannot be archived. Sending
     restores an archived session.

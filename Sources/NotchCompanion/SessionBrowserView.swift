@@ -285,10 +285,13 @@ struct SessionBrowserView: View {
                         if model.snoozeChoicesShown { snoozeChoices(session) } else {
                             ViewThatFits(in: .horizontal) {
                                 HStack(spacing: 6) { actions(session) }
+                                // The sidebar fits two short pills a row at most, and Wake now or Restore alone.
                                 VStack(alignment: .leading, spacing: 6) {
-                                    HStack(spacing: 6) { manageActions(session) }
+                                    HStack(spacing: 6) { renameAction(session); snoozeOrWakeAction(session) }
+                                    archiveOrRestoreAction(session)
                                     if session.isLegacyPrivate { ContinueLegacySessionButton(model: model, session: session) }
                                 }
+                                VStack(alignment: .leading, spacing: 6) { actions(session) }
                             }
                         }
                     }
@@ -470,19 +473,24 @@ struct SessionBrowserView: View {
 
     /// Shared by the inline actions and the right-click menu.
     @ViewBuilder private func actions(_ session: CompanionSession, menu: Bool = false) -> some View {
-        manageActions(session, menu: menu)
+        renameAction(session)
+        snoozeOrWakeAction(session, menu: menu)
+        archiveOrRestoreAction(session)
         if session.isLegacyPrivate {
             ContinueLegacySessionButton(model: model, session: session)
         }
     }
 
-    @ViewBuilder private func manageActions(_ session: CompanionSession, menu: Bool = false) -> some View {
+    private func renameAction(_ session: CompanionSession) -> some View {
         Button("Rename", systemImage: "pencil") {
             model.sessionActionsID = nil
             titleDraft = session.title
             renamingID = session.id
             renameFocused = true
         }
+    }
+
+    @ViewBuilder private func snoozeOrWakeAction(_ session: CompanionSession, menu: Bool = false) -> some View {
         if let until = session.snoozedUntil {
             Button("Wake now", systemImage: "sun.max") {
                 model.sessionActionsID = nil
@@ -504,6 +512,9 @@ struct SessionBrowserView: View {
                           : "Answer its question first")
             }
         }
+    }
+
+    @ViewBuilder private func archiveOrRestoreAction(_ session: CompanionSession) -> some View {
         if session.isArchived || model.isAutoArchived(session) {
             Button("Restore to sessions", systemImage: "tray.and.arrow.up") {
                 model.sessionActionsID = nil

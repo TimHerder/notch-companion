@@ -338,6 +338,8 @@ final class AppModel: ObservableObject {
                 copy.recordUnreportedOutcome()
                 return copy
             }
+            // Restoring can turn a busy snoozed session into an unconfirmed send or unverified work.
+            wakeSessionsThatNeedYou(since: saved)
         }
         if FileManager.default.fileExists(atPath: storageURL.path), sessions.isEmpty,
            (try? JSONDecoder().decode([CompanionSession].self, from: Data(contentsOf: storageURL))) == nil {
@@ -745,7 +747,7 @@ final class AppModel: ObservableObject {
     /// draft is reused, so repeated hovers cannot pile up empty sessions.
     func startSessionFromNotch() {
         if let draft = sessions.first(where: { $0.messages.isEmpty && $0.storedID == nil && $0.runtimeID == nil && !$0.isArchived
-            && $0.draft.isEmpty && $0.attachments.isEmpty && $0.pendingSubmission == nil && canChangeRuntime($0.id) }) {
+            && $0.snoozedUntil == nil && $0.draft.isEmpty && $0.attachments.isEmpty && $0.pendingSubmission == nil && canChangeRuntime($0.id) }) {
             selectSession(draft.id)
             sessionActionsID = nil
         } else {
@@ -938,7 +940,7 @@ final class AppModel: ObservableObject {
         acknowledgeVisibleSession()
     }
 
-    private func acknowledgeVisibleSession() {
+    func acknowledgeVisibleSession() {
         guard (notchSessionVisible && page == .session && fileDropChoice == nil)
                 || (fullSessionVisible && fullConversationVisible && !page.isRuntimeSetup),
               let currentID, let index = sessions.firstIndex(where: { $0.id == currentID }),

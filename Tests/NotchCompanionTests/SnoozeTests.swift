@@ -86,6 +86,53 @@ import XCTest
         XCTAssertEqual(older.title, "Older")
     }
 
+    func testLaunchWakesASnoozedSessionThatRestoresNeedingYou() throws {
+        let far = Date(timeIntervalSince1970: 4_000_000_000)
+        var unconfirmed = working("unconfirmed")
+        unconfirmed.pendingSubmission = PendingSubmission(id: "turn", draft: "Possibly delivered", userTurnCount: 1, attachmentIDs: [])
+        unconfirmed.snoozedUntil = far
+        var unverified = working("unverified")
+        unverified.runtime = .opencode
+        unverified.snoozedUntil = far
+        var quiet = read("quiet")
+        quiet.snoozedUntil = far
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("notch-snooze-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("sessions.json")
+        try JSONEncoder().encode([unconfirmed, unverified, quiet]).write(to: file)
+        let suite = "notch-snooze-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(storageURL: file, playsSounds: false, client: SnoozeTransport(), preferences: defaults)
+        defer { model.shutdown() }
+        XCTAssertNil(session(model, "unconfirmed").snoozedUntil, "An unconfirmed send needs checking")
+        XCTAssertNil(session(model, "unverified").snoozedUntil, "Unverified native work needs checking")
+        XCTAssertEqual(session(model, "quiet").snoozedUntil, far)
+        XCTAssertEqual(Set(model.visibleSessions.map(\.id)), ["unconfirmed", "unverified"])
+        XCTAssertEqual(Set(model.sessionIndicators.map(\.status)), [.failed, .waiting])
+    }
+
+    func testWakingTheSessionOnScreenLeavesItRead() {
+        let model = makeModel([read("open")])
+        model.currentID = "open"
+        model.snoozeSession("open", until: Date().addingTimeInterval(hour))
+        model.setSessionVisibility(fullSessionVisible: true, fullConversationVisible: true)
+        model.wakeSession("open")
+        XCTAssertNil(session(model, "open").snoozedUntil)
+        XCTAssertFalse(session(model, "open").hasUnreadCompletion, "Its conversation is on screen")
+        XCTAssertTrue(model.sessionIndicators.isEmpty)
+    }
+
+    func testNewSessionNeverReopensASnoozedDraft() {
+        let model = makeModel([CompanionSession(id: "draft", title: "Draft")])
+        model.snoozeSession("draft", until: Date().addingTimeInterval(hour))
+        XCTAssertNotNil(session(model, "draft").snoozedUntil)
+        model.startSessionFromNotch()
+        XCTAssertNotEqual(model.currentID, "draft", "A hidden draft is not where a new session starts")
+        XCTAssertNotNil(session(model, "draft").snoozedUntil)
+    }
+
     func testQuestionsApprovalsAndFailuresWakeEarly() {
         let events: [(String, [String: Any])] = [
             ("approval.request", ["request_id": "r", "command": "ls"]),
