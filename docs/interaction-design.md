@@ -555,13 +555,18 @@ window, so a finished turn reads as its answer and its files together. Open, it
 lists paths, change kinds and per-file line counts; clicking a file opens its
 selectable unified diff below it (green additions, red removals) in a bounded,
 independently scrolling viewport. Binary files show a Binary label, not line
-counts. More than six files show the first six and an **N more files** row
-that reveals the rest.
+counts. An open card lists the first six files (three in the notch, so the
+answer and the card's header stay in view above them) and an **N more files**
+row that reveals the rest.
 
 The latest finished turn's cards (Changes, Workspace changes, delegated
 groups) start open; older turns' start collapsed. A running turn, its steers
-and a message still sending are not finished, so the turn before them stays the
-latest until the new one ends. Opening or closing a card is remembered per
+and a message still sending (until the runtime confirms it, even once it shows
+as working) are not finished, so the turn before them stays the latest until
+the new one ends. Turns the companion sent for an agent (a delegation result,
+a relayed question, a message from another session) continue the user's own
+turn before them: its cards stay open beside theirs, so a delegating turn's
+child changes are open when the child's result arrives. Opening or closing a card is remembered per
 session and turn until the app quits, shared by the notch and full window; a
 turn that stops being the latest keeps that choice, or collapses if untouched.
 Opening by default keeps transcript following; the user's own expansion,

@@ -4,6 +4,7 @@ import AppKit
 /// The same complete, scrollable transcript is used in the notch and full window.
 struct ConversationHistoryView: View {
     @ObservedObject var model: AppModel
+    var inNotch = true
     @StateObject private var scrolling = HistoryScrollCoordinator()
 
     private var session: CompanionSession? { model.current }
@@ -68,7 +69,8 @@ struct ConversationHistoryView: View {
                                               open: { model.openInCodeEditor($0) },
                                               chooseEditor: { model.openInCodeEditor($0, choose: true) },
                                               onInspect: scrolling.stopFollowing,
-                                              showsFiles: shows, toggle: { model.changeDisclosure[key] = !shows })
+                                              showsFiles: shows, toggle: { model.changeDisclosure[key] = !shows },
+                                              fileLimit: inNotch ? 3 : 6)
                         }
                     }
                     .animation(model.reducedMotion ? nil : .easeOut(duration: 0.18),

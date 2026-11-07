@@ -548,6 +548,11 @@ import ImageIO
         parent.runtime = .claude
         parent.parentTurnComplete = false
         parent.tools = [ToolActivity(id: "delegate", name: "mcp__notch__delegate_task", detail: "Review the parser fix", state: .finished, turnID: "turn")]
+        // The delegating turn's card, with the child's own edit, stays open while its result is handled.
+        parent.changes = [TurnChanges(id: "turn", workspace: "/tmp/Parser", source: .agent,
+            files: [ChangedFile(path: "Sources/Parser.swift", additions: 6, deletions: 2)],
+            delegated: [TurnChanges(id: "child", workspace: "/tmp/Parser", files: [ChangedFile(path: "Notes/parser-review.md", kind: "Added", additions: 9)],
+                                    label: "Review the parser fix · Codex")])]
         var child = CompanionSession(id: "child", title: "Review the parser fix", state: .finished,
             messages: [ChatMessage(id: "task", role: "user", text: "Act as the review sub-agent for this task.\n\nReview the parser fix in Sources/Parser.swift.", turnID: "task"),
                        ChatMessage(role: "assistant", text: "Two findings: the empty-input branch skips the error, and `parse(_:)` lacks a test for trailing commas.", turnID: "task")],

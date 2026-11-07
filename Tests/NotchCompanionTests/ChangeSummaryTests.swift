@@ -105,16 +105,40 @@ final class ChangeSummaryTests: XCTestCase {
         XCTAssertEqual(open(), ["u3"])
         session.stagedSubmission = StagedSubmission(message: turn("u4")[0], draft: nil, attachments: [])
         XCTAssertEqual(open(), ["u3"], "A message still sending does not close it")
+        // Shown and working, but not yet confirmed: its staged row is the live turn.
+        session.messages += turn("u4", answer: false)
+        session.state = .working
+        XCTAssertEqual(open(), ["u3"])
         session.stagedSubmission = nil
-        session.messages += turn("u4")
+        session.messages += [ChatMessage(role: "assistant", text: "Done", turnID: "u4")]
+        session.state = .finished
         XCTAssertEqual(open(), [], "The latest finished turn changed nothing")
     }
 
+    @MainActor func testADelegatingTurnsCardStaysOpenAfterItsChildsResult() {
+        let edit = [ChangedFile(path: "a.txt", additions: 1, deletions: 0)]
+        var session = CompanionSession()
+        session.messages = [
+            ChatMessage(id: "x", role: "user", text: "Delegate it", turnID: "x"),
+            ChatMessage(role: "assistant", text: "Started a task", turnID: "x"),
+            ChatMessage(id: "wake", role: "user", text: "Delegated task \"Child\" (taskId t, sessionId c, Codex) completed.",
+                        turnID: "wake", kind: ChatMessage.delegationResult),
+            ChatMessage(role: "assistant", text: "The child finished", turnID: "wake")]
+        session.changes = [TurnChanges(id: "x", workspace: "/p", source: .agent,
+                                       delegated: [TurnChanges(id: "c", workspace: "/p", files: edit, label: "Child")]),
+                           TurnChanges(id: "wake", workspace: "/p", source: .agent, files: edit)]
+        func open() -> Set<String> { ChangeSummaryView.latestFinished(in: ConversationTimeline.build(session: session), session: session) }
+        XCTAssertEqual(open(), ["x", "wake"], "The wake continues the delegating turn")
+        session.messages += [ChatMessage(id: "y", role: "user", text: "Thanks", turnID: "y"), ChatMessage(role: "assistant", text: "Done", turnID: "y")]
+        XCTAssertEqual(open(), [], "The user's own next turn ends it")
+    }
+
     @MainActor func testAnOpenCardListsSixFilesThenTheRest() {
-        XCTAssertEqual(ChangeSummaryView.shownCounts([3, 0, 5, 2], showsAll: false), [3, 0, 3, nil])
-        XCTAssertEqual(ChangeSummaryView.shownCounts([3, 0, 5, 2], showsAll: true), [3, 0, 5, 2])
-        XCTAssertEqual(ChangeSummaryView.shownCounts([6, 0], showsAll: false), [6, 0], "At the limit nothing hides")
-        XCTAssertEqual(ChangeSummaryView.shownCounts([6, 0, 1], showsAll: false), [6, nil, nil])
+        XCTAssertEqual(ChangeSummaryView.shownCounts([3, 0, 5, 2], limit: 6, showsAll: false), [3, 0, 3, nil])
+        XCTAssertEqual(ChangeSummaryView.shownCounts([3, 0, 5, 2], limit: 6, showsAll: true), [3, 0, 5, 2])
+        XCTAssertEqual(ChangeSummaryView.shownCounts([6, 0], limit: 6, showsAll: false), [6, 0], "At the limit nothing hides")
+        XCTAssertEqual(ChangeSummaryView.shownCounts([6, 0, 1], limit: 6, showsAll: false), [6, nil, nil])
+        XCTAssertEqual(ChangeSummaryView.shownCounts([2, 5], limit: 3, showsAll: false), [2, 1], "The notch lists three")
     }
 
     func testDelegatedGroupsListEachFileOnceUnderItsChildAndRoundTrip() throws {

@@ -9,10 +9,11 @@ struct ChangeSummaryView: View {
     /// The user's choice for this turn, else open for the latest finished turn.
     var showsFiles: Bool
     var toggle: () -> Void
+    /// An open card lists this many files, then "N more files". The notch passes
+    /// fewer, so an open card leaves its header and the answer above it in view.
+    var fileLimit = 6
     @State var showsAllFiles = false
     @State var selectedPath: String?
-    /// An open card lists this many files, then "N more files".
-    static let fileLimit = 6
 
     private var project: URL { URL(fileURLWithPath: summary.workspace, isDirectory: true) }
     /// Instrument: monochrome diff, additions read white, removals grey.
@@ -67,7 +68,7 @@ struct ChangeSummaryView: View {
             .accessibilityLabel("\(showsFiles ? "Collapse" : "Expand") \(title.lowercased()), \(all.count) files, \(added) lines added, \(removed) lines removed")
 
             if showsFiles {
-                let shown = Self.shownCounts([summary.ownFiles.count] + groups.map(\.files.count), showsAll: showsAllFiles)
+                let shown = Self.shownCounts([summary.ownFiles.count] + groups.map(\.files.count), limit: fileLimit, showsAll: showsAllFiles)
                 let hidden = all.count - shown.compactMap { $0 }.reduce(0, +)
                 if let notice = summary.notice { Text(notice).foregroundStyle(CompanionStyle.secondary).fixedSize(horizontal: false, vertical: true) }
                 fileRows(Array(summary.ownFiles.prefix(shown[0] ?? 0)), workspace: summary.workspace, key: "")
@@ -136,8 +137,8 @@ struct ChangeSummaryView: View {
 
     /// Per list (own files, then each child group's): how many files show, or nil
     /// for a group hidden past the limit. Over the limit only the first files show.
-    static func shownCounts(_ counts: [Int], showsAll: Bool) -> [Int?] {
-        var left = showsAll || counts.reduce(0, +) <= fileLimit ? Int.max : fileLimit
+    static func shownCounts(_ counts: [Int], limit: Int, showsAll: Bool) -> [Int?] {
+        var left = showsAll || counts.reduce(0, +) <= limit ? Int.max : limit
         return counts.map { count in
             guard left > 0 else { return nil }
             let shown = min(count, left)
@@ -148,23 +149,28 @@ struct ChangeSummaryView: View {
 
     /// The change cards of the latest finished turn, which start open; older ones
     /// start collapsed. A running turn (with its steers) and a message still
-    /// sending are not finished, so the turn before them stays the latest.
+    /// sending are not finished, so the turn before them stays the latest. Turns
+    /// the companion sent for an agent (a delegation result, a relayed message)
+    /// continue the user's turn before them, whose cards (its children's) stay open.
     static func latestFinished(in timeline: [ConversationTimelineItem], session: CompanionSession) -> Set<String> {
         var end = timeline.endIndex
         var live: String?
         for index in timeline.indices.reversed() {
             guard case .message(let message) = timeline[index], message.role == "user" else { continue }
             let turn = message.turnID ?? message.id
-            if message.id == session.stagedSubmission?.message.id { end = index; continue }
+            // Still sending, even once it shows and the session reads working.
+            if message.id == session.stagedSubmission?.message.id { end = index; live = live ?? turn; continue }
             guard session.isBusy, live == nil || live == turn else { break }
             live = turn
             end = index
         }
-        // A block's change cards come last in it.
         var result = Set<String>()
         for item in timeline[..<end].reversed() {
-            guard case .changes(let changes) = item else { break }
-            result.insert(changes.id)
+            switch item {
+            case .changes(let changes): result.insert(changes.id)
+            case .message(let message) where message.role == "user" && message.kind == nil: return result
+            default: continue
+            }
         }
         return result
     }
