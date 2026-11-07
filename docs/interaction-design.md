@@ -956,11 +956,14 @@ optional (model and context on by default, permission modes off). A draft's
 harness chooser stays in the bar. A started session keeps a plain harness label
 in Refined and Instrument, whose placeholder hides behind a draft or the busy
 hint; Tahoe drops it (the placeholder “Ask Codex…” and the editor's spoken label
-name the harness), and Legacy Hermes keeps its label everywhere. When the bar is
-tight the model label truncates first, down to about a dozen characters, then
-the session name, then the harness label, **Continue in Hermes…** and the folder
+name the harness), and Legacy Hermes keeps its label everywhere. The folder chip
+stops at 150 points on one line. When the bar is tight the model's effort drops
+first, then the model name truncates, down to about a dozen characters, and the
+permission mode shows only its glyph (its name stays in help and VoiceOver);
+then the session name, the harness label, **Continue in Hermes…** and the folder
 chip share what is left, truncating rather than pushing the field past the
-panel's margins; the gauge, permission mode and Send keep their size.
+panel's margins, and **Restore archived session** keeps only its icon. The gauge
+and Send keep their size.
 
 The model label shows the runtime's display name for the selected, reported or
 default model (the ID only when unnamed; **Runtime default** when none is
