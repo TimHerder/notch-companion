@@ -328,8 +328,11 @@ final class AppModel: ObservableObject {
                     if copy.queuedSends.contains(where: { $0.id == copy.stagedSubmission?.message.id }) { copy.stagedSubmission = nil }
                     else { copy.restoreStagedSubmission() }
                 }
-                // Delivered (or in flight) before the quit: its staged copy backs Check last send, never a second send.
-                copy.queuedSends.removeAll { session.wasDelivered($0.id) }
+                // Delivered before the quit, or the user's own unconfirmed send (its staged copy backs Check last send).
+                // An agent's or notice's unconfirmed send has no staged text: it waits for Check last send.
+                copy.queuedSends.removeAll { queued in
+                    session.pendingSubmission?.id == queued.id ? queued.isUserMessage : session.messages.contains { $0.id == queued.id }
+                }
                 if copy.runtime == .opencode, !["opencode-http-v1", "opencode-http-v2"].contains(copy.runtimeInfo?.nativeInterface ?? ""),
                    copy.isBusy, copy.nativeActivityUnverified == nil {
                     copy.nativeActivityUnverified = "OpenCode was active when this frontend ended. Its ACP interface cannot verify background child completion. Continue the exact session in native OpenCode."

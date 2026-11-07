@@ -61,12 +61,10 @@ struct ModelControlsView: View {
                                 if shortModel { name.fixedSize() } else { name.frame(minWidth: 84) }
                             }
                         case .tahoe, .instrument:
-                            // Instrument keeps the bar quiet, like Refined: the draft and Send lead.
-                            let instrument = theme == .instrument
-                            let name = Text(modelLabel).foregroundStyle(instrument ? CompanionStyle.secondary : CompanionStyle.text)
-                                .lineLimit(1).truncationMode(.middle)
+                            // The name is one step brighter than its effort, so the two never read as one name.
+                            let name = Text(modelLabel).foregroundStyle(CompanionStyle.text).lineLimit(1).truncationMode(.middle)
                             ViewThatFits(in: .horizontal) {
-                                HStack(spacing: instrument ? 6 : 5) {
+                                HStack(spacing: theme == .instrument ? 6 : 5) {
                                     name
                                     if let effort {
                                         // Not faint: that fails AA contrast on the Glass and Smoked bodies.

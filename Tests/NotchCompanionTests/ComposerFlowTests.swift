@@ -228,6 +228,30 @@ import SwiftUI
         XCTAssertEqual(restored.sessions[0].stagedSubmission?.draft, "In flight", "Check last send can still restore it")
     }
 
+    /// An agent's queued message was in flight at a quit. It has no staged text, so it stays
+    /// queued and is delivered once Check last send proves the runtime never got it.
+    func testAnAgentMessageInFlightAtAQuitIsDeliveredAfterCheckLastSendFindsItAbsent() async throws {
+        let message = ChatMessage(id: "agent", role: "user", text: "Please also update the changelog.", turnID: "agent", kind: ChatMessage.agentMessage)
+        working()
+        model.sessions[0].runtimeID = nil
+        model.sessions[0].trustedProjectPath = folder.standardizedFileURL.resolvingSymlinksInPath().path
+        model.sessions[0].messages = [message]
+        model.sessions[0].pendingSubmission = PendingSubmission(id: "agent", draft: message.text, userTurnCount: 1, attachmentIDs: [])
+        model.sessions[0].stagedSubmission = StagedSubmission(message: message, draft: nil, attachments: [])
+        model.sessions[0].queuedSends = [QueuedSend(id: "agent", text: message.text, kind: ChatMessage.agentMessage)]
+        XCTAssertTrue(model.save())
+
+        let restoredTransport = ComposerFlowTransport()
+        let restored = AppModel(storageURL: storage, playsSounds: false, client: restoredTransport, preferences: preferences)
+        defer { restored.shutdown() }
+        await restored.connect()
+        XCTAssertEqual(restored.sessions[0].queuedSends.map(\.id), ["agent"], "Not dropped: nothing else holds its text")
+        restored.selectSession(restored.sessions[0].id)
+        await restored.send()
+        for _ in 0..<200 where !restoredTransport.calls.contains(where: { $0.0 == "prompt.submit" }) { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(restoredTransport.calls.contains { $0.0 == "prompt.submit" && $0.1["turn_id"] as? String == "agent" })
+    }
+
     func testSteerNowRefusesAQueuedMessageAlreadyInTheTranscript() async {
         working()
         model.sessions[0].messages.append(ChatMessage(id: "confirmed", role: "user", text: "Delivered", turnID: "confirmed"))

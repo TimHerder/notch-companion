@@ -199,10 +199,13 @@ Queue entries' attachment and pause fields are optional for older registries.
 Stop, failure, disconnect and restart pause the queue (with resume/cancel
 controls); a failed head blocks later entries. Delivery uses the ordinary
 staged/pending protections without overwriting the current draft; after restart
-a staged entry is kept once, not also restored into the editor. An entry whose
-ID is already the unconfirmed send or a transcript message (a quit during
-delivery) is dropped on load, its staged copy left for Check last send, and
-Edit and Steer now refuse such an ID. Paused queues do
+a staged entry is kept once, not also restored into the editor. After a quit
+during delivery, an entry already in the transcript is dropped on load, and so
+is a user entry that is the unconfirmed send (its staged copy holds the text for
+Check last send). An agent or notice entry that is the unconfirmed send has no
+staged text, so it stays queued: it waits for Check last send, which drops it
+once delivery is confirmed or lets it be delivered when the send proves absent.
+Edit and Steer refuse an ID that is the unconfirmed send or in the transcript. Paused queues do
 not keep the app busy. Approval and question cards stay authoritative; sending
 cannot bypass them.
 

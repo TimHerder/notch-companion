@@ -942,9 +942,10 @@ identify selection.
   until Reply. Free-text alternatives, progress, per-question state and
   duplicate protection are shared across windows; failed submissions keep the
   answer. Refined and Tahoe size the card to its question up to a cap;
-  Instrument keeps a fixed card whose question area fades at its bottom edge
-  while more is below and flashes its scroller when it appears, so a choice
-  past the edge is never hidden without a cue.
+  Instrument keeps a fixed card. While its question area has more below the
+  edge, **More ⌄** at the end of the action row scrolls to the rest (no edge
+  fade, which would dim a whole visible choice), and the scroller flashes when
+  the card appears, so a choice past the edge is never hidden without a cue.
 - **Failed delegated work** gives its parent red attention and a Review action.
   Child turn ownership keeps old failures from changing a later turn's outcome.
 - **Quit and Reconnect** check all app-owned work, including submissions and
@@ -1029,7 +1030,7 @@ and Send keep their size.
 The model label shows the runtime's display name for the selected, reported or
 default model (the ID only when unnamed; **Runtime default** when none is
 known), no “Next:” prefix, then the effort when the model has efforts (`xhigh`
-reads **Extra high**), no chevron. A long name truncates within the bar; it
+reads **Extra high**) one step quieter than the name, no chevron. A long name truncates within the bar; it
 never collapses to a lone “…”.
 
 The model picker is a bounded overlay rising from the bar with an inset **Search
