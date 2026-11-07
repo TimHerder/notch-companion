@@ -489,7 +489,11 @@ final class OpenCodeClient: RuntimeTransport {
         let sid = props["sessionID"] as? String ?? info["sessionID"] as? String ?? (props["part"] as? [String: Any])?["sessionID"] as? String ?? ""
         guard let owner = root(sid), roots[owner] == cwd else { return }
         revisions[owner, default: 0] += 1
-        if type == "session.error" { failures[sid] = CodexProtocolState.describe(props["error"]); event("runtime.notice", sid: sid, ["message": "OpenCode reported a native turn error. Checking its final state."]) }
+        if type == "session.error" {
+            let error = props["error"] as? [String: Any]
+            failures[sid] = ((error?["data"] as? [String: Any])?["message"] as? String) ?? (error?["name"] as? String) ?? CodexProtocolState.describe(props["error"])
+            event("runtime.notice", sid: sid, ["message": "OpenCode reported a native turn error. Checking its final state."])
+        }
         if type == "session.status", let status = props["status"] as? [String: Any] {
             awaitingChildStart.remove(sid)
             if status["type"] as? String != "idle" { finished.remove(sid); start(sid) }
@@ -602,12 +606,19 @@ final class OpenCodeClient: RuntimeTransport {
                 } }
             }
             else {
-                // Tools first: text after a call that appeared in the same poll starts a new segment.
-                if observedPrompt { projectTools(rows, sid: id) }
-                let previous = delivered[id] ?? ""
-                if currentText.hasPrefix(previous), currentText.count > previous.count {
-                    event(id == sid ? "message.delta" : "subagent.text", sid: id, ["text": String(currentText.dropFirst(previous.count))])
+                let deliver = { (text: String) in
+                    let previous = self.delivered[id] ?? ""
+                    guard text.hasPrefix(previous), text.count > previous.count else { return }
+                    self.event(id == sid ? "message.delta" : "subagent.text", sid: id, ["text": String(text.dropFirst(previous.count))])
+                    self.delivered[id] = text
                 }
+                // Text written before a call first seen in this poll goes out ahead
+                // of it; text after the call then starts a new segment.
+                if observedPrompt {
+                    if let head = textBeforeNewTool(rows, sid: id) { deliver(head) }
+                    projectTools(rows, sid: id)
+                }
+                deliver(currentText)
                 delivered[id] = currentText
             }
             if id != sid {
@@ -638,7 +649,7 @@ final class OpenCodeClient: RuntimeTransport {
             if confirmed {
                 pendingPrompts.remove(sid)
                 let last = messages[sid]?.last?["info"] as? [String: Any] ?? [:]
-                event("message.complete", sid: sid, ["text": delivered[sid] ?? "", "status": failures[sid] != nil ? "error" : Self.terminal(last, cancelled: cancelled.remove(sid) != nil)])
+                event("message.complete", sid: sid, ["text": delivered[sid] ?? "", "status": failures[sid] != nil ? "error" : Self.terminal(last, cancelled: cancelled.remove(sid) != nil), "error": failures[sid] ?? ""])
             }
         }
         return ["messages": Self.history(messages[sid] ?? []), "history_complete": true, "running": !allIdle, "parent_complete": stable && !busy.contains(sid), "subagents": snapshots, "activity_verified": stable, "info": contextInfo]
@@ -655,6 +666,19 @@ final class OpenCodeClient: RuntimeTransport {
                 if ["completed", "error"].contains(state["status"] as? String ?? "") { event("tool.complete", sid: sid, ["tool_id": key, "is_error": state["status"] as? String == "error", "result": state["output"] ?? state["error"] ?? ""]) }
             }
         }
+    }
+    /// The current turn's text up to the first tool part not projected yet.
+    private func textBeforeNewTool(_ rows: [[String: Any]], sid: String) -> String? {
+        let lastUser = rows.lastIndex { ($0["info"] as? [String: Any])?["role"] as? String == "user" } ?? -1
+        for index in rows.indices.dropFirst(lastUser + 1) {
+            let parts = rows[index]["parts"] as? [[String: Any]] ?? []
+            guard let cut = parts.firstIndex(where: { part in
+                part["type"] as? String == "tool" && (part["id"] as? String).map { !tools.contains(sid + ":" + $0) } == true
+            }) else { continue }
+            var row = rows[index]; row["parts"] = Array(parts[..<cut])
+            return Self.currentText(Array(rows[..<index]) + [row])
+        }
+        return nil
     }
     private func list(_ path: String, cwd: String) async throws -> [[String: Any]] {
         guard let value = try await get(path, cwd: cwd) as? [[String: Any]] else { throw AppError("OpenCode returned an invalid native list. Saved history and work were preserved.") }
@@ -905,8 +929,10 @@ extension OpenCodeClient {
     /// The session's own rules, then the companion's (last match wins): every
     /// session's server denied, then this session's allowed.
     nonisolated static func delegationRules(_ existing: [[String: Any]], server: String?) -> [[String: Any]] {
-        existing.filter { ($0["action"] as? String)?.wholeMatch(of: #/notch-(\*|[0-9a-f]{16}_\*)/#) == nil }
-            + [["action": "notch-*", "resource": "*", "effect": "deny"]]
+        // `?` matches one character, so the deny covers only `notch-<16 hex>` servers, not a user's
+        // `notch-…` server; the old `notch-*` deny is still stripped from saved sessions.
+        existing.filter { ($0["action"] as? String)?.wholeMatch(of: #/notch-(\*|\?{16}_\*|[0-9a-f]{16}_\*)/#) == nil }
+            + [["action": "notch-????????????????_*", "resource": "*", "effect": "deny"]]
             + (server.map { [["action": $0 + "_*", "resource": "*", "effect": "allow"]] } ?? [])
     }
 
