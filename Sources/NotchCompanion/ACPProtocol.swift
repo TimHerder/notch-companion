@@ -259,6 +259,13 @@ struct ACPProtocolState {
         return Self.reply(request.id, ["action": "accept", "content": values])
     }
 
+    /// After `session/cancel` ACP requires every open request to be answered as cancelled.
+    mutating func cancelRequests(_ sid: String) -> [[String: Any]] {
+        requests.filter { $0.value.session == sid }.keys.compactMap { requests.removeValue(forKey: $0) }.map {
+            Self.reply($0.id, $0.method == "elicitation/create" ? ["action": "cancel"] : ["outcome": ["outcome": "cancelled"]])
+        }
+    }
+
     static func questions(_ schema: [String: Any], message: String) -> [[String: Any]]? {
         guard schema["type"] as? String == "object", let properties = schema["properties"] as? [String: [String: Any]], !properties.isEmpty, properties.count <= 16 else { return nil }
         let required = Set(schema["required"] as? [String] ?? Array(properties.keys))

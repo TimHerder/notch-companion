@@ -61,7 +61,10 @@ FIFO final-frame delivery, stale-generation filtering and EOF-first cleanup;
 stderr is drained, never stored raw. Reopening waits for retiring owned processes
 to release native persistence. Each protocol owns its correlation, deadlines and
 terminal semantics: Pi waits for settled lifecycle, OpenClaw uses run/sequence
-identities, Claude keeps active children beyond a parent result. A process exit
+identities, Claude keeps active children beyond a parent result. ACP Stop
+answers the session's open requests as cancelled after `session/cancel`; a
+turn's 30-minute deadline is extended while it waits on the user, and expiry
+cancels and fails only that turn, never the shared process. A process exit
 or lost acknowledgement never implies a successful turn. Native provider/tool
 environment is kept; inherited host-chat session IDs, frontend IPC and unrelated
 runtime identity are removed (`RuntimeEnvironment.native`). Finder launches get

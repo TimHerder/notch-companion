@@ -26,6 +26,8 @@ final class ACPRuntimeClient: RuntimeTransport {
     private var inheritedModes: [String: String] = [:]
     private var modeOverridden = Set<String>()
     private var version = "ACP v1"
+    /// A turn's limit in seconds, not counting time it waits on the user (settable by tests).
+    var promptTimeout: Double = 1_800
     private let executableOverride: URL?
     private var executable: URL?
 
@@ -245,7 +247,7 @@ final class ACPRuntimeClient: RuntimeTransport {
                 Task { @MainActor [weak self] in
                     guard let self, self.generation == run else { return }
                     do {
-                        let result = try await self.rpc("session/prompt", ["sessionId": sid, "prompt": prompt], timeout: 1_800)
+                        let result = try await self.rpc("session/prompt", ["sessionId": sid, "prompt": prompt], timeout: self.promptTimeout)
                         guard self.generation == run else { return }
                         self.accept(sid)
                         self.emit(self.state.finish(sid, stopReason: result["stopReason"] as? String ?? "unknown"))
@@ -263,6 +265,8 @@ final class ACPRuntimeClient: RuntimeTransport {
         case "session.interrupt":
             try process.send(["jsonrpc": "2.0", "method": "session/cancel", "params": ["sessionId": sid]])
             guard state.children[sid]?.isEmpty ?? true else { throw ACPClientError.unavailable("Cancellation was requested, but ACP cannot confirm delegated children stopped. Check and stop them in native OpenCode; the companion will not mark them idle without evidence.") }
+            // The acknowledgement drops this session's cards, so their requests are answered here.
+            for frame in state.cancelRequests(sid) { try process.send(frame) }
             return ["interrupted": true]
         case "approval.respond", "clarify.respond":
             if let frame = try state.answer(params, approval: method == "approval.respond") { try process.send(frame) }
@@ -324,12 +328,25 @@ final class ACPRuntimeClient: RuntimeTransport {
 
     private func rpc(_ method: String, _ params: [String: Any], timeout: Double = 45) async throws -> [String: Any] {
         sequence += 1; let id = sequence, run = generation
+        let turn = method == "session/prompt" ? params["sessionId"] as? String : nil
         return try await withCheckedThrowingContinuation { continuation in
             pending[id] = continuation
             deadlines[id] = Task { @MainActor [weak self] in
-                do { try await Task.sleep(for: .seconds(timeout)) } catch { return }
-                guard let self, self.generation == run else { return }
-                self.fail(ACPClientError.unavailable("\(self.runtime.title) timed out during \(method). Check that the selected native profile exposes ACP v1. Reconnect and inspect the saved session before retrying a prompt."))
+                while true {
+                    do { try await Task.sleep(for: .seconds(timeout)) } catch { return }
+                    guard let self, self.generation == run else { return }
+                    guard let turn else {
+                        self.fail(ACPClientError.unavailable("\(self.runtime.title) timed out during \(method). Check that the selected native profile exposes ACP v1. Reconnect and inspect the saved session before retrying a prompt."))
+                        return
+                    }
+                    // Waiting on the user does not count against the turn.
+                    if self.state.requests.values.contains(where: { $0.session == turn }) { continue }
+                    // Settle and cancel only this turn; the shared process keeps serving every other session.
+                    self.deadlines.removeValue(forKey: id)
+                    try? self.process.send(["jsonrpc": "2.0", "method": "session/cancel", "params": ["sessionId": turn]])
+                    self.pending.removeValue(forKey: id)?.resume(throwing: ACPClientError.rpc(-1, "\(self.runtime.title) did not finish this turn in \(Int(timeout / 60)) minutes, so it was cancelled. Check the native conversation before sending again."))
+                    return
+                }
             }
             do { try process.send(["jsonrpc": "2.0", "id": id, "method": method, "params": params]) }
             catch { deadlines.removeValue(forKey: id)?.cancel(); pending.removeValue(forKey: id)?.resume(throwing: error) }

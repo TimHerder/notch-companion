@@ -237,6 +237,84 @@ final class ACPIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testAntigravityStopAnswersItsOpenQuestionSoTheTurnEnds() async throws {
+        let (root, client) = try antigravityFixture()
+        defer { client.disconnect(); try? FileManager.default.removeItem(at: root) }
+        var events: [(String, [String: Any])] = []
+        client.onEvent = { events.append(($0, $1)) }
+        try await client.connect()
+        let session = try await client.request("session.create", params: ["cwd": root.path, "project_trusted": true])
+        let sid = try XCTUnwrap(session["session_id"] as? String)
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "question"])
+        try await eventually { events.contains { $0.0 == "clarify.request" } }
+        _ = try await client.request("session.interrupt", params: ["session_id": sid])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "interrupted")
+        let wire = try wireLog(root)
+        let cancel = try XCTUnwrap(wire.firstIndex { $0["method"] as? String == "session/cancel" })
+        let answer = try XCTUnwrap(wire.firstIndex { $0["id"] as? String == "ask-1" })
+        XCTAssertLessThan(cancel, answer)
+        XCTAssertEqual(((wire[answer]["result"] as? [String: Any])?["outcome"] as? [String: Any])?["outcome"] as? String, "cancelled")
+        do {
+            _ = try await client.request("clarify.respond", params: ["session_id": sid, "request_id": "s:ask-1", "question_id": "interaction_1", "answer": "Ink"])
+            XCTFail("A cancelled question cannot be answered again")
+        } catch {}
+    }
+
+    @MainActor
+    func testAntigravityPromptDeadlineSettlesOnlyThatTurnAndWaitsWhileTheUserIsAsked() async throws {
+        let (root, client) = try antigravityFixture()
+        defer { client.disconnect(); try? FileManager.default.removeItem(at: root) }
+        client.promptTimeout = 0.3
+        var events: [(String, [String: Any])] = []
+        var disconnected = false
+        client.onEvent = { events.append(($0, $1)) }
+        client.onConnectionChange = { connected, _ in if !connected { disconnected = true } }
+        try await client.connect()
+        let session = try await client.request("session.create", params: ["cwd": root.path, "project_trusted": true])
+        let sid = try XCTUnwrap(session["session_id"] as? String)
+
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "question"])
+        try await eventually { events.contains { $0.0 == "clarify.request" } }
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertFalse(events.contains { $0.0 == "message.complete" }, "Time spent waiting on the user does not end the turn")
+        _ = try await client.request("clarify.respond", params: ["session_id": sid, "request_id": "s:ask-1", "question_id": "interaction_1", "answer": "Ink"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "complete")
+
+        events.removeAll()
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "slow"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "error")
+        XCTAssertTrue((events.last { $0.0 == "runtime.notice" }?.1["message"] as? String)?.contains("did not finish this turn") == true)
+        XCTAssertTrue(try wireLog(root).contains { $0["method"] as? String == "session/cancel" }, "The overdue turn is cancelled natively")
+        XCTAssertFalse(disconnected, "The shared agy process keeps serving every session")
+        events.removeAll()
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "ordinary"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "complete")
+    }
+
+    @MainActor
+    private func antigravityFixture() throws -> (URL, ACPRuntimeClient) {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else { throw XCTSkip("Offline agy peer needs system Python 3.") }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("notch-agy-fixture-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Fixtures/antigravity_acp.py")
+        let executable = root.appendingPathComponent("agy")
+        try FileManager.default.copyItem(at: source, to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let profile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gemini/antigravity-cli").path
+        return (root, ACPRuntimeClient(runtime: .antigravity, profileID: profile, executableOverride: executable))
+    }
+
+    private func wireLog(_ root: URL) throws -> [[String: Any]] {
+        try String(contentsOf: root.appendingPathComponent("wire.jsonl"), encoding: .utf8).split(separator: "\n").compactMap {
+            try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+        }
+    }
+
+    @MainActor
     private func eventually(_ predicate: () -> Bool) async throws {
         for _ in 0..<100 {
             if predicate() { return }
