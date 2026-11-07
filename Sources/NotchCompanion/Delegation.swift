@@ -415,12 +415,13 @@ extension AppModel {
         }
         let role = arguments["role"] as? String
         guard role.map(Delegation.roles.contains) ?? true else { throw DelegationFailure("invalid_request", "role must be one of \(Delegation.roles.joined(separator: ", ")).") }
-        let timeout = Self.waitTimeout(arguments, runtime: caller.runtime)
+        // One budget for creation and the wait, so an OpenClaw call answers inside the Gateway's deadline.
+        let deadline = Date().addingTimeInterval(Self.waitTimeout(arguments, runtime: caller.runtime))
         let taskID = Delegation.derivedID(caller: caller.sessionID, operation: "delegate_task", clientRequestID: clientRequestID)
         // A retry reaches the same task; never a second child.
         if let creating = delegationCreations[taskID] { _ = try await creating.task.value }
         if let existing = sessions.first(where: { $0.delegation?.taskID == taskID && $0.parentSessionID == caller.sessionID }) {
-            return mode == "wait" ? try await waitForDelegatedTask(existing.id, timeout: timeout) : taskResult(existing.id)
+            return mode == "wait" ? try await waitForDelegatedTask(existing.id, timeout: max(0, deadline.timeIntervalSinceNow)) : taskResult(existing.id)
         }
         guard let parent = sessions.first(where: { $0.id == caller.sessionID }) else { throw DelegationFailure("thread_not_found", "The calling session no longer exists.") }
         guard !parent.parentTurnComplete else {
@@ -434,7 +435,7 @@ extension AppModel {
             scheduleDeferredOperationIfIdle()
         }
         let childID = try await creation.value
-        return mode == "wait" ? try await waitForDelegatedTask(childID, timeout: timeout) : taskResult(childID)
+        return mode == "wait" ? try await waitForDelegatedTask(childID, timeout: max(0, deadline.timeIntervalSinceNow)) : taskResult(childID)
     }
 
     /// A new session for an agent: its harness, model and mode within the
