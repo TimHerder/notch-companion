@@ -34,6 +34,22 @@ extension CompanionSession {
         return boundary.id
     }
 
+    /// The ready plan's name: the first heading of the turn's answer, as plain
+    /// text and without a leading “Plan:”; nil when it has none.
+    var planReadyTitle: String? {
+        guard let turn = planReadyTurnID, let start = messages.firstIndex(where: { $0.id == turn }),
+              let answer = messages[start...].last(where: { $0.role == "assistant" && SessionHistory.isVisibleConversation($0) }),
+              case .heading(_, let heading)? = MarkdownDocument.parse(answer.text).first(where: {
+                  if case .heading = $0.content { return true } else { return false }
+              })?.content else { return nil }
+        var name = (try? AttributedString(markdown: heading)).map { String($0.characters) } ?? heading
+        if let plan = name.range(of: #"^\s*plan(\s*[:·—–-]\s*|\s*$)"#, options: [.regularExpression, .caseInsensitive]) {
+            name.removeSubrange(plan)
+        }
+        name = name.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? nil : name
+    }
+
     var busyInputHint: String {
         if pendingSubmission != nil { return "Wait for this turn, then check last send" }
         if canSteer { return "↩ to steer, ⌘↩ to queue for later" }

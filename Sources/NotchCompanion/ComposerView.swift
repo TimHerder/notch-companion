@@ -44,7 +44,6 @@ struct ComposerView: View {
     var body: some View {
         let refined = PanelTheme.current == .refined
         VStack(alignment: .leading, spacing: refined ? 6 : 5) {
-            if let session = model.current, session.planReadyTurnID != nil { planReady(session) }
             if let session = model.current, !queued.isEmpty {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 5) {
@@ -105,33 +104,62 @@ struct ComposerView: View {
         .onChange(of: busy) { _, _ in submissionNotice = nil }
     }
 
-    /// Plan ready, above the field: Implement leaves Plan and asks for the
-    /// work; Keep planning hides it for this turn.
-    @ViewBuilder private func planReady(_ session: CompanionSession) -> some View {
+    /// Plan ready is the field's own first row, above a hairline: the plan's
+    /// name, Keep planning as quiet text (hidden for this turn) and Implement
+    /// (leaves Plan and asks for the work). Refined keeps its sage for Send, so
+    /// Implement is the neutral pill there and the accent key elsewhere.
+    private func planHeader(_ session: CompanionSession) -> some View {
         let theme = PanelTheme.current
-        let row = HStack(spacing: 8) {
-            Group {
-                switch theme {
-                case .refined: Image(systemName: "list.bullet.clipboard")
-                case .tahoe: Image(systemName: "list.bullet.clipboard.fill").foregroundStyle(CompanionStyle.accent)
-                case .instrument: LED(color: CompanionStyle.text, size: 5)
+        let refined = theme == .refined
+        return VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                planName(session.planReadyTitle)
+                Spacer(minLength: 8)
+                Button { model.keepPlanning(session.id) } label: {
+                    if theme == .instrument { Text("Keep planning").microLabel(10, tracking: 0.6) } else { Text("Keep planning") }
                 }
-            }.accessibilityHidden(true)
-            Text("Plan ready").lineLimit(1)
-            Spacer(minLength: 0)
-            Button("Keep planning") { model.keepPlanning(session.id) }
-                .buttonStyle(NotchPillButtonStyle(small: true))
+                .buttonStyle(NotchToolbarButtonStyle(height: theme == .instrument ? 22 : 24))
+                .fixedSize() // A long plan name truncates first.
                 .help("Stay in Plan; this returns with the next plan")
-            Button("Implement") { Task { await model.implementPlan(session.id) } }
-                .buttonStyle(NotchPillButtonStyle(prominent: true, small: true))
-                .disabled(model.submitting || !model.canAttemptSend)
-                .help("Switch to \(session.prePlanPermissionMode?.title ?? "Default permissions") and send “\(AppModel.implementPlanMessage)”")
+                Button("Implement") { Task { await model.implementPlan(session.id) } }
+                    .buttonStyle(NotchPillButtonStyle(prominent: !refined, small: !refined, height: refined ? 24 : nil))
+                    .fixedSize()
+                    .disabled(model.submitting || !model.canAttemptSend)
+                    .help("Switch to \(session.prePlanPermissionMode?.title ?? "Default permissions") and send “\(AppModel.implementPlanMessage)”")
+            }
+            // Six points in: the 24-point capsule is concentric with the field's corner.
+            .padding(.leading, 14).padding(.trailing, 6).padding(.vertical, 6)
+            Rectangle().fill(PanelTheme.pick(CompanionStyle.hairline, CompanionStyle.separator, CompanionStyle.rule))
+                .frame(height: 0.5).padding(.horizontal, theme == .instrument ? 0 : 14)
         }
-        if theme == .refined {
-            row.foregroundStyle(CompanionStyle.accent).panelNotice(CompanionStyle.accent).padding(.bottom, -6)
-        } else {
-            row.font(.system(size: PanelTheme.pick(11, 12, 11.5), weight: .medium)).padding(.vertical, 3)
+    }
+
+    /// `Plan · Ready for review`, from the answer's first heading; Instrument
+    /// labels it like the bar's destination, behind a lamp.
+    private func planName(_ title: String?) -> some View {
+        Group {
+            if PanelTheme.current == .instrument {
+                HStack(spacing: 6) {
+                    LED(color: CompanionStyle.text, size: 5)
+                    Text(title == nil ? "Plan ready" : "Plan").microLabel(9.5)
+                        .foregroundStyle(title == nil ? CompanionStyle.secondary : CompanionStyle.faint)
+                    if let title { Text(title).font(.system(size: 11.5)).foregroundStyle(CompanionStyle.text) }
+                }
+            } else {
+                HStack(spacing: 5) {
+                    Text(title == nil ? "Plan ready" : "Plan").fontWeight(title == nil ? .medium : .regular)
+                        .foregroundStyle(title == nil ? CompanionStyle.text : CompanionStyle.secondary)
+                    if let title {
+                        Text("·").foregroundStyle(CompanionStyle.faint)
+                        Text(title).foregroundStyle(CompanionStyle.text)
+                    }
+                }
+                .font(.system(size: 12, weight: .medium))
+            }
         }
+        .lineLimit(1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title.map { "Plan ready: \($0)" } ?? "Plan ready")
     }
 
     /// Steer now (when the running turn can take it), Edit (into an empty
@@ -153,14 +181,16 @@ struct ComposerView: View {
             .disabled(sending)
     }
 
-    /// One field in every design: files and the editor on top, one bar along its
-    /// bottom edge with attach, SnapShot, where the message goes, the session's
-    /// model, permissions and context, and Send. Nothing sits outside it, so a
-    /// tall draft or a banner can never push a control out of view.
+    /// One field in every design: a ready plan's row, files and the editor on
+    /// top, one bar along its bottom edge with attach, SnapShot, where the
+    /// message goes, the session's model, permissions and context, and Send.
+    /// Nothing sits outside it, so a tall draft or a banner can never push a
+    /// control out of view.
     private var field: some View {
         let theme = PanelTheme.current
         let lit = focused.wrappedValue
         return VStack(alignment: .leading, spacing: 0) {
+            if let session = model.current, session.planReadyTurnID != nil { planHeader(session) }
             if model.current?.attachments.isEmpty == false {
                 AttachmentStrip(model: model).padding(.horizontal, 10).padding(.top, 10)
             }

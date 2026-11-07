@@ -828,7 +828,7 @@ import ImageIO
         model.draft = "Keep the public API unchanged."
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-queue-actions-draft", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-queue-actions-draft", output: output)
-        // A finished turn in Plan: Plan ready above the composer, and on the unread row.
+        // A finished turn in Plan: Plan ready as the field's first row, and on the unread row.
         model.sessions[0].queuedSends = []
         model.sessions[0].parentTurnComplete = true
         model.sessions[0].state = .finished
