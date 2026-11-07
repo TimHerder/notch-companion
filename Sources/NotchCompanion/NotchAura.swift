@@ -81,13 +81,33 @@ struct NotchAnnouncement: Identifiable, Equatable {
     let kind: Kind
     let sessionID: String
     let title: String
+    /// The message itself, one line, snapshotted when announced: the answer,
+    /// the failure, or the question. Live state may move on during the hold.
+    var detail = ""
+    /// How long the announced turn had been working, when known.
+    var worked: TimeInterval? = nil
 
-    /// Natural width of the announcement label, so the band widens only as
-    /// far as the title needs (bounded so long titles still truncate).
+    /// What VoiceOver hears; the verb stays in words here.
+    var spoken: String { detail.isEmpty ? "\(kind.verb): \(title)" : "\(kind.verb): \(title). \(detail)" }
+
+    static let iconWidth: CGFloat = 15
+    static let titleFont = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+    static let detailFont = NSFont.systemFont(ofSize: 11.5)
+    /// A long title stops here so the message always gets room beside it.
+    static let titleCap: CGFloat = 100
+
+    /// The title's width in the band: natural, or capped when a message follows.
+    var titleWidth: CGFloat { Self.width(title, font: Self.titleFont, cap: detail.isEmpty ? .infinity : Self.titleCap) }
+
+    /// Natural width of the announcement label (icon, title, message), so the
+    /// band widens only as far as it needs, bounded so long text truncates.
     var labelWidth: CGFloat {
-        let verb = (kind.verb as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11.5, weight: .semibold)]).width
-        let name = (title as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11.5)]).width
-        return min(230, max(120, ceil(14 + 6 + verb + 6 + name + 2)))
+        let message = detail.isEmpty ? 0 : 7 + Self.width(detail, font: Self.detailFont)
+        return min(250, max(120, ceil(Self.iconWidth + 6 + titleWidth + message + 2)))
+    }
+
+    static func width(_ text: String, font: NSFont, cap: CGFloat = .infinity) -> CGFloat {
+        min(cap, ceil((text as NSString).size(withAttributes: [.font: font]).width) + 1)
     }
 }
 

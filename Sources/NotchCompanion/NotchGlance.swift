@@ -212,6 +212,40 @@ enum SessionDigest {
         return plainText(String(MessageContent.preview(message.text).prefix(400)))
     }
 
+    /// This turn's answer as one plain line: never the prompt, never an earlier turn's answer.
+    static func answer(_ session: CompanionSession) -> String {
+        var turn = session
+        let start = session.messages.lastIndex(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) }) ?? -1
+        turn.messages = session.messages.suffix(from: start + 1).filter { $0.role == "assistant" }
+        return preview(turn)
+    }
+
+    /// When the current turn began: its last visible prompt.
+    static func turnStart(_ session: CompanionSession) -> Date? {
+        session.messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) })?.createdAt
+    }
+
+    /// The message an announcement snapshots: the answer, the failure's
+    /// reason (else its child or last answer), or the question.
+    static func announcementDetail(_ kind: NotchAnnouncement.Kind, session: CompanionSession,
+                                   requests: [PendingRequest], failure: String = "") -> String {
+        switch kind {
+        case .finished:
+            return answer(session)
+        case .failed:
+            let reason = oneLine(String(failure.prefix(400)))
+            if !reason.isEmpty { return reason }
+            if session.pendingSubmission != nil { return "Send unconfirmed · check its native history" }
+            if let child = session.failedCurrentAgents.first { return "\(child.title) failed" }
+            let text = answer(session)
+            return text.isEmpty ? "Something went wrong" : text
+        case .needsInput:
+            return entry(session, requests: requests).detail
+        case .hello:
+            return ""
+        }
+    }
+
     static func plainText(_ markdown: String) -> String {
         let blocks = blockText(MarkdownDocument.parse(markdown))
         let formatted = (try? AttributedString(markdown: blocks, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
@@ -602,38 +636,51 @@ struct GlanceBandSummary: View {
     }
 }
 
-/// The compact announcement inside the widened resting band.
+/// The compact announcement inside the widened resting band: the acting
+/// status icon, the session title, then the message. The icon and its color
+/// carry the verb; VoiceOver still hears it.
 struct AnnouncementLabel: View {
     var announcement: NotchAnnouncement
     var reducedMotion = false
-    /// The stage names the session on its own line.
-    var showsTitle = true
-    /// Counts the icon acting out its verb once the label has materialized.
-    @State private var cue = 0
 
     var body: some View {
         HStack(spacing: 6) {
-            icon
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(announcement.kind.color)
-                .task(id: announcement.id) {
-                    try? await Task.sleep(for: .milliseconds(260))
-                    if !reducedMotion { cue += 1 }
-                }
-            Text(announcement.kind.verb).font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(announcement.kind.color)
-                .fixedSize()
-            if showsTitle {
-                Text(announcement.title).font(.system(size: 11.5)).foregroundStyle(IslandStyle.text.opacity(0.82))
+            AnnouncementIcon(announcement: announcement, reducedMotion: reducedMotion, size: 13)
+                .frame(width: NotchAnnouncement.iconWidth)
+            Text(announcement.title).font(.system(size: 11.5, weight: .medium)).foregroundStyle(IslandStyle.text)
+                .lineLimit(1).truncationMode(.tail)
+                .frame(width: announcement.detail.isEmpty ? nil : announcement.titleWidth, alignment: .leading)
+            if !announcement.detail.isEmpty {
+                Text(announcement.detail).font(.system(size: 11.5)).foregroundStyle(IslandStyle.secondary)
                     .lineLimit(1).truncationMode(.tail)
+                    .padding(.leading, 1)
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(announcement.kind.verb): \(announcement.title)")
+        .accessibilityLabel(announcement.spoken)
+    }
+}
+
+/// The announcement's colored status icon, acting out its verb once it has
+/// materialized: Done draws its check on, Hi waves, Failed shakes its head,
+/// and a question hops like the eyes.
+struct AnnouncementIcon: View {
+    var announcement: NotchAnnouncement
+    var reducedMotion = false
+    var size: CGFloat = 13
+    @State private var cue = 0
+
+    var body: some View {
+        icon
+            .font(.system(size: size, weight: .semibold))
+            .foregroundStyle(announcement.kind.color)
+            .task(id: announcement.id) {
+                try? await Task.sleep(for: .milliseconds(260))
+                if !reducedMotion { cue += 1 }
+            }
+            .accessibilityHidden(true)
     }
 
-    /// Done draws its check on, Hi waves, Failed shakes its head, and a
-    /// question hops like the eyes.
     @ViewBuilder private var icon: some View {
         let image = Image(systemName: announcement.kind.symbol)
         switch announcement.kind {
@@ -645,7 +692,8 @@ struct AnnouncementLabel: View {
     }
 }
 
-/// A small island inside the open panel naming another session's result.
+/// A small island inside the open panel naming another session's result:
+/// status glyph, title, one line of the message, Open.
 struct PanelToastView: View {
     var announcement: NotchAnnouncement
     var action: () -> Void
@@ -654,10 +702,13 @@ struct PanelToastView: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 GlanceStatusGlyph(status: announcement.kind.glanceStatus, unread: true, reducedMotion: true, size: 18)
-                Text(announcement.kind.verb).font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(announcement.kind.color).fixedSize()
-                Text(announcement.title).font(.system(size: 12)).foregroundStyle(IslandStyle.text)
+                Text(announcement.title).font(.system(size: 12, weight: .medium)).foregroundStyle(IslandStyle.text)
                     .lineLimit(1).truncationMode(.tail)
+                    .frame(width: announcement.detail.isEmpty ? nil : Self.titleWidth(announcement.title), alignment: .leading)
+                if !announcement.detail.isEmpty {
+                    Text(announcement.detail).font(.system(size: 12)).foregroundStyle(IslandStyle.secondary)
+                        .lineLimit(1).truncationMode(.tail)
+                }
                 Text("Open").font(.system(size: 11, weight: .medium)).foregroundStyle(IslandStyle.secondary)
                     .fixedSize().padding(.leading, 4)
                 Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
@@ -672,9 +723,13 @@ struct PanelToastView: View {
         }
         .buttonStyle(.plain)
         .pressableCursor()
+        // Hugs its content; a long message truncates within the cap.
         .frame(maxWidth: 380)
-        .fixedSize(horizontal: true, vertical: false)
-        .accessibilityLabel("\(announcement.kind.verb): \(announcement.title). Open")
+        .accessibilityLabel("\(announcement.spoken). Open")
+    }
+
+    private static func titleWidth(_ title: String) -> CGFloat {
+        NotchAnnouncement.width(title, font: .systemFont(ofSize: 12, weight: .medium), cap: 150)
     }
 }
 
