@@ -100,13 +100,30 @@ private struct WorkspaceButton: View {
                 }
                 if choosing { Image(systemName: "chevron.up.chevron.down").font(.system(size: 7.5, weight: .semibold)) }
             }
-            // A long folder name stops here, so the model, the gauge and Send keep their room.
-            .frame(maxWidth: 150)
         }
+        // A long folder name stops at 150 points, so the model, the gauge and Send keep their room.
+        .modifier(WidthCap(limit: 150))
         .destinationButtonStyle()
         .help(choosing ? "Choose this session’s working folder · \(path)" : "Show this session’s working folder in Finder · \(path)")
         .accessibilityLabel(choosing ? "Working folder, \(path)" : "Show this session’s working folder in Finder, \(path)")
         .accessibilityHint(choosing ? "Choose another folder for this new session" : "")
+    }
+}
+
+/// Hugs its content up to `limit`, then truncates it; unlike `frame(maxWidth:)` it never stretches.
+private struct WidthCap: ViewModifier {
+    var limit: CGFloat
+    func body(content: Content) -> some View { CappedWidthLayout(limit: limit) { content } }
+}
+
+private struct CappedWidthLayout: Layout {
+    var limit: CGFloat
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        return child.sizeThatFits(ProposedViewSize(width: min(proposal.width ?? limit, limit), height: proposal.height))
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }
 
