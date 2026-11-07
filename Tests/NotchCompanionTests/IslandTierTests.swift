@@ -81,29 +81,45 @@ final class IslandTierTests: XCTestCase {
         XCTAssertEqual(geometry.expandedFrame, plain.expandedFrame)
     }
 
-    func testAnnouncementLabelMeasuresTitleAndMessageButNoVerb() {
+    func testAnnouncementLabelPutsTheTitleFirstAndTheMessageInTheRoomLeft() {
         let plain = NotchAnnouncement(kind: .finished, sessionID: "s", title: "Website accessibility review")
         // Icon and color carry the verb, so every kind measures alike.
         for kind in NotchAnnouncement.Kind.allCases {
             XCTAssertEqual(NotchAnnouncement(kind: kind, sessionID: "s", title: plain.title).labelWidth, plain.labelWidth)
         }
         XCTAssertEqual(NotchAnnouncement(kind: .failed, sessionID: "s", title: "Fix").labelWidth, 120, "short labels keep a minimum")
-        var told = plain
-        told.detail = "Focus follows the reading order"
-        XCTAssertGreaterThan(told.labelWidth, plain.labelWidth, "the message widens the band")
-        XCTAssertLessThanOrEqual(told.labelWidth, 250)
-        // A long title is capped so a long message still gets room; together they stay bounded.
-        let long = NotchAnnouncement(kind: .needsInput, sessionID: "s",
-                                     title: "Compare the implementation options for the release",
+        // A short title leaves room, so the message follows in it and widens the band.
+        let short = NotchAnnouncement(kind: .finished, sessionID: "s", title: "Notes", detail: "Drafted the changelog")
+        XCTAssertTrue(short.bandShowsMessage)
+        XCTAssertGreaterThan(short.labelWidth, NotchAnnouncement(kind: .finished, sessionID: "s", title: "Notes").labelWidth)
+        XCTAssertLessThan(short.labelWidth, NotchAnnouncement.maxLabelWidth)
+        let told = NotchAnnouncement(kind: .needsInput, sessionID: "s", title: "Plan the release",
                                      detail: "Which milestone should ship first: the glance or the aura?")
-        XCTAssertEqual(long.labelWidth, 250)
-        XCTAssertEqual(long.titleWidth, NotchAnnouncement.titleCap)
-        XCTAssertGreaterThanOrEqual(long.labelWidth - NotchAnnouncement.iconWidth - long.titleWidth - 15, 100)
-        let alone = NotchAnnouncement(kind: .needsInput, sessionID: "s", title: long.title)
-        XCTAssertGreaterThan(alone.titleWidth, NotchAnnouncement.titleCap, "without a message the title takes the room")
-        // VoiceOver keeps the verb.
-        XCTAssertEqual(long.spoken, "Needs you: \(long.title). \(long.detail)")
+        XCTAssertTrue(told.bandShowsMessage)
+        XCTAssertEqual(told.labelWidth, 230, "a long message truncates within the baseline cap")
+        // A title that leaves under ~70 points drops the message instead of showing a stub.
+        var long = plain
+        long.detail = "Ready for review"
+        XCTAssertFalse(long.bandShowsMessage)
+        XCTAssertEqual(long.labelWidth, plain.labelWidth, "the band sizes to the whole title alone")
+        XCTAssertLessThan(long.labelWidth, 230)
+        let huge = NotchAnnouncement(kind: .needsInput, sessionID: "s",
+                                     title: "Compare the implementation options for the release", detail: told.detail)
+        XCTAssertFalse(huge.bandShowsMessage)
+        XCTAssertEqual(huge.labelWidth, 230, "a long title truncates at the cap, never past it")
+        // VoiceOver keeps the verb and the message the band left out.
+        XCTAssertEqual(long.spoken, "Done: \(long.title). Ready for review")
         XCTAssertEqual(plain.spoken, "Done: Website accessibility review")
+    }
+
+    @MainActor func testPanelToastPutsTheTitleFirstToo() {
+        let roomy = NotchAnnouncement(kind: .finished, sessionID: "s", title: "Website accessibility review",
+                                      detail: "Option B keeps one presentation clock.")
+        XCTAssertTrue(PanelToastView.showsMessage(roomy))
+        let crowded = NotchAnnouncement(kind: .finished, sessionID: "s", title: "Compare the implementation options for the release",
+                                        detail: roomy.detail)
+        XCTAssertFalse(PanelToastView.showsMessage(crowded), "too little room beside the title: no stub")
+        XCTAssertFalse(PanelToastView.showsMessage(NotchAnnouncement(kind: .finished, sessionID: "s", title: "Notes")))
     }
 
     func testExternalAnnouncementStaysCenteredAndVisiblyGrows() {
@@ -401,7 +417,7 @@ final class IslandTierTests: XCTestCase {
         XCTAssertEqual(AppModel.helloAnnouncement.spoken, "Hi! Hover here to begin", "its title is its verb, said once")
     }
 
-    @MainActor func testApprovalAnnouncementKeepsABoundedCommandForTheAnsweredStage() throws {
+    @MainActor func testApprovalStageShowsTheSameCommandOnceAnsweredAndSpeechStaysBounded() throws {
         let (model, file) = makeModel()
         let original = model.statusEffects
         defer {
@@ -413,16 +429,21 @@ final class IslandTierTests: XCTestCase {
         let heredoc = "cat <<'EOF' > notes.md\n" + String(repeating: "line of release notes\n", count: 300) + "EOF"
         model.receive("approval.request", payload: ["session_id": "parent", "request_id": "r", "command": heredoc])
         let asked = try XCTUnwrap(model.announcement)
-        XCTAssertEqual(asked.detail.count, 400, "VoiceOver hears a bounded command, like a failure's reason")
-        XCTAssertTrue(asked.detail.hasPrefix("cat <<'EOF' > notes.md line of"))
         XCTAssertTrue(asked.isApproval)
-        // Answered: the stage keeps the field for its 'Answer sent' moment.
+        XCTAssertTrue(asked.detail.hasSuffix("line of release notes EOF"), "the snapshot keeps the whole command")
+        XCTAssertLessThanOrEqual(asked.spoken.count, "Needs you: Release notes. ".count + NotchAnnouncement.spokenLimit,
+                                 "VoiceOver hears a bounded command, like a failure's reason")
+        let open = StageContent.make(asked, sessions: model.sessions, requests: model.requests)
+        XCTAssertFalse(open.answered)
+        // Answered: the stage keeps the same field for its 'Answer sent' moment.
         model.requests = []
         model.sessions[0].state = .working
         let landed = StageContent.make(asked, sessions: model.sessions, requests: model.requests)
         XCTAssertTrue(landed.answered)
         XCTAssertEqual(landed.detail, "Wants to run")
-        XCTAssertEqual(landed.command, asked.detail)
+        XCTAssertEqual(landed.command, open.command, "the field does not change as the answer lands")
+        XCTAssertEqual(landed.commandLines, 3)
+        XCTAssertEqual(landed.commandFieldHeight, open.commandFieldHeight)
         // A question is not an approval.
         model.receive("clarify.request", payload: ["session_id": "parent", "request_id": "q", "question": "Which tag?"])
         XCTAssertEqual(model.announcement?.isApproval, false)

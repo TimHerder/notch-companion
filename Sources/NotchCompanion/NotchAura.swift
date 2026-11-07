@@ -90,30 +90,39 @@ struct NotchAnnouncement: Identifiable, Equatable {
     /// keeps it in its field once answered.
     var isApproval = false
 
-    /// What VoiceOver hears; the verb stays in words here. The hello's title is its verb.
+    /// What VoiceOver (and the band's label) hears; the verb stays in words here.
+    /// The hello's title is its verb. A long message, such as a heredoc, is cut
+    /// here rather than in the snapshot the stage shows.
     var spoken: String {
-        if kind == .hello { return "\(title) \(detail)" }
-        return detail.isEmpty ? "\(kind.verb): \(title)" : "\(kind.verb): \(title). \(detail)"
+        let message = String(detail.prefix(Self.spokenLimit))
+        if kind == .hello { return "\(title) \(message)" }
+        return message.isEmpty ? "\(kind.verb): \(title)" : "\(kind.verb): \(title). \(message)"
     }
 
+    static let spokenLimit = 400
     static let iconWidth: CGFloat = 15
     static let titleFont = NSFont.systemFont(ofSize: 11.5, weight: .medium)
     static let detailFont = NSFont.systemFont(ofSize: 11.5)
-    /// A long title stops here so the message always gets room beside it.
-    static let titleCap: CGFloat = 100
+    static let maxLabelWidth: CGFloat = 230
+    /// With less room than this left beside the title, the message is left out rather than shown as a stub.
+    static let minMessageWidth: CGFloat = 70
 
-    /// The title's width in the band: natural, or capped when a message follows.
-    var titleWidth: CGFloat { Self.width(title, font: Self.titleFont, cap: detail.isEmpty ? .infinity : Self.titleCap) }
+    /// Icon, gap and the title at full width: the title comes first.
+    private var titleRun: CGFloat { Self.iconWidth + 6 + Self.width(title, font: Self.titleFont) }
 
-    /// Natural width of the announcement label (icon, title, message), so the
-    /// band widens only as far as it needs, bounded so long text truncates.
+    /// The band shows the message only in the width the title leaves.
+    var bandShowsMessage: Bool { !detail.isEmpty && Self.maxLabelWidth - titleRun - 9 >= Self.minMessageWidth }
+
+    /// Natural width of the announcement label (icon, title, and the message
+    /// when it fits), so the band widens only as far as it needs, bounded so
+    /// long text truncates.
     var labelWidth: CGFloat {
-        let message = detail.isEmpty ? 0 : 7 + Self.width(detail, font: Self.detailFont)
-        return min(250, max(120, ceil(Self.iconWidth + 6 + titleWidth + message + 2)))
+        let message = bandShowsMessage ? 7 + Self.width(detail, font: Self.detailFont) : 0
+        return min(Self.maxLabelWidth, max(120, ceil(titleRun + message + 2)))
     }
 
-    static func width(_ text: String, font: NSFont, cap: CGFloat = .infinity) -> CGFloat {
-        min(cap, ceil((text as NSString).size(withAttributes: [.font: font]).width) + 1)
+    static func width(_ text: String, font: NSFont) -> CGFloat {
+        ceil((text as NSString).size(withAttributes: [.font: font]).width) + 1
     }
 }
 

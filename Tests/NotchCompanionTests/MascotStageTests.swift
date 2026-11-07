@@ -228,8 +228,19 @@ final class MascotStageTests: XCTestCase {
         XCTAssertEqual(approving.command, SessionDigest.oneLine(long.detail))
         XCTAssertEqual(approving.messageLines, 1)
         XCTAssertEqual(approving.answerRows, 1)
+        // The command wraps instead of hiding its middle: three lines at most, and the stage grows to show them.
+        XCTAssertEqual(approving.commandLines, 3)
+        XCTAssertEqual(approving.commandFieldHeight, StageContent.commandHeight + ceil(2 * StageContent.commandLineHeight))
         XCTAssertEqual(approving.bodyHeight(mascot: false) - one.bodyHeight(mascot: false),
-                       StageContent.commandGap + StageContent.commandHeight, "one line of message, the field, one row of answers")
+                       StageContent.commandGap + approving.commandFieldHeight, "one line of message, the field, one row of answers")
+        let brief = PendingRequest(id: "b", kind: .approval, title: "Permission", detail: "swift test", choices: ["once", "deny"], sessionID: "live")
+        let quick = content("", requests: [brief], kind: .needsInput)
+        XCTAssertEqual(quick.commandLines, 1)
+        XCTAssertEqual(quick.commandFieldHeight, StageContent.commandHeight, "a short command keeps the one-line field")
+        let medium = PendingRequest(id: "m", kind: .approval, title: "Permission",
+                                    detail: "swift test --filter NotchGlanceTests --parallel --num-workers 4", choices: ["once", "deny"], sessionID: "live")
+        XCTAssertEqual(content("", requests: [medium], kind: .needsInput).commandLines, 2)
+        XCTAssertEqual(StageContent.breakable("a b"), "a\u{200B} \u{200B}b", "every character boundary may break")
     }
 
     @MainActor func testQuestionsShowTheirChoicesAndAReplyField() {
