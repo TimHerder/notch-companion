@@ -353,6 +353,50 @@ CuaDriver processes are untouched. Reference: [Cua Driver daemon
 CLI](https://cua.ai/docs/cua-driver/reference/cli/daemon). Fixture coverage is
 not live acceptance.
 
+## Claude computer use
+
+Claude Code adds its built-in `computer-use` MCP server itself only to
+interactive sessions, so the companion's `--print` sessions would never see it.
+Each launch therefore passes `--mcp-config` with a single stdio entry named
+`computer-use` (the installed `claude` with `--computer-use-mcp`) and adds
+`mcp__computer-use__*` to `--allowedTools`, which is what the CLI's own
+interactive setup does. Claude Code 2.1.308's code serves any stdio entry with
+that name in-process with its session-bound handlers, whatever the command;
+the docs still call computer use unavailable with `-p`, and a live headless
+session has not confirmed it yet ([verification](verification.md)). The CLI keeps
+its own gates: [the project's `/mcp` switch](https://code.claude.com/docs/en/computer-use)
+(off by default, saved per project), a claude.ai Pro or Max plan, its feature
+flag, macOS, and a single computer-use session at a time. Nothing in the
+profile's configuration is written; turning it on stays the user's `/mcp → Enable`
+in an interactive `claude` for that project. User MCP servers stay loaded.
+
+`initialize` declares `supportedDialogKinds: ["computer_use_approval"]`. A
+`request_user_dialog` of that kind becomes an approval offering **Allow this
+session** or Deny, never Allow once or a glance approval, because the grant
+lasts for the CLI session. It lists every app to control, apps already allowed
+or not installed, the extra clipboard and system key requests, and how many
+apps will be hidden; only a long reason is shortened. Allow answers `{behavior:
+"completed", result}` with the CLI's own result shape: every listed installed app
+not already granted (`bundleId`, `displayName`, `grantedAt` in ms), uninstalled
+apps as `not_installed`, and the requested flags. Deny completes with the CLI's
+empty grant (`granted: [], denied: []`, all flags false), as its own Deny does;
+so does one arriving outside a turn. Other dialog kinds are not declared and
+stay unanswered, since the CLI discards error replies and settles them itself.
+A payload with `tccState` means macOS access is missing; it completes with the
+empty grant and a notice naming the missing Accessibility or Screen Recording
+permission. The CLI runs inside Notch Companion's process tree, so macOS is
+expected to list those permissions under Notch Companion (not yet observed); an
+ad-hoc signed rebuild may need them granted again. Unlike the CLI's dialog, the approval does not flag terminals,
+Finder or System Settings as shell, file or settings access, and it grants every
+listed app rather than a capped visible subset.
+
+Chat never depends on the optional server. When a process launched with it
+stops or fails before answering `initialize` (an organization policy setting
+`disableSideloadFlags` refuses any `--mcp-config`), the open is retried once
+without it and with no disconnect event; if that succeeds, a notice says so and
+later sessions skip the entry until the adapter reconnects. A disconnect during
+the launch does not retry.
+
 ## Codex
 
 `CodexClient` runs `codex app-server --listen stdio://` with the existing home,
@@ -689,7 +733,7 @@ then says its children cannot delegate:
 
 | Harness | Mechanism |
 | --- | --- |
-| Claude Code 2.1.287 | `--allowedTools mcp__notch__*` (Plan: only `orchestrator_capabilities`, `notch_session_list`, `notch_session_wait`, `pending_request_list`, `pending_request_read`); instructions as `appendSystemPrompt` in `initialize`; then the server, bearer header and 65-minute `timeout` via `mcp_set_servers`, so the token never enters argv. No `--mcp-config`/`--strict-mcp-config`: user servers stay. A failed registration leaves the session usable with a notice. |
+| Claude Code 2.1.287 | `--allowedTools mcp__notch__*` (Plan: only `orchestrator_capabilities`, `notch_session_list`, `notch_session_wait`, `pending_request_list`, `pending_request_read`); instructions as `appendSystemPrompt` in `initialize`; then the server, bearer header and 65-minute `timeout` via `mcp_set_servers`, so the token never enters argv. No `--strict-mcp-config`, and the delegation server never goes in `--mcp-config` (that carries only [computer use](#claude-computer-use)): user servers stay. A failed registration leaves the session usable with a notice. |
 | Codex 0.162.1 | Per-thread `config` on `thread/start`/`thread/resume` with only `mcp_servers.notch` (`url`, `http_headers.Authorization`, `tool_timeout_sec: 3900`), keeping user servers. Instructions as `additionalContext` `notch_delegation` (`kind: application`) on the thread's first turn in this process; `developerInstructions` untouched. |
 | ACP (DeepSeek, Cursor) | A stdio MCP server in `session/new`/`session/load` `mcpServers`: the companion executable with `--notch-delegation-bridge`, endpoint and token in its `env`. It relays JSON-RPC lines concurrently (65-minute timeout) and answers a revoked token with an error. Instructions come from the server's `initialize`. Without delegation `mcpServers` is `[]`. |
 | Antigravity CLI 1.5.2 | The same stdio bridge in `session/new`/`session/resume` `mcpServers`; agy starts it when the session opens and caches the tool descriptors and server instructions (never the endpoint or token) under its app data `mcp/notch/`. Instructions also go in `_meta.antigravity.systemPrompt.append` on every open when `initialize` advertises it, since agy keeps them only for its process. Nothing is written to its configuration (`agy mcp add` would). |

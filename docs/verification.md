@@ -71,6 +71,15 @@ private development hasn't been re-run against this source snapshot. Known limit
   covered by offline fixtures only, not live OpenCode.
 - Pi: no terminal-rendered extension UI and no built-in tool approvals.
 
+- Claude computer use: the launch entry, dialog declaration, session-scoped
+  approval, grant/deny/missing-permission/idle replies, undeclared kinds and the
+  retry without the entry after a refused launch are covered by protocol
+  fixtures shaped from Claude Code 2.1.308's own dialog code. Checked live against 2.1.308 with
+  no prompt: a session opens with the entry and the declaration, and in a project
+  where `/mcp` has not enabled `computer-use` the server is not added. Not yet
+  checked live: a project with `computer-use` enabled, a real `request_access`
+  payload, a granted screenshot or click, and which app macOS lists for the
+  permissions.
 - Claude Code Ultracode: the `apply_flag_settings`/`get_settings` shapes were
   checked live against Claude Code 2.1.308 with no prompt (throwaway
   `--no-session-persistence` frontend), including keeping an `--effort ultracode`

@@ -51,6 +51,64 @@ final class ClaudeProtocolTests: XCTestCase {
         XCTAssertThrowsError(try state.answer(["session_id": id, "request_id": "approval", "choice": "once"], approval: true))
     }
 
+    func testComputerUseDialogGrantsListedAppsAndDenyGrantsNothing() throws {
+        var state = ClaudeProtocolState(sessionID: id); try state.begin("turn")
+        let payload: [String: Any] = ["reason": "Check the build in Finder" + String(repeating: " and more", count: 2_000), "requestedFlags": ["clipboardRead": true],
+            "apps": [["requestedName": "Finder", "resolved": ["bundleId": "com.apple.finder", "displayName": "Finder"], "alreadyGranted": false],
+                     ["requestedName": "Finder", "resolved": ["bundleId": "com.apple.finder", "displayName": "Finder"], "alreadyGranted": false],
+                     ["requestedName": "Safari", "resolved": ["bundleId": "com.apple.Safari", "displayName": "Safari"], "alreadyGranted": true],
+                     ["requestedName": "Nonexistent"]]]
+        func dialog(_ request: String) -> (events: [ClaudeProtocolState.Event], reply: [String: Any]?) {
+            state.interaction(["request_id": request, "request": ["subtype": "request_user_dialog", "dialog_kind": "computer_use_approval", "payload": payload]])
+        }
+        let asked = dialog("cu")
+        XCTAssertNil(asked.reply)
+        XCTAssertEqual(asked.events.first?.name, "approval.request")
+        XCTAssertEqual(asked.events.first?.payload["choices"] as? [String], ["session", "deny"], "The grant lasts the session, so no Allow once or glance approval")
+        XCTAssertTrue(dialog("cu").events.isEmpty, "A repeated pending request is shown once")
+        let command = try XCTUnwrap(asked.events.first?.payload["command"] as? String)
+        for text in ["Computer use", "Check the build in Finder", "• Finder (com.apple.finder)", "Already allowed:\n• Safari", "Not installed:\n• Nonexistent", "• Read the clipboard"] {
+            XCTAssertTrue(command.contains(text), text)
+        }
+        XCTAssertLessThan(command.count, 2_600, "A long reason is shortened, never the apps and extras Allow grants")
+        XCTAssertThrowsError(try state.answer(["session_id": id, "request_id": "cu", "choice": "once"], approval: true))
+        let reply = try XCTUnwrap(state.answer(["session_id": id, "request_id": "cu", "choice": "session"], approval: true))
+        let body = try XCTUnwrap((reply["response"] as? [String: Any])?["response"] as? [String: Any])
+        XCTAssertEqual(body["behavior"] as? String, "completed", "A dialog settles with its result, not a tool allow")
+        let result = try XCTUnwrap(body["result"] as? [String: Any])
+        XCTAssertEqual((result["granted"] as? [[String: Any]])?.map { $0["bundleId"] as? String }, ["com.apple.finder"])
+        XCTAssertEqual((result["denied"] as? [[String: Any]])?.first?["reason"] as? String, "not_installed")
+        XCTAssertEqual(result["flags"] as? [String: Bool], ["clipboardRead": true, "clipboardWrite": false, "systemKeyCombos": false])
+        XCTAssertThrowsError(try state.answer(["session_id": id, "request_id": "cu", "choice": "session"], approval: true), "A settled grant cannot be answered again")
+        _ = dialog("denied")
+        let denied = try XCTUnwrap(state.answer(["session_id": id, "request_id": "denied", "choice": "deny"], approval: true))
+        let deniedResult = ((denied["response"] as? [String: Any])?["response"] as? [String: Any])?["result"] as? [String: Any]
+        XCTAssertEqual((deniedResult?["granted"] as? [Any])?.count, 0)
+        XCTAssertEqual(deniedResult?["flags"] as? [String: Bool], ["clipboardRead": false, "clipboardWrite": false, "systemKeyCombos": false])
+        let tcc = state.interaction(["request_id": "tcc", "request": ["subtype": "request_user_dialog", "dialog_kind": "computer_use_approval",
+            "payload": ["apps": [], "tccState": ["accessibility": true, "screenRecording": false]]]])
+        XCTAssertEqual(tcc.events.first?.name, "runtime.notice")
+        XCTAssertTrue((tcc.events.first?.payload["message"] as? String ?? "").contains("Screen Recording for Notch Companion"))
+        XCTAssertEqual(((tcc.reply?["response"] as? [String: Any])?["response"] as? [String: Any])?["behavior"] as? String, "completed")
+        XCTAssertTrue(state.requests.isEmpty)
+        _ = dialog("withdrawn")
+        XCTAssertEqual(try state.receive(["type": "control_cancel_request", "request_id": "withdrawn"]).first?.name, "clarify.expire")
+        XCTAssertThrowsError(try state.answer(["session_id": id, "request_id": "withdrawn", "choice": "session"], approval: true))
+        let undeclared = state.interaction(["request_id": "other", "request": ["subtype": "request_user_dialog", "dialog_kind": "startup_model_switch", "payload": [:]]])
+        XCTAssertTrue(undeclared.events.isEmpty && undeclared.reply == nil, "An undeclared kind stays unanswered, without a declined notice")
+    }
+
+    func testComputerUseDialogOutsideATurnGrantsNothing() throws {
+        var state = ClaudeProtocolState(sessionID: id)
+        let idle = state.interaction(["request_id": "idle", "request": ["subtype": "request_user_dialog", "dialog_kind": "computer_use_approval",
+            "payload": ["apps": [["requestedName": "Finder", "resolved": ["bundleId": "com.apple.finder", "displayName": "Finder"]]]]]])
+        XCTAssertTrue(idle.events.isEmpty)
+        let body = (idle.reply?["response"] as? [String: Any])?["response"] as? [String: Any]
+        XCTAssertEqual(body?["behavior"] as? String, "completed")
+        XCTAssertEqual(((body?["result"] as? [String: Any])?["granted"] as? [Any])?.count, 0)
+        XCTAssertTrue(state.requests.isEmpty)
+    }
+
     func testQuestionsWaitForEveryAnswerAndPreserveNativeShape() throws {
         var state = ClaudeProtocolState(sessionID: id); try state.begin("turn")
         let questions: [[String: Any]] = [["question": "Which color?", "options": [["label": "Blue", "description": "Quiet"]]], ["question": "Name?"]]
@@ -177,6 +235,16 @@ final class ClaudeProtocolTests: XCTestCase {
         let completed = try state.receive(["type": "system", "subtype": "task_notification", "task_id": "native-task", "status": "completed"])
         XCTAssertEqual(completed.first?.payload["subagent_id"] as? String, "tool-parent")
         XCTAssertTrue(state.children.isEmpty)
+    }
+
+    @MainActor func testComputerUseJoinsTheLaunchWithoutDroppingUserServers() throws {
+        let args = try ClaudeClient.arguments(id: id, resume: false, delegation: ["read_only_tools": [String]()], computerUse: "/opt/claude")
+        let config = try XCTUnwrap(args.firstIndex(of: "--mcp-config").map { args[$0 + 1] })
+        let servers = try XCTUnwrap((try JSONSerialization.jsonObject(with: Data(config.utf8)) as? [String: Any])?["mcpServers"] as? [String: Any])
+        XCTAssertEqual(servers.keys.sorted(), ["computer-use"])
+        XCTAssertEqual((servers["computer-use"] as? [String: Any])?["args"] as? [String], ["--computer-use-mcp"])
+        XCTAssertEqual(Array(args.suffix(2)), ["--allowedTools", "mcp__notch__*,mcp__computer-use__*"])
+        XCTAssertFalse(args.contains("--strict-mcp-config"))
     }
 
     @MainActor func testLaunchPreservesNativeContextAndExactResume() throws {
