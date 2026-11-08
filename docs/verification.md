@@ -99,6 +99,14 @@ private development hasn't been re-run against this source snapshot. Known limit
   question card's More button and scroller flash, keyboard shortcuts for queued
   messages, and a snooze waking on a real question or approval.
 
+- Configurable shortcuts and dictation: recording rules, persistence (including
+  a shortcut turned off) and draft joining are covered by offline tests. The
+  microphone's converter tap feeding macOS's on-device transcriber is covered
+  by an opt-in test (`NOTCH_RUN_DICTATION_TEST=1`) with synthesized speech. Not
+  yet checked live: speaking into a physical microphone, the Microphone
+  permission prompt, a language model download from Settings, or a shortcut
+  another app already holds.
+
 **Not yet done**
 
 - A downloaded release hasn't been installed through Gatekeeper on another Mac.

@@ -32,6 +32,8 @@
     <true/>
     <key>NSSupportsAutomaticTermination</key>
     <false/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Notch Companion listens only while you dictate, and macOS transcribes your speech on this Mac.</string>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 TimHerder. MIT License.</string>
 </dict>

@@ -94,6 +94,7 @@ struct ComposerView: View {
                 }
             }
             field
+            DictationStatus(model: model, dictation: model.dictation)
             // Session settings sit in their own row under the field: permissions at
             // the left, the model and context gauge at the right.
             if (!isCompact || model.page == .session) && (model.showModelPicker || model.showContextUsage || model.showPermissionModes) {
@@ -225,6 +226,9 @@ struct ComposerView: View {
                 }
                 .disabled(model.snapShotSource == nil)
             }
+            if model.showDictation && Dictation.isAvailable {
+                DictationButton(model: model, dictation: model.dictation, fromNotch: isCompact)
+            }
             ComposerDestinationView(model: model, showsTitle: showsTitle).layoutPriority(1)
             Spacer(minLength: 8)
             if takesDraftWhileBusy {
@@ -329,7 +333,75 @@ struct ComposerView: View {
         if busy && !queue && model.current?.canSteer != true { submissionNotice = "Use Command–Return to queue this message."; return }
         submissionNotice = nil
         let id = model.currentID
+        // Words still being heard land in the emptied draft rather than being lost.
+        if model.dictation.sessionID == id { model.dictation.stop() }
         Task { guard model.currentID == id else { return }; await model.send(queue: queue) }
+    }
+}
+
+/// The bar's microphone: listens into this session's draft, and stops any
+/// dictation that is running.
+private struct DictationButton: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var dictation: Dictation
+    var fromNotch: Bool
+
+    var body: some View {
+        let here = dictation.sessionID == model.currentID
+        let listening = dictation.phase == .listening && here
+        Button { model.toggleDictation(fromNotch: fromNotch) } label: {
+            if case .preparing = dictation.phase, here { ProgressView().controlSize(.mini) }
+            else {
+                Image(systemName: listening ? "waveform" : "mic")
+                    .foregroundStyle(listening ? CompanionStyle.error : CompanionStyle.secondary)
+                    .symbolEffect(.variableColor.iterative, isActive: listening && !model.reducedMotion)
+            }
+        }
+        .buttonStyle(NotchIconButtonStyle(size: 28))
+        .disabled(dictation.phase == .finishing || model.current == nil)
+        .help(dictation.isActive ? "Stop dictation" : "Dictate" + (model.dictateShortcut.map { " · \($0.spoken) starts a new session" } ?? ""))
+        .accessibilityLabel(dictation.isActive ? "Stop dictation" : "Dictate")
+    }
+}
+
+/// Under the field while dictating here: what is happening and the words not yet final.
+private struct DictationStatus: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var dictation: Dictation
+
+    var body: some View {
+        if dictation.sessionID == model.currentID, dictation.isActive {
+            HStack(spacing: 6) {
+                Circle().fill(dictation.phase == .listening ? CompanionStyle.error : CompanionStyle.faint).frame(width: 6, height: 6)
+                Text(status).foregroundStyle(CompanionStyle.secondary)
+                if !dictation.volatileText.isEmpty {
+                    Text(dictation.volatileText).foregroundStyle(CompanionStyle.text.opacity(0.75))
+                        .truncationMode(.head)
+                }
+            }
+            .font(.system(size: 11)).lineLimit(1).padding(.horizontal, 14)
+            .accessibilityElement(children: .combine)
+        } else if let failure = dictation.failure {
+            HStack(spacing: 8) {
+                Text(failure).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if dictation.needsMicrophonePermission {
+                    Button("Open Settings") { model.openExternally(Dictation.microphoneSettings) }.buttonStyle(NotchPillButtonStyle(small: true))
+                }
+                QuietIconButton(symbol: "xmark", label: "Dismiss", size: 22) { dictation.failure = nil }
+            }
+            .padding(.horizontal, 14)
+        }
+    }
+
+    private var status: String {
+        switch dictation.phase {
+        case .preparing(let step): step
+        case .listening: dictation.volatileText.isEmpty ? "Listening…" : "Listening:"
+        case .finishing: "Finishing…"
+        case .idle: ""
+        }
     }
 }
 

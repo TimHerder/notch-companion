@@ -99,9 +99,21 @@ mask or expansion animation.
 Work-specific poses apply only in the expanded panel; the resting band and
 glance keep pointer-following eyes while work runs.
 
-Control–Option–Space opens the panel for input. Escape dismisses it and
-suppresses automatic reopening until the pointer has left. Drafts survive
-dismissal. Preserve keyboard access.
+Control–Option–Space (by default) opens the panel for input. Escape dismisses
+it and suppresses automatic reopening until the pointer has left. Drafts
+survive dismissal. Preserve keyboard access.
+
+**Global shortcuts.** Settings → **Open the notch** and **Dictate a new
+session** (Control–Option–V by default) each show a pill with the combination
+(`⌃⌥Space`). Clicking it reads “Type shortcut…”: the next key with Control,
+Option or Command (or a bare F1–F20) becomes the shortcut; Shift alone or a bare
+key answers “Add ⌃, ⌥ or ⌘”, the other action's combination “Used by …”, Escape
+cancels and a bare Delete turns it **Off** (it stays off across launches). While
+recording, neither shortcut fires and Escape does not close the panel. A
+restore button returns a changed shortcut to its default. Shortcuts are
+Carbon hot keys (no Input Monitoring); one another app holds shows an amber
+warning and drops from the menu-bar tooltip and menu. Preferences:
+`notch.shortcut.openPanel`, `notch.shortcut.dictate` (empty data = off).
 
 Gaze and blink are continuous, sampled at 60 Hz; one 18 ms exponential filter
 eases gaze, with no second SwiftUI spring. Tracking reaches 1,200 points; the
@@ -1025,7 +1037,7 @@ folder whose sessions are all archived leaves the default list.
 
 The composer is **one field in every design**: a ready plan's row,
 attachments and the editor on top, and one bar along its bottom edge:
-`[+] [SnapShot] [harness · folder (started sessions) · session (secondary
+`[+] [SnapShot] [mic] [harness · folder (started sessions) · session (secondary
 pages)] … [Send/Stop]`. A new draft's harness and folder choosers sit in its
 empty conversation instead (see [controls](#controls-and-window-behavior)). A
 started session keeps a plain harness label in Refined and Instrument, whose
@@ -1158,6 +1170,34 @@ by itself, like a [file drop](#file-drops).
   `SnapShots` folder beside the session registry and is staged as an ordinary
   attachment, its chip springing in like a dropped file's. Removing it before sending deletes the
   file; a sent picture stays for the agent.
+
+## Dictation
+
+**Show dictation** (on by default, Settings → Composer) adds a microphone
+button after SnapShot in both surfaces' composer bar. macOS's on-device
+`SpeechTranscriber` (SpeechAnalyzer) turns speech into text: no audio leaves the
+Mac, no model ships with the app, and nothing is sent until the user sends.
+
+- **Language.** Settings → **Dictation language**: **System** (default) or any
+  language macOS can transcribe, each by its own name (`notch.dictationLanguage`,
+  BCP 47). The first use of a language downloads its model through the system,
+  shown as “Downloading the English (United States) speech model…”.
+- **Button.** Clicking listens into the current session's draft; while
+  dictation runs anywhere, clicking stops it. Preparing shows a spinner,
+  listening a red animated waveform (static under Reduce Motion).
+- **Status.** Under the field, for the session being dictated into: a dot and
+  “Listening…” followed by the words not yet final, head-truncated on one line;
+  final words join the end of the draft with one space, never replacing typed
+  text. A failure (no microphone, unsupported language, denied access with
+  **Open Settings**) stays there until dismissed.
+- **Dictate a new session.** The shortcut opens a ready draft the way the
+  glance's New session does (reusing an untouched one), opens the panel for
+  input and starts listening; pressing it again stops. The words stay in the
+  draft for review.
+- **Stopping.** Sending from that session, the button, the shortcut, or
+  collapsing the notch (for dictation started from the notch) stops listening;
+  words still being finalized land in the draft afterwards. Quitting drops them.
+  First use asks for Microphone access (`NSMicrophoneUsageDescription`).
 
 ## Delegation
 

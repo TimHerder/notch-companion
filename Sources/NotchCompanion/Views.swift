@@ -869,6 +869,13 @@ struct SettingsContent: View {
                     Toggle("Show SnapShot", isOn: $model.showSnapShot).toggleStyle(NotchSwitchStyle())
                         .help("Add a composer button that attaches a picture of the window you were using when the notch opened. Needs Screen Recording permission on first use.")
                 }
+                if Dictation.isAvailable {
+                    SettingsRow("Show dictation", symbol: "mic.fill", tint: .red, divider: true) {
+                        Toggle("Show dictation", isOn: $model.showDictation).toggleStyle(NotchSwitchStyle())
+                            .help("Add a composer button that types what you say into the draft. Speech is transcribed on this Mac by macOS; nothing is sent until you press Send.")
+                    }
+                    SettingsRow("Dictation language", symbol: "globe", tint: .blue, divider: true) { DictationLanguageMenu(model: model) }
+                }
                 SettingsRow("Show usage", symbol: "chart.bar.fill", tint: .green, divider: true) {
                     Toggle("Show usage", isOn: $model.showUsage).toggleStyle(NotchSwitchStyle())
                         .help("Add a Usage page to Your sessions: account limits your harnesses report and tokens from sessions started here.")
@@ -970,6 +977,13 @@ struct SettingsContent: View {
             }
             SettingsGroup(PanelTheme.pick(nil, "General", "System")) {
                 SettingsRow("Open at login", symbol: "power", tint: .gray) { OpenAtLoginToggle(model: model) }
+                ForEach(ShortcutAction.allCases) { action in
+                    if action == .openPanel || Dictation.isAvailable {
+                        SettingsRow(action.title, symbol: action == .openPanel ? "command" : "mic.badge.plus", tint: .indigo, divider: true) {
+                            ShortcutRecorder(model: model, action: action)
+                        }
+                    }
+                }
                 SettingsRow("Swipe on the notch", symbol: "hand.draw.fill", tint: .blue, divider: true) {
                     Toggle("Swipe on the notch", isOn: $model.swipeGestures).toggleStyle(NotchSwitchStyle())
                         .help("Two-finger swipe down on the notch to open it, and up to close it.")
@@ -1116,6 +1130,95 @@ struct DefaultWorkspaceButton: View {
 
 /// The login item switch, with System Settings one press away when macOS
 /// still needs approval. Shared by Settings and the welcome.
+/// Click, then type the combination. Escape cancels; Delete turns it off.
+struct ShortcutRecorder: View {
+    @ObservedObject var model: AppModel
+    var action: ShortcutAction
+    @State private var prompt: String?
+    @State private var monitor: Any?
+
+    var body: some View {
+        let shortcut = model.shortcut(for: action)
+        HStack(spacing: 6) {
+            if prompt == nil, model.unavailableShortcuts.contains(action) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(CompanionStyle.amber)
+                    .help("Another app already uses this shortcut. Record a different one.")
+                    .accessibilityLabel("Unavailable: another app uses this shortcut")
+            }
+            Button(prompt ?? shortcut?.display ?? "Off") { prompt == nil ? record() : stop() }
+                .buttonStyle(NotchPillButtonStyle(small: true, selected: prompt != nil))
+                .help(prompt == nil ? "Click, then press the new shortcut" : "Press the new shortcut; Escape cancels, Delete turns it off")
+                .accessibilityLabel("\(action.title) shortcut, \(shortcut?.spoken ?? "off")")
+            if prompt == nil, shortcut != action.defaultShortcut {
+                QuietIconButton(symbol: "arrow.counterclockwise", label: "Restore \(action.defaultShortcut.display)", size: 22) {
+                    model.setShortcut(action.defaultShortcut, for: action)
+                }
+            }
+        }
+        .onDisappear { stop() }
+    }
+
+    private func record() {
+        prompt = "Type shortcut…"
+        model.recordingShortcut = true
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            MainActor.assumeIsolated { receive(event) }
+            return nil
+        }
+    }
+
+    private func receive(_ event: NSEvent) {
+        let bare = event.modifierFlags.intersection([.control, .option, .shift, .command]).isEmpty
+        if bare && event.keyCode == 53 { return stop() }
+        if bare && (event.keyCode == 51 || event.keyCode == 117) {
+            model.setShortcut(nil, for: action)
+            return stop()
+        }
+        guard let shortcut = KeyShortcut(event: event) else { prompt = "Add ⌃, ⌥ or ⌘"; return }
+        if let other = ShortcutAction.allCases.first(where: { $0 != action && model.shortcut(for: $0) == shortcut }) {
+            prompt = "Used by \(other.title)"
+            return
+        }
+        stop()
+        model.setShortcut(shortcut, for: action)
+    }
+
+    private func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        prompt = nil
+        model.recordingShortcut = false
+    }
+}
+
+/// The language dictation listens for: the system's, or one macOS can transcribe.
+struct DictationLanguageMenu: View {
+    @ObservedObject var model: AppModel
+    @State private var locales: [(id: String, name: String)] = []
+
+    var body: some View {
+        Menu {
+            Picker("Dictation language", selection: $model.dictationLanguage) {
+                Text("System (\(Dictation.name(of: .current)))").tag(String?.none)
+                Divider()
+                ForEach(locales, id: \.id) { Text($0.name).tag(Optional($0.id)) }
+            }
+            .pickerStyle(.inline).labelsHidden()
+        } label: {
+            HStack(spacing: 5) {
+                Text(model.dictationLanguage.map { Dictation.name(of: Locale(identifier: $0)) } ?? "System").lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(CompanionStyle.faint)
+            }
+        }
+        .menuStyle(.button).menuIndicator(.hidden).buttonStyle(NotchPillButtonStyle(small: true)).fixedSize()
+        .help("macOS transcribes on this Mac and downloads a language's model the first time you dictate in it.")
+        .task {
+            locales = await Dictation.languages()
+        }
+    }
+}
+
 struct OpenAtLoginToggle: View {
     @ObservedObject var model: AppModel
     @State private var opensAtLogin = LoginItem.isEnabled
