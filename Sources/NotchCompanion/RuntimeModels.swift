@@ -177,7 +177,8 @@ struct RuntimeSessionInfo: Codable, Equatable {
         }
         if let note = payload["capability_note"] as? String { capabilityNote = note }
         if let value = payload["profile_ultracode"] as? Bool { profileUltracode = value }
-        if let value = nonempty(payload["profile_permission_mode"]) { profilePermission = value }
+        // Present but null: the process could not report it, so a saved mode no longer holds.
+        if payload.keys.contains("profile_permission_mode") { profilePermission = nonempty(payload["profile_permission_mode"]) }
         if payload["context_reset"] as? Bool == true { context = nil }
         let usage = payload["usage"] as? [String: Any]
         if let value = nonempty(payload["model"]) ?? nonempty(usage?["model"]), value != model {

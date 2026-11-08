@@ -192,6 +192,11 @@ final class ClaudeClient: RuntimeTransport {
                 throw AppError("Claude Code did not apply the selected permission mode. Your message was not sent.")
             }
             target.appliedMode = mode
+            if mode == nil {
+                // Default restored the configured mode, which can differ from the one the process opened in.
+                target.info["profile_permission_mode"] = Self.profilePermission(native)
+                emit(target.state.event("session.info", ["profile_permission_mode": target.info["profile_permission_mode"] ?? native]))
+            }
             return ["mode": native]
         case "file.attach", "image.attach":
             let url = try Self.attachment(params)
@@ -338,7 +343,8 @@ final class ClaudeClient: RuntimeTransport {
             if initialized["session_state"] as? String == "running" { session.state.active = true }
             session.catalog = Self.catalog(models)
             // What Default permissions means here: the profile's own mode, e.g. bypassPermissions from its settings.
-            session.info["profile_permission_mode"] = Self.profilePermission(initialized["current_permission_mode"] as? String)
+            // An older CLI reports none: null clears a saved mode rather than leaving it stale.
+            session.info["profile_permission_mode"] = Self.profilePermission(initialized["current_permission_mode"] as? String) ?? NSNull()
             let settings = try? await control(session, ["subtype": "get_settings"])
             // A rejected read is tolerated; a process that stopped during it is not.
             guard sessions[id] === session else { throw AppError("Claude Code stopped while opening this session. No message was sent.") }

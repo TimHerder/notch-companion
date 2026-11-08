@@ -49,6 +49,7 @@ final class ClaudeAntigravityClientTests: XCTestCase {
         try await client.connect()
         let opened = try await client.request("session.create", params: ["cwd": directory.path, "project_trusted": true])
         let sid = try XCTUnwrap(opened["session_id"] as? String)
+        XCTAssertTrue((opened["info"] as? [String: Any])?["profile_permission_mode"] is NSNull, "A CLI without the field clears a saved mode")
         var completions: [String] = []
         client.onEvent = { name, payload in if name == "message.complete" { completions.append(payload["text"] as? String ?? "") } }
         _ = try await client.request("prompt.submit", params: ["session_id": sid, "turn_id": "original", "text": "Original"])
@@ -192,6 +193,10 @@ final class ClaudeAntigravityClientTests: XCTestCase {
         info.merge(["profile_permission_mode": "Auto"], runtime: .claude)
         XCTAssertNil(info.profilePermissionMode)
         XCTAssertEqual(info.profilePermissionTitle, "Auto")
+        info.merge(["model": "other"], runtime: .claude)
+        XCTAssertEqual(info.profilePermission, "Auto", "Unrelated reports keep it")
+        info.merge(["profile_permission_mode": NSNull()], runtime: .claude)
+        XCTAssertNil(info.profilePermission, "A process that cannot report it clears it")
     }
 
     func testClaudeKeepsTheProfilesOwnUltracodeUntilChosen() async throws {
