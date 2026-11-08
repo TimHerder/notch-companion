@@ -465,7 +465,7 @@ extension AppModel {
             }
         } else if runtime == parent.runtime {
             choice = parent.modelOverride
-            choice?.ultracode = nil // The user's Ultracode is for that conversation only; a child keeps the native setting.
+            choice?.ultracode = nil // The user's Ultracode is for that conversation only; a child keeps its profile's own.
         }
         let permission = try Delegation.childMode(parent: parent.permissionMode, requested: Delegation.requestedMode(arguments),
                                                   supported: runtime.capabilities.supportedPermissionModes)

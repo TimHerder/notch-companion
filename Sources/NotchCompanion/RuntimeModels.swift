@@ -4,7 +4,7 @@ struct RuntimeModelChoice: Codable, Hashable, Identifiable {
     var model: String
     var provider: String? = nil
     var reasoningEffort: String? = nil
-    /// Claude Code's Ultracode, beside any effort; nil leaves the native setting.
+    /// Claude Code's Ultracode, beside any effort; nil keeps the profile's own.
     var ultracode: Bool? = nil
     var id: String { (provider ?? "") + ":" + model }
 
@@ -161,6 +161,8 @@ struct RuntimeSessionInfo: Codable, Equatable {
     var capabilities: RuntimeCapabilities? = nil
     var capabilityNote: String? = nil
     var nativeInterface: String? = nil
+    /// Claude Code's applied Ultracode.
+    var ultracode: Bool? = nil
 
     mutating func merge(_ payload: [String: Any], runtime: RuntimeKind) {
         if let value = payload["interface"] as? String { nativeInterface = value }
@@ -170,6 +172,7 @@ struct RuntimeSessionInfo: Codable, Equatable {
             capabilities = supported
         }
         if let note = payload["capability_note"] as? String { capabilityNote = note }
+        if let value = payload["ultracode"] as? Bool { ultracode = value }
         if payload["context_reset"] as? Bool == true { context = nil }
         let usage = payload["usage"] as? [String: Any]
         if let value = nonempty(payload["model"]) ?? nonempty(usage?["model"]), value != model {

@@ -304,10 +304,11 @@ import XCTest
                 if let launch = row["launch"] as? Bool { return launch ? "launch+bypass" : "launch" }
                 return [row["control"] as? String, row["mode"] as? String].compactMap { $0 }.joined(separator: ":")
             }
-        XCTAssertEqual(wire, ["launch", "initialize",
+        // Each launch first reads the profile's Ultracode.
+        XCTAssertEqual(wire, ["launch", "initialize", "get_settings",
                               "get_settings", "set_permission_mode:plan",
                               "set_permission_mode:acceptEdits",
-                              "get_settings", "launch+bypass", "initialize", "set_permission_mode:bypassPermissions",
+                              "get_settings", "launch+bypass", "initialize", "get_settings", "set_permission_mode:bypassPermissions",
                               "set_permission_mode:bypassPermissions"],
                        "Inherit sends nothing until an override exists, then restores the profile's mode once")
         let reopened = try await client.request("session.create", params: ["cwd": directory.path, "project_trusted": true, "permission_mode": "fullAccess"])

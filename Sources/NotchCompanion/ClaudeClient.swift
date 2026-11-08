@@ -16,7 +16,8 @@ final class ClaudeClient: RuntimeTransport {
         var info: [String: Any] = [:]
         var catalog = RuntimeModelCatalog()
         var effortOverride: String?
-        var ultracodeOverride: Bool?
+        /// The profile's own Ultracode, read when the process opens; nil when the CLI does not report it.
+        var nativeUltracode: Bool?
         /// Launched with bypass allowed, and whether native history exists to resume.
         var allowsBypass = false
         var resumable = false
@@ -135,8 +136,10 @@ final class ClaudeClient: RuntimeTransport {
                 throw AppError("Choose a model and effort from Claude Code's current native catalog.")
             }
             _ = try await control(session, ["subtype": "set_model", "model": model])
-            // Claude drops Ultracode when effort changes, so a choice is restated each time; clearing one turns it off.
-            let ultracode = params["ultracode"] as? Bool ?? session.ultracodeOverride.map { _ in false }
+            // Claude drops Ultracode whenever effort changes, so it is restated each time: the
+            // conversation's choice, or else the profile's own (off on a model without it).
+            let offersUltracode = session.catalog.option(for: RuntimeModelChoice(model: model))?.offersUltracode == true
+            let ultracode = params["ultracode"] as? Bool ?? session.nativeUltracode.map { $0 && offersUltracode }
             if effort != nil || session.effortOverride != nil || ultracode != nil ||
                 session.catalog.option(for: RuntimeModelChoice(model: model))?.reasoningEfforts.isEmpty == false {
                 // Native flag settings affect only this frontend, not user or
@@ -145,16 +148,22 @@ final class ClaudeClient: RuntimeTransport {
                 if let ultracode { flags["ultracode"] = ultracode }
                 _ = try await control(session, ["subtype": "apply_flag_settings", "settings": flags])
                 session.effortOverride = effort
-                session.ultracodeOverride = ultracode
                 let settings = try await control(session, ["subtype": "get_settings"])
                 let applied = settings["applied"] as? [String: Any]
-                if ultracode == true, applied?["ultracodeAvailable"] as? Bool == false {
-                    throw AppError("Claude Code's Ultracode needs dynamic workflows, which are off (see /config in Claude Code). Your message was not sent.")
+                if ultracode == true, applied?["ultracodeAvailable"] as? Bool != true {
+                    throw AppError(applied?["ultracodeAvailable"] == nil
+                        ? "This Claude Code version does not report Ultracode. Update it through its native installer. Your message was not sent."
+                        : "Claude Code's Ultracode needs dynamic workflows, which are off (see /config in Claude Code). Your message was not sent.")
                 }
+                // A CLI without the field cannot have Ultracode on.
                 guard let applied, applied["model"] as? String == model,
                       effort == nil || applied["effort"] as? String == effort,
-                      ultracode == nil || applied["ultracode"] as? Bool == ultracode else {
+                      ultracode == nil || (applied["ultracode"] as? Bool ?? false) == ultracode else {
                     throw AppError("Claude Code did not apply the selected model and effort. Your message was not sent.")
+                }
+                if let on = applied["ultracode"] as? Bool {
+                    session.info["ultracode"] = on
+                    emit(session.state.event("session.info", ["ultracode": on]))
                 }
             }
             // The control response acknowledges the selection but does not
@@ -325,6 +334,9 @@ final class ClaudeClient: RuntimeTransport {
             // state changes. Only an observed state event enables that gate.
             if initialized["session_state"] as? String == "running" { session.state.active = true }
             session.catalog = Self.catalog(models)
+            let settings = try? await control(session, ["subtype": "get_settings"])
+            session.nativeUltracode = (settings?["applied"] as? [String: Any])?["ultracode"] as? Bool
+            session.info["ultracode"] = session.nativeUltracode
             if let delegation {
                 // Delegation is additive: a server that does not connect leaves the session usable.
                 let added = try? await control(session, ["subtype": "mcp_set_servers", "servers": Self.delegationServers(delegation)])
