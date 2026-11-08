@@ -1156,8 +1156,11 @@ by itself, like a [file drop](#file-drops).
   above the composer asks to allow it and reopen the app, and links to that
   System Settings pane. An ad-hoc signed grant covers only the build it was made
   for, so after a rebuild or update System Settings can show the toggle on while
-  capture is refused. The first refused capture in a launch therefore clears the
-  app's own Screen Recording entry with `tccutil` and asks again. No other route.
+  capture is refused. Only the user can tell that from a denial, so the hint's
+  Reset button, never an automatic step, clears the app's own Screen Recording
+  entry with `tccutil` and requests access again. macOS may prompt at once or
+  only from System Settings; if the reset fails, an error says to remove the
+  entry there. No other route.
 - **Staging.** The PNG, named after app and window title, goes in the private
   `SnapShots` folder beside the session registry and is staged as an ordinary
   attachment, its chip springing in like a dropped file's. Removing it before sending deletes the
