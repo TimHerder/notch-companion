@@ -49,6 +49,8 @@ final class ParakeetModel: ObservableObject {
     @Published private(set) var users = 0
     /// Delete is tearing the model down; nothing may load or fetch it meanwhile.
     @Published private(set) var deleting = false
+    /// Why the last Delete failed; shown beside the model's own state.
+    @Published private(set) var deleteError: String?
     /// The loaded model holds several hundred MB; an always-running app gives it back when idle.
     static let idleUnload: Duration = .seconds(300)
 
@@ -60,6 +62,8 @@ final class ParakeetModel: ObservableObject {
     /// FluidAudio keeps the model beside this path, in a folder named after its repository.
     private var directory: URL { folder.appendingPathComponent("parakeet", isDirectory: true) }
     var isDownloaded: Bool { AsrModels.modelsExist(at: directory, version: .v3) }
+    /// Anything of Parakeet's on disk, a partial download or a half-finished delete included.
+    var hasFiles: Bool { FileManager.default.fileExists(atPath: folder.path) }
     var isBusy: Bool { work != nil }
     var inUse: Bool { users > 0 || work != nil || deleting }
 
@@ -82,7 +86,8 @@ final class ParakeetModel: ObservableObject {
     /// Try again after a failure: fetch what is missing, or load what is there.
     func retry() {
         guard work == nil, !deleting else { return }
-        if isDownloaded { Task { _ = try? await recognizer() } } else { run(load: false) }
+        // A load counts as a use, so the idle unload frees it afterwards.
+        if isDownloaded { Task { acquire(); defer { release() }; _ = try? await recognizer() } } else { run(load: false) }
     }
 
     /// The loaded recognizer, downloading first if the model is missing.
@@ -131,15 +136,19 @@ final class ParakeetModel: ObservableObject {
         await loaded?.cleanup()
         do {
             if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.removeItem(at: folder) }
+            deleteError = nil
             state = .missing
         } catch {
-            state = .failed("Could not delete Parakeet: \(error.localizedDescription)")
+            // Delete stays the way to retry; Try again would fetch the model back.
+            deleteError = "Could not delete Parakeet: \(error.localizedDescription)"
+            state = isDownloaded ? .ready : .missing
         }
     }
 
     @discardableResult
     private func run(load: Bool) -> Task<AsrManager?, Error> {
         let directory = directory
+        deleteError = nil
         state = isDownloaded ? .preparing : .downloading(0)
         let progress: ProgressHandler = { [weak self] update in
             Task { @MainActor in self?.report(update) }

@@ -89,6 +89,9 @@ final class Dictation: ObservableObject {
     }
 
     private func run(_ generation: UUID, engine: DictationEngine, language: String?) async {
+        // A Parakeet run holds the model from its first moment, the Microphone prompt included.
+        if engine == .parakeet { ParakeetModel.shared.acquire() }
+        defer { if engine == .parakeet { ParakeetModel.shared.release() } }
         do {
             let allowed = await microphoneAllowed()
             guard self.generation == generation else { return }
@@ -149,9 +152,6 @@ final class Dictation: ObservableObject {
     private func runParakeet(_ generation: UUID) async throws {
         let parakeet = ParakeetModel.shared
         guard ParakeetModel.isSupported else { throw DictationError("Parakeet needs a Mac with Apple silicon.") }
-        parakeet.acquire()
-        // However this run ends, the model is free afterwards.
-        defer { parakeet.release() }
         phase = .preparing(parakeet.status)
         parakeetProgress = parakeet.$state.sink { [weak self] _ in
             DispatchQueue.main.async {

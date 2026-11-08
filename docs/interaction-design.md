@@ -1190,8 +1190,10 @@ until the user sends.
   keeps speech on the Mac. Choosing Parakeet starts its download; the row under
   the hint shows progress, then **Downloaded**, or a failure with **Try again**
   (which fetches what is missing or loads what is there). **Delete** shows
-  whenever the model is on disk, including after a failure and after switching
-  back to macOS, and is disabled while any dictation run uses Parakeet. A missing model downloads on the first dictation
+  whenever any of its files are on disk and nothing is downloading or loading
+  them, including after a failure and after switching back to macOS, and is
+  disabled while any dictation run uses Parakeet (from the Microphone prompt on).
+  A failed Delete says why and keeps **Delete** as its retry. A missing model downloads on the first dictation
   too, shown as “Downloading Parakeet… 42%”. The model lives in
   `~/Library/Application Support/NotchCompanion/Speech Models` and leaves
   memory after five idle minutes.
@@ -1201,11 +1203,12 @@ until the user sends.
   downloads its model through the system, shown as “Downloading the English
   (United States) speech model…”. Parakeet needs no language and hides the row.
 - **Button.** Clicking listens into the current session's draft; while
-  dictation runs anywhere, every composer's button shows the red waveform
-  (animated, static under Reduce Motion) and stops it. Preparing shows a
-  spinner in the session being dictated into.
+  dictation runs anywhere, every other composer's button shows the red waveform
+  (animated, static under Reduce Motion) and stops it. In the session being
+  dictated into, preparing shows a spinner and listening the waveform.
 - **Status.** Under the field, for the session being dictated into: a dot and
-  “Listening…” followed by the words not yet final, head-truncated on one line
+  “Listening…”, which becomes “Listening:” followed by the words not yet final,
+  head-truncated on one line
   (Parakeet previews the whole clip every 1.5 s of new audio for its first
   minute, then delivers its full text when listening stops; it stops by itself
   after 15 minutes and says so);
@@ -1220,7 +1223,8 @@ until the user sends.
 - **Sending while dictating.** Return or Send in the session being dictated
   into stops listening, shows “Adding your last words…” until the engine has
   delivered them (Parakeet writes only at the end), then sends the draft with
-  them. Send is enabled meanwhile even with an empty draft.
+  them. If the run ends in a failure, nothing is sent and the draft stays for
+  review beside the failure. Send is enabled meanwhile even with an empty draft.
 - **Stopping.** The button, the shortcut,
   collapsing the notch (for dictation started there) or closing the
   full-session window (for dictation started there) stops listening; words

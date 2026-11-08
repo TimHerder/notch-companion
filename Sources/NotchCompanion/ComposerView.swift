@@ -337,6 +337,8 @@ struct ComposerView: View {
                 await model.dictation.finished()
                 guard model.currentID == id else { return }
                 submissionNotice = nil
+                // A run that ended in a failure may have lost words; leave the draft to review.
+                guard model.dictation.failure == nil else { return }
                 submit(queue: queue)
             }
             return
@@ -360,8 +362,8 @@ private struct DictationButton: View {
 
     var body: some View {
         let here = dictation.sessionID == model.currentID
-        // Listening into another session still shows here, so it can be stopped from any composer.
-        let listening = dictation.phase == .listening
+        // Dictation into another session still shows here, so it can be stopped from any composer.
+        let listening = dictation.phase == .listening || (dictation.isActive && !here)
         Button { model.toggleDictation(fromNotch: fromNotch) } label: {
             if case .preparing = dictation.phase, here { ProgressView().controlSize(.mini) }
             else {

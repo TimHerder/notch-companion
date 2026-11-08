@@ -1226,7 +1226,10 @@ struct ParakeetSettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Parakeet is more accurate for technical terms and detects the language you speak (25 European languages). It downloads \(ParakeetModel.downloadSize) once from Hugging Face; your speech stays on this Mac.")
                 .fixedSize(horizontal: false, vertical: true)
-            if chosen || parakeet.state != .missing {
+            if let error = parakeet.deleteError {
+                Text(error).foregroundStyle(CompanionStyle.amber).fixedSize(horizontal: false, vertical: true)
+            }
+            if chosen || parakeet.state != .missing || parakeet.hasFiles {
                 HStack(spacing: 8) {
                     switch parakeet.state {
                     case .downloading(let fraction):
@@ -1244,8 +1247,8 @@ struct ParakeetSettingsView: View {
                     case .failed: Button("Try again") { parakeet.retry() }.buttonStyle(NotchPillButtonStyle(small: true))
                     case .downloading, .preparing, .ready: EmptyView()
                     }
-                    // Also after a failure, so a model that will not load can be removed and fetched again.
-                    if parakeet.state != .preparing, !parakeet.isBusy, parakeet.isDownloaded {
+                    // Also after a failure, so a model that will not load, or a half-deleted one, can be removed.
+                    if parakeet.state != .preparing, !parakeet.isBusy, parakeet.hasFiles {
                         Button("Delete") { Task { await parakeet.delete() } }
                             .buttonStyle(NotchPillButtonStyle(small: true))
                             .disabled(parakeet.inUse)
