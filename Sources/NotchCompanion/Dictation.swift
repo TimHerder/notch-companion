@@ -17,6 +17,8 @@ final class Dictation: ObservableObject {
     }
 
     static let languageKey = "notch.dictationLanguage"
+    /// 15 minutes of 16 kHz audio.
+    static let parakeetLimit = 16_000 * 60 * 15
     static let microphoneSettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
     /// Some engine can run here; the dictation button and shortcut need one.
     static var isAvailable: Bool { SpeechTranscriber.isAvailable || ParakeetModel.isSupported }
@@ -171,6 +173,11 @@ final class Dictation: ObservableObject {
         var previewed = 0
         for await chunk in stream {
             samples += chunk
+            // Raw audio grows about 230 MB an hour; a quarter hour bounds it.
+            if samples.count >= Self.parakeetLimit, phase == .listening {
+                stop()
+                failure = "Parakeet listens up to 15 minutes at a time; what you said is in the draft."
+            }
             // shortcut: each preview transcribes the whole clip so far; past a minute only the final pass runs.
             if preview == nil, samples.count - previewed >= 24_000, samples.count <= 16_000 * 60 {
                 previewed = samples.count

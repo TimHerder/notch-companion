@@ -47,6 +47,8 @@ final class ParakeetModel: ObservableObject {
     private var unload: Task<Void, Never>?
     /// Dictation runs using the model; Delete waits for them, whatever engine is chosen now.
     @Published private(set) var users = 0
+    /// Delete is tearing the model down; nothing may load or fetch it meanwhile.
+    @Published private(set) var deleting = false
     /// The loaded model holds several hundred MB; an always-running app gives it back when idle.
     static let idleUnload: Duration = .seconds(300)
 
@@ -59,7 +61,7 @@ final class ParakeetModel: ObservableObject {
     private var directory: URL { folder.appendingPathComponent("parakeet", isDirectory: true) }
     var isDownloaded: Bool { AsrModels.modelsExist(at: directory, version: .v3) }
     var isBusy: Bool { work != nil }
-    var inUse: Bool { users > 0 || work != nil }
+    var inUse: Bool { users > 0 || work != nil || deleting }
 
     var status: String {
         switch state {
@@ -73,18 +75,19 @@ final class ParakeetModel: ObservableObject {
 
     /// Downloads without loading, from Settings.
     func download() {
-        guard work == nil, !isDownloaded else { return }
+        guard work == nil, !deleting, !isDownloaded else { return }
         run(load: false)
     }
 
     /// Try again after a failure: fetch what is missing, or load what is there.
     func retry() {
-        guard work == nil else { return }
+        guard work == nil, !deleting else { return }
         if isDownloaded { Task { _ = try? await recognizer() } } else { run(load: false) }
     }
 
     /// The loaded recognizer, downloading first if the model is missing.
     func recognizer() async throws -> AsrManager {
+        guard !deleting else { throw ParakeetDeleting() }
         unload?.cancel()
         unload = nil
         if let manager { return manager }
@@ -118,8 +121,14 @@ final class ParakeetModel: ObservableObject {
     /// Frees the memory and removes the downloaded files; refused while in use.
     func delete() async {
         guard !inUse else { return }
-        await manager?.cleanup()
+        deleting = true
+        defer { deleting = false }
+        // Taken away before the cleanup awaits, so no dictation can pick it up half torn down.
+        let loaded = manager
         manager = nil
+        unload?.cancel()
+        unload = nil
+        await loaded?.cleanup()
         do {
             if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.removeItem(at: folder) }
             state = .missing
@@ -184,4 +193,8 @@ final class ParakeetModel: ObservableObject {
         var state = TdtDecoderState.make(decoderLayers: await manager.decoderLayerCount)
         return try await manager.transcribe(audio, decoderState: &state).text
     }
+}
+
+private struct ParakeetDeleting: LocalizedError {
+    var errorDescription: String? { "Parakeet is being deleted. Choose Download in Settings to use it again." }
 }

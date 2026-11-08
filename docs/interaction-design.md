@@ -1207,7 +1207,8 @@ until the user sends.
 - **Status.** Under the field, for the session being dictated into: a dot and
   “Listening…” followed by the words not yet final, head-truncated on one line
   (Parakeet previews the whole clip every 1.5 s of new audio for its first
-  minute, then delivers its full text when listening stops);
+  minute, then delivers its full text when listening stops; it stops by itself
+  after 15 minutes and says so);
   final words join the end of the draft with one space, never replacing typed
   text; words that arrive while an input method is composing join once it
   commits. A failure (no microphone, unsupported language, denied access with

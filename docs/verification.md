@@ -117,8 +117,10 @@ private development hasn't been re-run against this source snapshot. Known limit
   offline, and the Settings rows by offscreen fixtures in all three designs
   (`settings-parakeet-560`). Not yet checked live: speaking into a physical
   microphone, the Microphone permission prompt, a model download started from
-  Settings, a Parakeet preview while speaking, the idle unload, or a shortcut
-  another app already holds.
+  Settings, a Parakeet preview while speaking, the idle unload, a failed load
+  followed by Try again, or a shortcut another app already holds. FluidAudio
+  is pinned, but it fetches the model from the Hugging Face repository's
+  `main`, so a later upstream change to the weights would reach new downloads.
 
 **Not yet done**
 
