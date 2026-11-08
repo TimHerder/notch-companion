@@ -4,6 +4,8 @@ struct RuntimeModelChoice: Codable, Hashable, Identifiable {
     var model: String
     var provider: String? = nil
     var reasoningEffort: String? = nil
+    /// Claude Code's Ultracode, beside any effort; nil leaves the native setting.
+    var ultracode: Bool? = nil
     var id: String { (provider ?? "") + ":" + model }
 
     /// Hermes accepts a slash-command argument string. Catalog values must not
@@ -26,6 +28,7 @@ struct RuntimeModelOption: Identifiable, Equatable {
     var title: String
     var reasoningEfforts: [String] = []
     var defaultReasoningEffort: String? = nil
+    var offersUltracode = false
     var id: String { choice.id }
 
     static func effortTitle(_ effort: String) -> String { effort == "xhigh" ? "Extra high" : effort.capitalized }
@@ -56,6 +59,7 @@ struct RuntimeModelCatalog: Equatable {
 
     func contains(_ choice: RuntimeModelChoice) -> Bool {
         guard option(for: choice) != nil || defaultModel?.id == choice.id else { return false }
+        guard choice.ultracode != true || option(for: choice)?.offersUltracode == true else { return false }
         return choice.reasoningEffort.map { option(for: choice)?.reasoningEfforts.contains($0) == true } ?? true
     }
 

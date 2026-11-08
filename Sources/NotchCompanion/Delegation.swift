@@ -463,7 +463,10 @@ extension AppModel {
                 guard option.reasoningEfforts.contains(effort) else { throw DelegationFailure("invalid_request", "\(model) does not offer effort \(effort).") }
                 choice?.reasoningEffort = effort
             }
-        } else if runtime == parent.runtime { choice = parent.modelOverride }
+        } else if runtime == parent.runtime {
+            choice = parent.modelOverride
+            choice?.ultracode = nil // The user's Ultracode is for that conversation only; a child keeps the native setting.
+        }
         let permission = try Delegation.childMode(parent: parent.permissionMode, requested: Delegation.requestedMode(arguments),
                                                   supported: runtime.capabilities.supportedPermissionModes)
         var session = CompanionSession()

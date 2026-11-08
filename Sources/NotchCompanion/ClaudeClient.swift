@@ -16,6 +16,7 @@ final class ClaudeClient: RuntimeTransport {
         var info: [String: Any] = [:]
         var catalog = RuntimeModelCatalog()
         var effortOverride: String?
+        var ultracodeOverride: Bool?
         /// Launched with bypass allowed, and whether native history exists to resume.
         var allowsBypass = false
         var resumable = false
@@ -128,23 +129,31 @@ final class ClaudeClient: RuntimeTransport {
         switch method {
         case "session.model.set":
             guard !session.state.active, session.state.children.isEmpty, session.state.requests.isEmpty else { throw AppError("Wait for Claude Code and delegated work before changing models.") }
+            let effort = params["reasoning_effort"] as? String
             guard let model = params["model"] as? String,
-                  session.catalog.contains(RuntimeModelChoice(model: model, reasoningEffort: params["reasoning_effort"] as? String)) else {
+                  session.catalog.contains(RuntimeModelChoice(model: model, reasoningEffort: effort, ultracode: params["ultracode"] as? Bool)) else {
                 throw AppError("Choose a model and effort from Claude Code's current native catalog.")
             }
             _ = try await control(session, ["subtype": "set_model", "model": model])
-            let effort = params["reasoning_effort"] as? String
-            if effort != nil || session.effortOverride != nil ||
+            // Claude drops Ultracode when effort changes, so a choice is restated each time; clearing one turns it off.
+            let ultracode = params["ultracode"] as? Bool ?? session.ultracodeOverride.map { _ in false }
+            if effort != nil || session.effortOverride != nil || ultracode != nil ||
                 session.catalog.option(for: RuntimeModelChoice(model: model))?.reasoningEfforts.isEmpty == false {
                 // Native flag settings affect only this frontend, not user or
                 // project settings. Null restores Claude's inherited effort.
-                _ = try await control(session, ["subtype": "apply_flag_settings",
-                                               "settings": ["effortLevel": effort as Any? ?? NSNull()]])
+                var flags: [String: Any] = ["effortLevel": effort as Any? ?? NSNull()]
+                if let ultracode { flags["ultracode"] = ultracode }
+                _ = try await control(session, ["subtype": "apply_flag_settings", "settings": flags])
                 session.effortOverride = effort
+                session.ultracodeOverride = ultracode
                 let settings = try await control(session, ["subtype": "get_settings"])
-                guard let applied = settings["applied"] as? [String: Any],
-                      applied["model"] as? String == model,
-                      effort == nil || applied["effort"] as? String == effort else {
+                let applied = settings["applied"] as? [String: Any]
+                if ultracode == true, applied?["ultracodeAvailable"] as? Bool == false {
+                    throw AppError("Claude Code's Ultracode needs dynamic workflows, which are off (see /config in Claude Code). Your message was not sent.")
+                }
+                guard let applied, applied["model"] as? String == model,
+                      effort == nil || applied["effort"] as? String == effort,
+                      ultracode == nil || applied["ultracode"] as? Bool == ultracode else {
                     throw AppError("Claude Code did not apply the selected model and effort. Your message was not sent.")
                 }
             }
@@ -363,8 +372,10 @@ final class ClaudeClient: RuntimeTransport {
         var models: [RuntimeModelOption] = []
         for row in rows where row["disabled"] as? Bool != true {
             guard let model = row["resolvedModel"] as? String ?? row["value"] as? String, !model.isEmpty else { continue }
+            let efforts = row["supportsEffort"] as? Bool == true ? row["supportedEffortLevels"] as? [String] ?? [] : []
+            // Claude Code offers Ultracode on the models it offers xhigh on; get_settings confirms it before a send.
             let option = RuntimeModelOption(choice: RuntimeModelChoice(model: model), title: row["displayName"] as? String ?? model,
-                reasoningEfforts: row["supportsEffort"] as? Bool == true ? row["supportedEffortLevels"] as? [String] ?? [] : [])
+                reasoningEfforts: efforts, offersUltracode: efforts.contains("xhigh"))
             // Default and a named alias often resolve to the same model. Keep
             // unique row identities and prefer the named model's label.
             if let index = models.firstIndex(where: { $0.id == option.id }) {

@@ -825,6 +825,14 @@ import ImageIO
             .frame(width: 560, height: 350, alignment: .bottomTrailing).background(CompanionStyle.background)
             .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
             size: NSSize(width: 560, height: 350), name: "model-chooser-no-effort", output: output)
+        // Claude Code's Ultracode beside an effort: the lavender tag in the row and its switch in the picker.
+        model.modelCatalogs[catalogKey]?.models[0].offersUltracode = true
+        model.sessions[0].modelOverride = RuntimeModelChoice(model: "fixture-model", provider: "fixture-provider", reasoningEffort: "xhigh", ultracode: true)
+        try render(ModelControlsView(model: model, choosingModel: true).padding(20)
+            .frame(width: 560, height: 400, alignment: .bottomTrailing).background(CompanionStyle.background)
+            .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
+            size: NSSize(width: 560, height: 400), name: "model-chooser-ultracode", output: output)
+        model.modelCatalogs[catalogKey] = catalog
         model.sessions[0].modelOverride = nil
         model.sessions[0].state = .working
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-busy-draft", output: output)

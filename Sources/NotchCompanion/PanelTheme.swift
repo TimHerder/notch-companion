@@ -95,6 +95,8 @@ enum CompanionStyle {
     static var amber: Color {
         pick(Color(red: 0.95, green: 0.76, blue: 0.43), Color(red: 1, green: 0.624, blue: 0.039), IslandStyle.amber)
     }
+    /// Claude Code's lavender for Ultracode, in every design.
+    static let ultracode = Color(red: 0.66, green: 0.6, blue: 0.96)
     static var error: Color {
         pick(Color(red: 1, green: 0.57, blue: 0.52), Color(red: 1, green: 0.271, blue: 0.227), IslandStyle.error)
     }

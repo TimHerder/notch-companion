@@ -20,7 +20,7 @@ status, acceptance status or a known gap changes.
 Listing and reading tasks through Codex desktop doesn't establish that a session
 appears in its visible sidebar, or that live handoff works in general.
 
-## Current status — 2026-11-07
+## Current status — 2026-11-08
 
 **Release pipeline**
 
@@ -70,6 +70,13 @@ private development hasn't been re-run against this source snapshot. Known limit
   doesn't host. The child-discovery race and the unstable pre-send snapshot are
   covered by offline fixtures only, not live OpenCode.
 - Pi: no terminal-rendered extension UI and no built-in tool approvals.
+
+- Claude Code Ultracode: the `apply_flag_settings`/`get_settings` shapes were
+  checked live against Claude Code 2.1.308 with no prompt (throwaway
+  `--no-session-persistence` frontend). Restating it beside effort and the
+  workflows-off refusal are covered by protocol fixtures, and the row's tag and
+  the picker's switch by the `model-chooser-ultracode` offscreen fixture in all
+  three designs. Not yet checked with a live Ultracode prompt or a physical click.
 
 **Interface**
 
