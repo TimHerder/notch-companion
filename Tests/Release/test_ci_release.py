@@ -185,6 +185,41 @@ class CIReleaseTests(unittest.TestCase):
                 ci.publish()
             run.assert_not_called()
 
+    def test_publish_waits_for_github_to_list_its_own_writes(self):
+        # GitHub's release list lagged a new draft once (2026.11.8-r1); waiting must never create twice.
+        plan = self.eligible_plan()
+        paths = [self.root / "app.zip"]
+        draft = {"id": 7, "prerelease": False, "draft": True, "html_url": "https://example.invalid/release"}
+        with patch.object(ci, "load_plan", return_value=plan), patch.object(ci, "make_plan", return_value=plan), \
+             patch.object(ci, "authenticated_git"), patch.object(ci, "ensure_tag"), \
+             patch.object(ci.release, "verify_package", return_value=paths), \
+             patch.object(ci, "existing_release", side_effect=[None, None, None, draft, draft, {**draft, "draft": False}]), \
+             patch.object(ci, "verify_assets", side_effect=[paths, paths, []]), \
+             patch.object(ci.time, "sleep") as sleep, patch.object(ci.release, "run") as run:
+            ci.publish()
+            commands = [call.args for call in run.call_args_list]
+            self.assertEqual([command[:3] for command in commands],
+                             [("gh", "release", "create"), ("gh", "release", "upload"), ("gh", "release", "edit")])
+            self.assertEqual(sleep.call_count, 4)
+        with patch.object(ci, "load_plan", return_value=plan), patch.object(ci, "make_plan", return_value=plan), \
+             patch.object(ci, "authenticated_git"), patch.object(ci, "ensure_tag"), \
+             patch.object(ci.release, "verify_package", return_value=[]), \
+             patch.object(ci, "existing_release", return_value=None) as lookup, \
+             patch.object(ci.time, "sleep"), patch.object(ci.release, "run") as run:
+            with self.assertRaisesRegex(ValueError, "full release"):
+                ci.publish()
+            self.assertEqual(run.call_count, 1, "Created once, never again while waiting")
+            self.assertEqual(lookup.call_count, 11)
+        with patch.object(ci, "load_plan", return_value=plan), patch.object(ci, "make_plan", return_value=plan), \
+             patch.object(ci, "authenticated_git"), patch.object(ci, "ensure_tag"), \
+             patch.object(ci.release, "verify_package", return_value=[]), \
+             patch.object(ci, "existing_release", side_effect=[{**draft, "draft": False}] + [{**draft, "id": 8, "draft": False}] * 10) as lookup, \
+             patch.object(ci, "verify_assets", return_value=[]), \
+             patch.object(ci.time, "sleep"), patch.object(ci.release, "run"):
+            with self.assertRaisesRegex(ValueError, "not confirmed"):
+                ci.publish()
+            self.assertEqual(lookup.call_count, 11, "Another release under the tag never counts as this one")
+
     def test_published_retry_is_noop_and_never_repairs_changed_or_missing_assets(self):
         plan = self.eligible_plan()
         remote = {"id": 7, "prerelease": False, "draft": False, "html_url": "https://example.invalid/release"}
