@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import Carbon
 import Speech
+import SwiftUI
 import XCTest
 @testable import NotchCompanion
 
@@ -81,13 +82,78 @@ import XCTest
         reopened.shutdown()
     }
 
-    func testDictationArrivingDuringInputMethodCompositionIsKept() {
-        // The editor last agreed on "Hello"; dictation then appended while a Japanese
-        // composition was open, and the user committed "仮" after it.
-        let draft = Dictation.append("from dictation", to: "Hello")
-        XCTAssertEqual(NativeComposerEditor.merge(editor: "Hello仮", draft: draft, synced: "Hello"), "Hello仮 from dictation")
-        XCTAssertNil(NativeComposerEditor.merge(editor: "Hello仮", draft: "Hello", synced: "Hello"), "Nothing changed outside")
-        XCTAssertNil(NativeComposerEditor.merge(editor: "Hello仮", draft: "", synced: "Hello"), "A cleared draft yields to typing")
+    /// The real editor coordinator bound to a session draft, as the composer wires it.
+    private func composer(_ model: AppModel, _ id: String) -> (NativeComposerEditor.Coordinator, ComposerTextView) {
+        let focus = FocusState<Bool>()
+        var parent = NativeComposerEditor(text: Binding(get: { model.draft }, set: { model.draft = $0 }), focused: focus.projectedValue,
+                                          height: .constant(22), accessibilityLabel: "", accessibilityHint: "", onSubmit: {})
+        parent.onComposingChanged = { model.setComposing($0, in: id) }
+        let coordinator = parent.makeCoordinator()
+        let editor = ComposerTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 80))
+        editor.delegate = coordinator
+        editor.onMarkedTextChanged = { coordinator.reportComposing() }
+        coordinator.editor = editor
+        editor.string = model.draft
+        coordinator.synced = model.draft
+        editor.setSelectedRange(NSRange(location: (model.draft as NSString).length, length: 0))
+        return (coordinator, editor)
+    }
+
+    private func compose(_ editor: ComposerTextView) {
+        editor.setMarkedText("仮", selectedRange: NSRange(location: 1, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertTrue(editor.hasMarkedText())
+    }
+
+    private func commit(_ editor: ComposerTextView) {
+        editor.insertText("仮", replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertFalse(editor.hasMarkedText())
+    }
+
+    func testDictationWaitsForAnInputMethodAndADeliberateReplacementWins() async throws {
+        let suite = "notch-ime-\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: suite)!
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        let model = AppModel(storageURL: folder.appendingPathComponent("sessions.json"), playsSounds: false,
+                             client: ShortcutTransport(), preferences: preferences)
+        defer { model.shutdown(); preferences.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        await model.newSession(showPanel: false)
+        let id = try XCTUnwrap(model.currentID)
+
+        // Final words during a composition wait for its commit, then join after it.
+        model.draft = "Hello"
+        var (coordinator, editor) = composer(model, id)
+        compose(editor)
+        model.receiveDictation("final words", into: id)
+        coordinator.sync(to: model.draft)
+        XCTAssertTrue(editor.hasMarkedText(), "The composition stays open")
+        commit(editor)
+        coordinator.sync(to: model.draft)
+        XCTAssertEqual(model.draft, "Hello仮 final words")
+        XCTAssertEqual(editor.string, "Hello仮 final words")
+
+        // Send empties the draft mid-composition: the composition goes, sent text stays sent,
+        // and words finalized afterwards start the new draft.
+        model.draft = "Hello"
+        (coordinator, editor) = composer(model, id)
+        compose(editor)
+        model.draft = ""
+        coordinator.sync(to: model.draft)
+        XCTAssertFalse(editor.hasMarkedText())
+        model.receiveDictation("final words", into: id)
+        coordinator.sync(to: model.draft)
+        XCTAssertEqual(model.draft, "final words")
+        XCTAssertEqual(editor.string, "final words")
+
+        // A queued message's Edit replaces a composition in an empty composer; typing goes after it.
+        model.draft = ""
+        (coordinator, editor) = composer(model, id)
+        compose(editor)
+        model.draft = "Queued message"
+        coordinator.sync(to: model.draft)
+        XCTAssertEqual(editor.string, "Queued message")
+        XCTAssertEqual(editor.selectedRange().location, ("Queued message" as NSString).length)
+        editor.insertText("!", replacementRange: NSRange(location: NSNotFound, length: 0))
+        XCTAssertEqual(model.draft, "Queued message!")
     }
 
     func testDictatedWordsJoinTheDraftWithOneSpace() {

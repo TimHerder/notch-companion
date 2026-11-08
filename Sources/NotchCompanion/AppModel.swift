@@ -124,6 +124,8 @@ final class AppModel: ObservableObject {
     /// Shortcuts macOS refused because another app holds them.
     @Published var unavailableShortcuts: Set<ShortcutAction> = []
     var shortcutsChanged: (() -> Void)?
+    private var composingSessionIDs = Set<String>()
+    private var heldDictation: [String: String] = [:]
     /// The window that was in front when the notch last opened.
     @Published var snapShotSource: SnapShotSource?
     @Published var snapShotNeedsPermission = false
@@ -828,12 +830,25 @@ final class AppModel: ObservableObject {
     }
 
     private func startDictation(into sessionID: String, fromNotch: Bool) {
-        dictation.deliver = { [weak self] id, text in
-            guard let self else { return }
-            self.update(id) { $0.draft = Dictation.append(text, to: $0.draft) }
-            self.scheduleSave()
-        }
+        dictation.deliver = { [weak self] id, text in self?.receiveDictation(text, into: id) }
         dictation.start(sessionID: sessionID, language: dictationLanguage, fromNotch: fromNotch)
+    }
+
+    /// Final words join the draft, or wait while an input method composes in
+    /// that session's editor so the commit cannot overwrite them.
+    func receiveDictation(_ text: String, into id: String) {
+        if composingSessionIDs.contains(id) {
+            heldDictation[id] = Dictation.append(text, to: heldDictation[id] ?? "")
+            return
+        }
+        update(id) { $0.draft = Dictation.append(text, to: $0.draft) }
+        scheduleSave()
+    }
+
+    func setComposing(_ composing: Bool, in id: String) {
+        if composing { composingSessionIDs.insert(id); return }
+        composingSessionIDs.remove(id)
+        if let held = heldDictation.removeValue(forKey: id) { receiveDictation(held, into: id) }
     }
 
     /// The open panel is showing this session's conversation.

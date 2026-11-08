@@ -282,7 +282,8 @@ struct ComposerView: View {
                                      guard let first = queued.first, model.current?.canSteer(first.attachments ?? []) == true else { return false }
                                      Task { await model.steerQueuedSend(first.id) }
                                      return true
-                                 })
+                                 },
+                                 onComposingChanged: { [id = model.currentID] in if let id { model.setComposing($0, in: id) } })
                 .id(model.currentID)
                 .frame(height: editorHeight)
           }
@@ -420,15 +421,13 @@ struct NativeComposerEditor: NSViewRepresentable {
     /// steers the oldest. Each returns whether it acted.
     var onEditQueued: (() -> Bool)? = nil
     var onSteerQueued: (() -> Bool)? = nil
+    /// An input method's composition began or ended; dictation waits for it.
+    var onComposingChanged: ((Bool) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    /// Text added to the end of the draft while the editor could not take it
-    /// (an input method was composing) joins the editor's text; any other
-    /// outside change yields to what the user typed.
-    static func merge(editor: String, draft: String, synced: String) -> String? {
-        guard draft != synced, draft.hasPrefix(synced) else { return nil }
-        return editor + draft.dropFirst(synced.count)
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+        if coordinator.composing { coordinator.parent.onComposingChanged?(false) }
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -478,6 +477,7 @@ struct NativeComposerEditor: NSViewRepresentable {
             DispatchQueue.main.async { coordinator?.parent.focused.wrappedValue = value }
         }
         editor.onLayoutChanged = { [weak coordinator = context.coordinator] in coordinator?.updateHeight() }
+        editor.onMarkedTextChanged = { [weak coordinator = context.coordinator] in coordinator?.reportComposing() }
         context.coordinator.editor = editor
         context.coordinator.synced = text
         scroll.documentView = editor
@@ -490,14 +490,7 @@ struct NativeComposerEditor: NSViewRepresentable {
         guard let editor = scroll.documentView as? ComposerTextView else { return }
         editor.setAccessibilityLabel(accessibilityLabel)
         editor.setAccessibilityHelp(accessibilityHint)
-        // Do not destroy marked text while an input method is composing.
-        if !editor.hasMarkedText(), editor.string != text {
-            // Text restored into an empty composer (a queued message's Edit) keeps typing after it.
-            let location = editor.string.isEmpty ? (text as NSString).length : min(editor.selectedRange().location, (text as NSString).length)
-            editor.string = text
-            editor.setSelectedRange(NSRange(location: location, length: 0))
-            context.coordinator.synced = text
-        }
+        context.coordinator.sync(to: text)
         context.coordinator.updateHeight()
         if focused.wrappedValue, editor.window?.firstResponder !== editor {
             DispatchQueue.main.async { [weak editor, weak coordinator = context.coordinator] in
@@ -511,25 +504,51 @@ struct NativeComposerEditor: NSViewRepresentable {
         var parent: NativeComposerEditor
         weak var editor: ComposerTextView?
         private var heightUpdatePending = false
-        /// The draft as the editor last saw it. The draft moving away from it
-        /// means something (dictation) changed it while composition held the editor.
+        /// The draft as the editor last wrote or took it. A draft that differs
+        /// from it was changed on purpose elsewhere (Send, a queued Edit).
         var synced = ""
+        private(set) var composing = false
+        /// Applying the draft; the editor's own change notifications are echoes.
+        private var applying = false
         init(_ parent: NativeComposerEditor) { self.parent = parent }
 
-        func textDidChange(_ notification: Notification) {
-            guard let editor else { return }
-            if parent.text != synced {
-                // Keep the outside change until the input method commits, then take it in.
-                if editor.hasMarkedText() { return updateHeight() }
-                if let merged = NativeComposerEditor.merge(editor: editor.string, draft: parent.text, synced: synced) {
-                    let selection = editor.selectedRange()
-                    editor.string = merged
-                    editor.setSelectedRange(selection)
-                }
+        /// Takes a changed draft into the editor. While an input method composes,
+        /// only a deliberate change (not a stale echo of the editor's own text)
+        /// replaces it, and the composition is dropped. Dictation never arrives
+        /// meanwhile: it waits for `onComposingChanged(false)`.
+        func sync(to text: String) {
+            guard let editor, editor.string != text else { return }
+            let discarding = editor.hasMarkedText()
+            if discarding { guard text != synced else { return } }
+            applying = true
+            defer { applying = false }
+            if discarding {
+                editor.inputContext?.discardMarkedText()
+                editor.unmarkText()
             }
+            // Text restored into an empty composer (a queued message's Edit), or over a
+            // dropped composition, keeps typing after it.
+            let location = editor.string.isEmpty || discarding ? (text as NSString).length
+                : min(editor.selectedRange().location, (text as NSString).length)
+            editor.string = text
+            editor.setSelectedRange(NSRange(location: location, length: 0))
+            synced = text
+            reportComposing()
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let editor, !applying else { return }
             synced = editor.string
             parent.text = editor.string
+            reportComposing()
             updateHeight()
+        }
+
+        func reportComposing() {
+            let now = editor?.hasMarkedText() ?? false
+            guard now != composing else { return }
+            composing = now
+            parent.onComposingChanged?(now)
         }
 
         func updateHeight() {
@@ -555,6 +574,8 @@ final class ComposerTextView: NSTextView {
     var onSteerQueued: (() -> Bool)?
     var onFocusChanged: ((Bool) -> Void)?
     var onLayoutChanged: (() -> Void)?
+    /// Marked text changes post no text-change notification of their own.
+    var onMarkedTextChanged: (() -> Void)?
 
     var boundedHeight: CGFloat {
         guard let layoutManager, let textContainer else { return Self.minimumHeight }
@@ -567,6 +588,15 @@ final class ComposerTextView: NSTextView {
     }
 
     override func layout() { super.layout(); onLayoutChanged?() }
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        onMarkedTextChanged?()
+    }
+    override func unmarkText() { super.unmarkText(); onMarkedTextChanged?() }
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        super.insertText(string, replacementRange: replacementRange)
+        onMarkedTextChanged?()
+    }
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
         if result { onFocusChanged?(true) }

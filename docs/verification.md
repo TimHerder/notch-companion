@@ -102,7 +102,10 @@ private development hasn't been re-run against this source snapshot. Known limit
 - Configurable shortcuts and dictation: which keys a recorder accepts, cancels,
   clears or refuses (including the other action's combination), persistence
   (including a shortcut turned off) and draft joining are covered by offline
-  tests; the recorder view's monitor and window handling are not. The
+  tests, and so is dictation waiting for an input method's composition,
+  including Send or a queued Edit replacing it, against the real editor
+  coordinator with simulated marked text. The recorder view's monitor and
+  window handling are not tested, and no physical input method has been tried. The
   microphone's converter tap feeding macOS's on-device transcriber is covered
   by an opt-in test (`NOTCH_RUN_DICTATION_TEST=1`) with synthesized speech. Not
   yet checked live: speaking into a physical microphone, the Microphone

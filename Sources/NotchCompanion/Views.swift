@@ -1170,8 +1170,13 @@ struct ShortcutRecorder: View {
         model.recordingShortcut = action
         removeMonitor()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            MainActor.assumeIsolated { receive(event) }
-            return nil
+            // Ownership, not the monitor's later removal, decides who records.
+            let owns = MainActor.assumeIsolated {
+                guard model.recordingShortcut == action else { return false }
+                receive(event)
+                return true
+            }
+            return owns ? nil : event
         }
     }
 
