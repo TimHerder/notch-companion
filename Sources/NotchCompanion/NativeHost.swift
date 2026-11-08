@@ -17,9 +17,9 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
     private var shortcutAvailable = true
     private var trackingMenus = Set<ObjectIdentifier>()
     private var interaction = NotchInteraction()
-    private var mouthDragSources = Set<String>()
-    private var mouthExitTask: Task<Void, Never>?
-    private var chewingUntil: TimeInterval = 0
+    private var dragSources = Set<String>()
+    private var dragExitTask: Task<Void, Never>?
+    private var receivingUntil: TimeInterval = 0
     private var lastPointerSample: TimeInterval?
     private var touchingCompanion = false
     private var lastPoke: TimeInterval = -100
@@ -142,17 +142,17 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
             guard let self else { return }
             let now = ProcessInfo.processInfo.systemUptime
             if active {
-                self.mouthExitTask?.cancel()
-                self.mouthDragSources.insert(sourceID)
-                self.model.eating = true
+                self.dragExitTask?.cancel()
+                self.dragSources.insert(sourceID)
+                self.model.receivingFile = true
             } else {
-                self.mouthDragSources.remove(sourceID)
-                self.mouthExitTask?.cancel()
-                self.mouthExitTask = Task { @MainActor [weak self] in
+                self.dragSources.remove(sourceID)
+                self.dragExitTask?.cancel()
+                self.dragExitTask = Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .milliseconds(110))
-                    guard !Task.isCancelled, let self, self.mouthDragSources.isEmpty,
-                          ProcessInfo.processInfo.systemUptime >= self.chewingUntil else { return }
-                    self.model.eating = false
+                    guard !Task.isCancelled, let self, self.dragSources.isEmpty,
+                          ProcessInfo.processInfo.systemUptime >= self.receivingUntil else { return }
+                    self.model.receivingFile = false
                 }
             }
             if expandsOnDrop, let action = self.interaction.dragChanged(source: sourceID, active: active, now: now) {
@@ -166,14 +166,19 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
             guard let self else { return false }
             let accepted = expandsOnDrop ? self.model.acceptFileDrop(urls) : self.model.addAttachments(urls, showPanel: false)
             guard accepted else { return false }
-            self.chewingUntil = ProcessInfo.processInfo.systemUptime + 0.65
+            self.receivingUntil = ProcessInfo.processInfo.systemUptime + 0.65
             if expandsOnDrop { self.show() }
             return true
         }
-        view.mouthPosition = { [weak self] in
-            guard let self else { return .zero }
-            let center = self.mascotCenter()
-            return CGPoint(x: center.x, y: center.y - 4)
+        // A file dropped on the notch glides into its composer's attach button;
+        // the full window's own composer is where it was dropped.
+        if expandsOnDrop {
+            view.landingFrame = { [weak self] in
+                guard let self, let button = self.model.attachLandingFrame else { return nil }
+                let frame = self.model.notchPresentation.frame
+                return CGRect(x: frame.minX + button.minX, y: frame.maxY - button.maxY,
+                              width: button.width, height: button.height).insetBy(dx: 6, dy: 6)
+            }
         }
         view.reducesMotion = { [weak self] in self?.model.reducedMotion ?? false }
     }
@@ -528,7 +533,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         let local = CGPoint(x: location.x - presentation.frame.minX, y: presentation.frame.maxY - location.y)
         let touching = local.y <= presentation.size.height + MascotLayout.overhangClip(presentation)
             && pokeZone(eyesAt: center)?.contains(local) == true
-        if touching, !touchingCompanion, !model.eating, now - lastPoke >= EyeMotion.pokeDuration {
+        if touching, !touchingCompanion, !model.receivingFile, now - lastPoke >= EyeMotion.pokeDuration {
             lastPoke = now
             model.pokeEvent += 1
         }
@@ -551,7 +556,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         let pull = model.reducedMotion ? NotchPull()
             : model.notchPull.stepped(toward: pulling ? local : nil, size: presentation.size, elapsed: elapsed)
         if model.notchPull != pull { model.notchPull = pull }
-        if !mouthDragSources.isEmpty && !model.eating { model.eating = true }
+        if !dragSources.isEmpty && !model.receivingFile { model.receivingFile = true }
         let trigger = geometry.collapsedFrame.insetBy(dx: -3, dy: -2)
         var body = notchPanel.frame
         body.origin.y += windowOverhang
@@ -579,7 +584,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
     private func updateDrowsiness(now: TimeInterval) {
         let mood = CompanionMood.resolve(overall: model.overallState, current: model.current)
         let engaged = model.hovering || model.expanded || model.glancing || announcing || staging || model.announcement != nil
-            || !mood.canDoze || model.eating || !mouthDragSources.isEmpty
+            || !mood.canDoze || model.receivingFile || !dragSources.isEmpty
         if engaged { lastEngagement = now }
         let drowsy = now < bootWakeAt || now - lastEngagement >= Self.dozeDelay
         if model.drowsy != drowsy { model.drowsy = drowsy }
@@ -949,7 +954,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         guard !isStopped else { return }
         isStopped = true
         model.setSessionVisibility(notchVisible: false, fullSessionVisible: false)
-        mouthExitTask?.cancel()
+        dragExitTask?.cancel()
         pointerTimer?.invalidate()
         frameTimer?.invalidate()
         frameTimer = nil
@@ -1032,7 +1037,9 @@ final class FileDropHostingView<Content: View>: NSHostingView<Content> {
     var dragPresenceChanged: ((Bool) -> Void)?
     var dragLocationChanged: ((CGPoint?, Int) -> Void)?
     var acceptFiles: (([URL]) -> Bool)?
-    var mouthPosition: (() -> CGPoint)?
+    /// Where an accepted file's drag image lands, in screen coordinates; nil
+    /// lets it vanish where it was dropped.
+    var landingFrame: (() -> CGRect?)?
     var reducesMotion: (() -> Bool)?
     /// Optional shape restrictions in local top-left coordinates. Other hosting
     /// surfaces, including the ordinary full-session window, remain unrestricted.
@@ -1115,7 +1122,7 @@ final class FileDropHostingView<Content: View>: NSHostingView<Content> {
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard !hasAcceptedDrop, updateDragOperation(sender) == .copy else { return false }
-        sender.animatesToDestination = !(reducesMotion?() ?? false)
+        sender.animatesToDestination = !(reducesMotion?() ?? false) && landingFrame?() != nil
         return true
     }
 
@@ -1124,10 +1131,10 @@ final class FileDropHostingView<Content: View>: NSHostingView<Content> {
         let files = acceptableFiles(sender)
         guard !files.isEmpty, let acceptFiles, acceptFiles(files) else { return false }
         hasAcceptedDrop = true
-        if !(reducesMotion?() ?? false), let mouth = mouthPosition?() {
+        if !(reducesMotion?() ?? false), let landing = landingFrame?() {
             sender.enumerateDraggingItems(options: [], for: nil, classes: [NSURL.self],
                                           searchOptions: [.urlReadingFileURLsOnly: true]) { item, _, _ in
-                item.draggingFrame = CGRect(x: mouth.x - 2, y: mouth.y - 2, width: 4, height: 4)
+                item.draggingFrame = landing
             }
         }
         dragLocationChanged?(nil, 0)

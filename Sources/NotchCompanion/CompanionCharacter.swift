@@ -67,8 +67,8 @@ enum EyeMotion {
     static let blend: TimeInterval = 0.22
     static let smileDuration: TimeInterval = 1.8
     static let glanceDuration: TimeInterval = 0.75
-    static let chompDuration: TimeInterval = 1.3
-    static let feedingPose = EyeExpression(width: 1.15, height: 1.3)
+    static let attachDuration: TimeInterval = 0.9
+    static let receivingPose = EyeExpression(width: 1.15, height: 1.3)
 
     // ponytail: expanded attention uses fixed directions toward the transcript
     // and request area, not tracked row anchors; pass anchor frames if gaze must
@@ -130,8 +130,8 @@ enum EyeMotion {
     }
 
     static func expression(mood: CompanionMood, previous: CompanionMood, sinceMood: TimeInterval,
-                           expanded: Bool, time: TimeInterval, feeding: CGFloat,
-                           sinceGlance: TimeInterval, sinceChomp: TimeInterval,
+                           expanded: Bool, time: TimeInterval, receiving: CGFloat,
+                           sinceGlance: TimeInterval, sinceAttach: TimeInterval,
                            sincePoke: TimeInterval = 100, reducedMotion: Bool) -> EyeExpression {
         var e = pose(mood, expanded: expanded, time: time, since: sinceMood, reducedMotion: reducedMotion)
         let from = pose(previous, expanded: expanded, time: time, since: 100, reducedMotion: false)
@@ -157,7 +157,7 @@ enum EyeMotion {
             glance.gazeY = 0.85
             e = .mix(e, glance, pulse(sinceGlance, length: glanceDuration, rampIn: 0.1))
         }
-        e = .mix(e, feedingPose, feeding)
+        e = .mix(e, receivingPose, receiving)
         if !reducedMotion, sincePoke >= 0, sincePoke < pokeDuration {
             // Booped: the eyes flinch shut, then pop into a happy ^ ^ that bounces.
             var flinch = e
@@ -167,22 +167,16 @@ enum EyeMotion {
             e.smile = max(e.smile, pulse(sincePoke - 0.14, length: pokeDuration - 0.14, rampIn: 0.08, rampOut: 0.22))
             e.hop = max(e.hop, CGFloat(sin(.pi * min(1, max(0, (sincePoke - 0.14) / 0.42)))))
         }
-        if !reducedMotion, sinceChomp >= 0, sinceChomp < chompDuration {
-            // Two chomps, then a satisfied smile.
-            e.pointer = 0; e.gazeX = 0; e.gazeY = 0; e.tilt = 0; e.hop = 0
-            if sinceChomp < 0.12 || (sinceChomp >= 0.24 && sinceChomp < 0.36) {
-                e.width = 1.2; e.height = 0.12; e.smile = 0
-            } else if sinceChomp < 0.24 {
-                e.width = 1; e.height = 1.1; e.smile = 0
-            } else {
-                e.width = 1; e.height = 1
-                e.smile = pulse(sinceChomp - 0.36, length: chompDuration - 0.36)
-            }
+        if !reducedMotion, sinceAttach >= 0, sinceAttach < attachDuration {
+            // The eyes follow the file down into the composer, then a quick happy smile.
+            e.pointer = 0; e.gazeX = 0; e.tilt = 0; e.hop = 0
+            e.gazeY = 0.85 * pulse(sinceAttach, length: 0.4, rampIn: 0.08)
+            e.smile = max(e.smile, pulse(sinceAttach - 0.25, length: attachDuration - 0.25))
         }
         return e
     }
 
-    static func chomping(_ sinceChomp: TimeInterval) -> Bool { sinceChomp >= 0 && sinceChomp < chompDuration }
+    static func attaching(_ sinceAttach: TimeInterval) -> Bool { sinceAttach >= 0 && sinceAttach < attachDuration }
 
     /// How long the eyes, and a visible mascot's body, react to the pointer touching them.
     static let pokeDuration: TimeInterval = 0.85
@@ -251,7 +245,7 @@ struct CompanionCharacter: View {
     @State private var previousMood = CompanionMood.ready
     @State private var moodStart: TimeInterval = -100
     @State private var glanceStart: TimeInterval = -100
-    @State private var chompStart: TimeInterval = -100
+    @State private var attachStart: TimeInterval = -100
     @State private var pokeStart: TimeInterval = -100
     @State private var performance = MascotPerformance(.calm, start: -100)
     /// The pose fading out: a previous act, or the same act in the other clip set.
@@ -275,12 +269,12 @@ struct CompanionCharacter: View {
             let eyes = EyesDrawing(
                 expansion: min(1, max(0, expansion)),
                 mood: mood, previousMood: previousMood, sinceMood: time - moodStart,
-                sinceGlance: time - glanceStart, sinceChomp: time - chompStart, time: time,
-                feeding: model.eating ? 1 : 0,
+                sinceGlance: time - glanceStart, sinceAttach: time - attachStart, time: time,
+                receiving: model.receivingFile ? 1 : 0,
                 // The mascot's face leaves a little less room to look around in.
                 pointer: CGSize(width: min(3.5, max(-3.5, model.pointerOffset.width)) * (mascot == nil ? 1 : 0.7),
                                 height: min(2.5, max(-2.5, model.pointerOffset.height)) * (mascot == nil ? 1 : 0.7)),
-                blink: !model.eating && !model.hovering && !model.reducedMotion
+                blink: !model.receivingFile && !model.hovering && !model.reducedMotion
                     ? CGFloat(MascotMotion.blinkAmount(at: time)) : 0,
                 reducedMotion: model.reducedMotion,
                 sincePoke: time - pokeStart
@@ -298,7 +292,7 @@ struct CompanionCharacter: View {
                               fading: ghost.map { ($0, fade) }, library: library,
                               wobble: MascotTimeline.wobble(sincePoke: time - pokeStart, reducedMotion: model.reducedMotion))
             } else {
-                eyes.animation(model.reducedMotion ? nil : .spring(response: 0.29, dampingFraction: 0.78), value: model.eating)
+                eyes.animation(model.reducedMotion ? nil : .spring(response: 0.29, dampingFraction: 0.78), value: model.receivingFile)
             }
         }
         .frame(width: mascot?.size.width ?? 76, height: mascot?.size.height ?? 64)
@@ -343,10 +337,10 @@ struct CompanionCharacter: View {
         .onChange(of: ActivityCount(session: model.currentID, count: model.current?.tools.count ?? 0)) { old, new in
             if old.session == new.session, new.count > old.count { glanceStart = Date().timeIntervalSinceReferenceDate }
         }
-        .onChange(of: model.attachmentFeedEvent) { _, _ in
+        .onChange(of: model.attachmentEvent) { _, _ in
             // A new-session drop changes selection and attachments together.
-            // Feed on explicit acceptance, never on browsing stored attachments.
-            chompStart = Date().timeIntervalSinceReferenceDate
+            // React to explicit acceptance, never to browsing stored attachments.
+            attachStart = Date().timeIntervalSinceReferenceDate
         }
         .onChange(of: model.pokeEvent) { _, _ in pokeStart = Date().timeIntervalSinceReferenceDate }
         .onAppear { prepare([MascotTimeline.emerge]) }
@@ -380,19 +374,19 @@ struct EyesDrawing: View, Animatable {
     var previousMood: CompanionMood
     var sinceMood: TimeInterval
     var sinceGlance: TimeInterval
-    var sinceChomp: TimeInterval
+    var sinceAttach: TimeInterval
     var time: TimeInterval
-    var feeding: CGFloat
+    var receiving: CGFloat
     var pointer: CGSize
     var blink: CGFloat
     var reducedMotion: Bool
     var sincePoke: TimeInterval = 100
 
-    // Only feeding interpolates here. Gaze arrives already filtered by the
+    // Only receiving interpolates here. Gaze arrives already filtered by the
     // host's 60 Hz sampler and expression changes blend on the timeline above.
     var animatableData: CGFloat {
-        get { feeding }
-        set { feeding = newValue }
+        get { receiving }
+        set { receiving = newValue }
     }
 
     var body: some View {
@@ -410,10 +404,10 @@ struct EyesDrawing: View, Animatable {
     /// transform places them: the header's larger scale or the mascot's face.
     func draw(in context: GraphicsContext, expanded: Bool) {
         let e = EyeMotion.expression(mood: mood, previous: previousMood, sinceMood: sinceMood,
-                                     expanded: expanded, time: time, feeding: feeding,
-                                     sinceGlance: sinceGlance, sinceChomp: sinceChomp,
+                                     expanded: expanded, time: time, receiving: receiving,
+                                     sinceGlance: sinceGlance, sinceAttach: sinceAttach,
                                      sincePoke: sincePoke, reducedMotion: reducedMotion)
-        let closing = e.smile > 0.3 || EyeMotion.chomping(sinceChomp) || mood == .sleeping ? 0 : blink
+        let closing = e.smile > 0.3 || EyeMotion.attaching(sinceAttach) || mood == .sleeping ? 0 : blink
         let width = 6 * e.width
         var height = max(1.8, 12 * e.height * (1 - 0.85 * closing))
         height += (width - height) * e.smile

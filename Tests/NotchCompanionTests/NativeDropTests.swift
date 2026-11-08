@@ -65,7 +65,7 @@ final class NativeDropTests: XCTestCase {
     }
 
     @MainActor
-    func testNativeDropDeliversOnceShrinksToMouthAndPreservesOriginalFiles() async throws {
+    func testNativeDropDeliversOnceGlidesIntoTheAttachButtonAndPreservesOriginalFiles() async throws {
         let files = try DropFiles()
         defer { files.remove() }
         let sender = DraggingFixture(urls: [files.first, files.second])
@@ -74,7 +74,7 @@ final class NativeDropTests: XCTestCase {
         var deliveries: [[URL]] = []
         view.acceptFiles = { deliveries.append($0); return true }
         view.reducesMotion = { false }
-        view.mouthPosition = { CGPoint(x: -933, y: 1271) }
+        view.landingFrame = { CGRect(x: -935, y: 1269, width: 16, height: 16) }
 
         XCTAssertEqual(view.draggingEntered(sender), .copy)
         XCTAssertEqual(sender.numberOfValidItemsForDrop, 2)
@@ -88,7 +88,7 @@ final class NativeDropTests: XCTestCase {
         XCTAssertEqual(sender.enumerationCount, 1)
         XCTAssertTrue(sender.enumeratedInScreenCoordinates)
         XCTAssertEqual(sender.enumeratedFileURLsOnly, true)
-        XCTAssertEqual(sender.items.map(\.draggingFrame), Array(repeating: CGRect(x: -935, y: 1269, width: 4, height: 4), count: 2))
+        XCTAssertEqual(sender.items.map(\.draggingFrame), Array(repeating: CGRect(x: -935, y: 1269, width: 16, height: 16), count: 2))
         XCTAssertEqual(try Data(contentsOf: files.first), Data("First file stays here.".utf8))
         XCTAssertEqual(try Data(contentsOf: files.second), Data("Second file stays here.".utf8))
     }
@@ -105,7 +105,7 @@ final class NativeDropTests: XCTestCase {
         var deliveries = 0
         view.acceptFiles = { _ in deliveries += 1; return true }
         view.reducesMotion = { true }
-        view.mouthPosition = { CGPoint(x: 960, y: 1062) }
+        view.landingFrame = { CGRect(x: 960, y: 1062, width: 16, height: 16) }
 
         XCTAssertEqual(view.draggingEntered(sender), .copy)
         XCTAssertTrue(view.prepareForDragOperation(sender))
@@ -115,6 +115,27 @@ final class NativeDropTests: XCTestCase {
         XCTAssertEqual(sender.enumerationCount, 0)
         XCTAssertEqual(sender.items.map(\.draggingFrame), initialFrames)
         XCTAssertEqual(try Data(contentsOf: files.first), Data("First file stays here.".utf8))
+    }
+
+    /// The full-session window's composer is where the file was dropped, so
+    /// its drag image vanishes there instead of flying off to the notch.
+    @MainActor
+    func testWithoutALandingFrameTheDropDoesNotAnimateAway() async throws {
+        let files = try DropFiles()
+        defer { files.remove() }
+        let sender = DraggingFixture(urls: [files.first])
+        defer { sender.releasePasteboard() }
+        sender.animatesToDestination = true
+        let initialFrames = sender.items.map(\.draggingFrame)
+        let view = FileDropHostingView(rootView: EmptyView())
+        view.acceptFiles = { _ in true }
+        view.reducesMotion = { false }
+        XCTAssertEqual(view.draggingEntered(sender), .copy)
+        XCTAssertTrue(view.prepareForDragOperation(sender))
+        XCTAssertFalse(sender.animatesToDestination)
+        XCTAssertTrue(view.performDragOperation(sender))
+        XCTAssertEqual(sender.enumerationCount, 0)
+        XCTAssertEqual(sender.items.map(\.draggingFrame), initialFrames)
     }
 
     @MainActor
@@ -184,13 +205,14 @@ final class NativeDropTests: XCTestCase {
     }
 
     @MainActor
-    func testInsetTargetsKeepPreviewAcrossDimmedBackgroundAndDeliverChosenHalfOnce() async throws {
+    func testRowsKeepPreviewAcrossDimmedBackgroundAndDeliverChosenRowOnce() async throws {
         let files = try DropFiles()
         defer { files.remove() }
         let sender = DraggingFixture(urls: [files.first])
         defer { sender.releasePasteboard() }
         let presentation = expandedPresentation()
-        let layout = FileDropLayout(size: presentation.size, headerHeight: presentation.bandHeight)
+        let targets: [FileDropDestination] = [.session("current"), .newSession]
+        let layout = FileDropLayout(size: presentation.size, headerHeight: presentation.bandHeight, rows: targets.count)
         let view = FileDropHostingView(rootView: EmptyView())
         view.frame = CGRect(origin: .zero, size: presentation.size)
         view.acceptsDragPoint = presentation.contains
@@ -199,7 +221,7 @@ final class NativeDropTests: XCTestCase {
         var delivered: [FileDropDestination] = []
         view.dragPresenceChanged = { presence.append($0) }
         view.dragLocationChanged = { point, _ in
-            selected = point.flatMap { layout.destination(at: $0, hasCurrentSession: true) }
+            selected = point.flatMap(layout.row(at:)).map { targets[$0] }
         }
         view.acceptsDropPoint = { _ in selected != nil }
         view.acceptFiles = { _ in
@@ -212,20 +234,21 @@ final class NativeDropTests: XCTestCase {
         XCTAssertEqual(presence, [true], "The dimmed header keeps the chooser open but does not accept a drop.")
         XCTAssertNil(selected)
         XCTAssertFalse(view.prepareForDragOperation(sender))
-        let first = layout.frame(for: .currentSession)
+        let first = layout.frame(row: 0)
         sender.draggingLocation = windowPoint(CGPoint(x: first.midX, y: first.maxY - 1), in: view)
         XCTAssertEqual(view.draggingUpdated(sender), .copy)
-        XCTAssertEqual(selected, .currentSession)
+        XCTAssertEqual(selected, .session("current"))
         sender.draggingLocation = windowPoint(CGPoint(x: 4, y: first.midY), in: view)
         XCTAssertEqual(view.draggingUpdated(sender), [])
         XCTAssertNil(selected)
         XCTAssertEqual(presence, [true], "Crossing a dimmed margin must keep the preview open.")
-        sender.draggingLocation = windowPoint(CGPoint(x: first.maxX, y: first.midY), in: view)
+        sender.draggingLocation = windowPoint(CGPoint(x: first.midX, y: first.maxY), in: view)
         XCTAssertEqual(view.draggingUpdated(sender), .copy)
         XCTAssertEqual(selected, .newSession)
-        XCTAssertEqual(presence, [true], "Crossing the divider must not close or reset the chooser.")
-        let second = layout.frame(for: .newSession)
-        sender.draggingLocation = windowPoint(CGPoint(x: second.maxX - 1, y: second.minY + 1), in: view)
+        XCTAssertEqual(presence, [true], "Crossing from one row to the next must not close or reset the chooser.")
+        let second = layout.frame(row: 1)
+        let tray = layout.trayFrame
+        sender.draggingLocation = windowPoint(CGPoint(x: tray.maxX - 1, y: tray.maxY - 1), in: view)
         XCTAssertEqual(view.draggingUpdated(sender), [], "The tray's rounded corner is not a drop target.")
         sender.draggingLocation = windowPoint(CGPoint(x: second.midX, y: second.midY), in: view)
         // The drop itself refreshes the final location even without draggingUpdated.
@@ -249,7 +272,7 @@ final class NativeDropTests: XCTestCase {
         var point: CGPoint?
         view.dragLocationChanged = { point = $0; _ = $1 }
         view.acceptFiles = { _ in false }
-        view.mouthPosition = { .zero }
+        view.landingFrame = { .zero }
         XCTAssertEqual(view.draggingEntered(sender), .copy)
         XCTAssertNotNil(point)
         view.draggingExited(sender)

@@ -133,7 +133,7 @@ flutter on alone, which sounds like a gated snare.
 | --- | --- | --- | --- | --- |
 | Expand | Hover, click, or shortcut opens the notch | Soft tick, rising bloop, small glint | 0.420 s | -12.77 dBFS |
 | Collapse | Pointer departure, click, Escape, or shortcut closes it | One pure tone falling a fifth (B4→E4) with a gentle 10 ms start, ringing out on its own; no impact | 0.650 s | -16.59 dBFS |
-| Attach | File accepted (drop or picker) | Two crunchy bites on the chomp frames (0 s, 0.24 s), a gulp, sparkle with the smile | 0.850 s | -7.13 dBFS |
+| Attach | File accepted (drop, picker or SnapShot) | A soft paper swish settling downward as the file glides into the composer, a muted tap as its chip lands (0.15 s), then a quiet rising C6→G6 glint with the eyes' smile | 0.620 s | -10.46 dBFS |
 | Send | Prompt submitted; approval/question answered | Rising air sweep, bright pluck | 0.380 s | -12.77 dBFS |
 | Complete | A session finishes | Struck rising fifth (E5→B5) with shimmer | 1.000 s | -11.06 dBFS |
 | Attention | Approval or question arrives | Curious pair bending upward with the eyes' hop | 0.600 s | -13.15 dBFS |

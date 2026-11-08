@@ -37,11 +37,53 @@ struct ModelControlsView: View {
             let modes = session.capabilities.supportedPermissionModes
             let theme = PanelTheme.current
             // The label never collapses to "…": Runtime default and a name of a dozen characters or fewer
-            // stay whole; a longer name truncates first but keeps about a dozen before the folder gives way.
+            // stay whole; a longer name truncates but keeps about a dozen.
             let modelLabel = modelTitle ?? "Runtime default"
             let shortModel = modelTitle == nil || modelLabel.count <= 12
-            // Model, permissions, context: the trailing group of the composer's bar.
+            // The row under the composer's field: permissions at the left, model and context at the right.
             HStack(spacing: 4) {
+                if model.showPermissionModes && !modes.isEmpty {
+                    Button {
+                        choosingPermissions.toggle()
+                        choosingModel = false; showingContext = false
+                    } label: {
+                        // In a tight row the mode keeps its glyph; its name stays in help and VoiceOver.
+                        let glyph = Image(systemName: session.permissionMode?.symbol ?? "shield")
+                        Group {
+                            switch theme {
+                            case .refined:
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 5) { glyph; Text(permissionTitle).lineLimit(1) }
+                                    glyph
+                                }
+                            case .tahoe:
+                                // The glyph takes the label's color explicitly; inherited, Full access drew it white.
+                                let tinted = glyph.symbolRenderingMode(.monochrome)
+                                    .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 5) { tinted; Text(permissionTitle).lineLimit(1) }
+                                    tinted
+                                }
+                            case .instrument:
+                                let small = glyph.font(.system(size: 10))
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 6) { small; Text(permissionTitle).lineLimit(1) }
+                                    small
+                                }
+                            }
+                        }
+                        .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
+                    }
+                    .sessionControlStyle()
+                    .disabled(!model.canChangePermissionMode(session.id))
+                    .help(model.canChangePermissionMode(session.id)
+                          ? "Permissions for your next message: \(permissionTitle)"
+                          : "Wait for this session and its delegated work to finish.")
+                    .accessibilityLabel("Permission mode")
+                    .accessibilityValue(permissionTitle)
+                    .background(PopupDismissalRegion(monitor: popupDismissal))
+                }
+                Spacer(minLength: 8)
                 if model.showModelPicker {
                     Button {
                         choosingModel.toggle()
@@ -83,51 +125,8 @@ struct ModelControlsView: View {
                     .help(session.isLegacyPrivate ? "Model selection is unavailable for Legacy Hermes."
                           : session.isBusy ? "Wait for this session and its delegated work to finish."
                           : "Choose the model for your next message in this conversation")
-                    // The first to truncate when the bar is tight.
+                    // The first to truncate when the row is tight.
                     .layoutPriority(-1)
-                }
-                if model.showPermissionModes && !modes.isEmpty {
-                    Button {
-                        choosingPermissions.toggle()
-                        choosingModel = false; showingContext = false
-                    } label: {
-                        // In a tight bar the mode keeps its glyph; its name stays in help and VoiceOver.
-                        let glyph = Image(systemName: session.permissionMode?.symbol ?? "shield")
-                        Group {
-                            switch theme {
-                            case .refined:
-                                ViewThatFits(in: .horizontal) {
-                                    HStack(spacing: 5) { glyph; Text(permissionTitle).lineLimit(1) }
-                                    glyph
-                                }
-                            case .tahoe:
-                                // The glyph takes the label's color explicitly; inherited, Full access drew it white.
-                                let tinted = glyph.symbolRenderingMode(.monochrome)
-                                    .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
-                                ViewThatFits(in: .horizontal) {
-                                    HStack(spacing: 5) { tinted; Text(permissionTitle).lineLimit(1) }
-                                    tinted
-                                }
-                            case .instrument:
-                                let small = glyph.font(.system(size: 10))
-                                ViewThatFits(in: .horizontal) {
-                                    HStack(spacing: 6) { small; Text(permissionTitle).lineLimit(1) }
-                                    small
-                                }
-                            }
-                        }
-                        .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
-                    }
-                    .sessionControlStyle()
-                    // Gives way with the model, after the folder; the gauge and Send never do.
-                    .layoutPriority(-1)
-                    .disabled(!model.canChangePermissionMode(session.id))
-                    .help(model.canChangePermissionMode(session.id)
-                          ? "Permissions for your next message: \(permissionTitle)"
-                          : "Wait for this session and its delegated work to finish.")
-                    .accessibilityLabel("Permission mode")
-                    .accessibilityValue(permissionTitle)
-                    .background(PopupDismissalRegion(monitor: popupDismissal))
                 }
                 if model.showContextUsage {
                     let toggle = {
@@ -229,8 +228,8 @@ struct ModelControlsView: View {
                         .offset(y: -30)
                 }
             }
-            // Anchored at the trailing edge like the others, so it stays inside the panel.
-            .overlay(alignment: .bottomTrailing) {
+            // Anchored at the leading edge, above its control.
+            .overlay(alignment: .bottomLeading) {
                 if choosingPermissions && model.showPermissionModes {
                     permissionChoices(session: session, modes: modes)
                         .frame(width: PanelTheme.pick(320, 320, 364))

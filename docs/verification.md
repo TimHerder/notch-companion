@@ -76,7 +76,12 @@ private development hasn't been re-run against this source snapshot. Known limit
 - The island update, stage, "Worked for" fold, context bubble and session list
   are covered by offscreen fixtures in all three designs. No physical-notch,
   live-hover or VoiceOver acceptance has been done for them.
-- The panel header and one-bar composer, Changes open by default, snooze, queued
+- The composer's settings row under the field, the draft's centred harness and
+  folder choosers and the file drop list (current, recent and New session) are
+  covered by offline tests and offscreen fixtures in all three designs. Not yet
+  checked live: a physical drag across the rows, the drag image gliding into the
+  attach button, the chip's spring and the new attach sound on speakers.
+- The panel header, Changes open by default, snooze, queued
   Edit/Steer, the Plan ready row, agent logos and the quieter Instrument design
   are covered by offline tests and offscreen fixtures in all three designs. Not
   yet checked live: hover and pressed states of Instrument's white keys, the

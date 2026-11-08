@@ -24,10 +24,6 @@ struct ConversationHistoryView: View {
         VStack(spacing: 0) {
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: PanelTheme.pick(16, 18, 19)) {
-                    if items.isEmpty {
-                        let needsSetup = session.map { model.canChangeRuntime($0.id) } == true && model.readyRuntimes.isEmpty
-                        emptyState(needsSetup: needsSetup)
-                    }
                     ForEach(items) { item in
                         switch item {
                         case .message(let message) where message.delegationSummary != nil:
@@ -117,6 +113,10 @@ struct ConversationHistoryView: View {
             .overlay(alignment: .bottomTrailing) {
                 if !scrolling.followsLatest { jumpToLatest }
             }
+            // A new draft chooses its harness and folder in the middle of its empty conversation.
+            .overlay {
+                if items.isEmpty, let session, model.canChangeRuntime(session.id) { emptyDraft(session) }
+            }
         }
         .onChange(of: revision) { old, new in
             if old.sessionID != new.sessionID { scrolling.resetForSession() }
@@ -136,42 +136,22 @@ struct ConversationHistoryView: View {
         }
     }
 
-    @ViewBuilder private func emptyState(needsSetup: Bool) -> some View {
-        switch PanelTheme.current {
-        case .refined:
-            VStack(alignment: .leading, spacing: 8) {
-                Text(needsSetup ? "Connect a harness to get started." : "Ready when you are.").font(CompanionStyle.display)
-                Text(needsSetup ? "Set up your preferred harness in Settings. Your draft and files stay here." : "A question, a project, a little rabbit hole.")
-                    .font(CompanionStyle.body).foregroundStyle(CompanionStyle.secondary)
-                Label("Drop a file onto the notch to attach it.", systemImage: "doc.badge.plus")
-                    .font(CompanionStyle.callout).foregroundStyle(CompanionStyle.tertiary).padding(.top, 16)
-            }.padding(.vertical, 32).frame(maxWidth: .infinity, alignment: .leading)
-        case .tahoe:
-            // A native empty state: a quiet symbol, a title and one line, centred.
-            VStack(spacing: 6) {
-                Image(systemName: needsSetup ? "puzzlepiece.extension" : "bubble.left.and.text.bubble.right")
-                    .font(.system(size: 34, weight: .light)).symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(CompanionStyle.secondary).frame(height: 44).padding(.bottom, 8)
-                    .accessibilityHidden(true)
-                Text(needsSetup ? "Connect a harness to get started." : "Ready when you are.").font(.system(size: 17, weight: .semibold))
-                Text(needsSetup ? "Set up your preferred harness in Settings. Your draft and files stay here." : "A question, a project, a little rabbit hole.").font(.system(size: 13)).foregroundStyle(CompanionStyle.secondary)
-                Label("Drop a file onto the notch to attach it.", systemImage: "doc.badge.plus")
-                    .font(.system(size: 12)).foregroundStyle(CompanionStyle.secondary).padding(.top, 14)
+    /// Without a configured harness it says how to start; otherwise only the choosers.
+    private func emptyDraft(_ session: CompanionSession) -> some View {
+        VStack(spacing: 14) {
+            if model.readyRuntimes.isEmpty {
+                VStack(spacing: 6) {
+                    Text("Connect a harness to get started.")
+                        .font(CompanionStyle.title)
+                    Text("Your draft and files stay here.")
+                        .font(CompanionStyle.callout).foregroundStyle(CompanionStyle.secondary)
+                }
+                .multilineTextAlignment(.center)
             }
-            .multilineTextAlignment(.center)
-            .padding(.top, 84).padding(.horizontal, 30).frame(maxWidth: .infinity)
-        case .instrument:
-            VStack(alignment: .leading, spacing: 10) {
-                RuleLabel(needsSetup ? "No harness" : "Standby · \(session?.runtime.title ?? model.defaultRuntime.title)",
-                          color: needsSetup ? CompanionStyle.amber : CompanionStyle.secondary)
-                    .padding(.bottom, 8)
-                Text(needsSetup ? "Connect a harness to get started." : "Ready when you are.")
-                    .font(.system(size: 24, weight: .semibold)).tracking(-0.5)
-                Text(needsSetup ? "Set up your preferred harness in Settings. Your draft and files stay here." : "A question, a project, a little rabbit hole.").font(.system(size: 13)).foregroundStyle(CompanionStyle.secondary)
-                Label("Drop a file onto the notch to attach it.", systemImage: "arrow.down.to.line")
-                    .font(.system(size: 11.5)).foregroundStyle(CompanionStyle.faint).padding(.top, 14)
-            }.padding(.top, 26).padding(.bottom, 32).frame(maxWidth: .infinity, alignment: .leading)
+            DraftDestinationView(model: model, session: session)
         }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder private var jumpToLatest: some View {

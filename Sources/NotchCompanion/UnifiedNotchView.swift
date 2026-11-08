@@ -4,6 +4,8 @@ import SwiftUI
 /// One surface, one outline, one presentation. The transcript never scales or
 /// runs a second reveal animation; the changing native window clips its layout.
 struct UnifiedNotchView: View {
+    /// Whole-notch coordinates, the drop chooser's and the native host's.
+    static let coordinateSpace = "notch-surface"
     @ObservedObject var model: AppModel
     @AppStorage(NotchBodyStyle.key) private var bodyStyle = NotchBodyStyle.smoked
 
@@ -42,6 +44,7 @@ struct UnifiedNotchView: View {
                     .panelThemed()
                     .frame(width: bodyWidth, height: bodyHeight)
                     .blur(radius: choosingFiles ? 3 : contentBlur)
+                    .animation(model.reducedMotion ? nil : .easeOut(duration: 0.18), value: choosingFiles)
                     .opacity(contentOpacity)
                     .allowsHitTesting(interactive && !choosingFiles)
                     .accessibilityHidden(!interactive || choosingFiles)
@@ -68,6 +71,7 @@ struct UnifiedNotchView: View {
             }
         }
         .frame(width: size.width, height: size.height, alignment: .top)
+        .coordinateSpace(.named(Self.coordinateSpace))
         .overlay {
             // A faint rim defines the open island against dark wallpapers;
             // it begins below the notch height so the band still merges.
@@ -119,15 +123,19 @@ struct UnifiedNotchView: View {
                         .opacity(contentOpacity)
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
+                        .transition(.opacity)
+                    // Sized and laid out like its hit-testing: the settled expanded panel.
                     FileDropChoiceView(model: model)
                         .panelThemed()
-                        .frame(width: bodyWidth, height: model.geometry?.expandedFrame.height ?? 544)
                         .opacity(contentOpacity)
                         .allowsHitTesting(false)
                         .accessibilityHidden(!interactive)
+                        // Dropped, the list dissolves as the file glides into the composer.
+                        .transition(model.reducedMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
                 }
             }
             .animation(model.reducedMotion ? nil : .spring(response: 0.42, dampingFraction: 0.8), value: model.panelToast?.id)
+            .animation(model.reducedMotion ? nil : .easeOut(duration: 0.18), value: choosingFiles)
             .frame(width: size.width, height: size.height, alignment: .top)
             .clipShape(silhouette)
         }

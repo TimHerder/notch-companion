@@ -1,8 +1,9 @@
 import SwiftUI
 import AppKit
 
-/// Where a message goes, in the composer's bar: a draft's harness, the folder
-/// and, on secondary pages, the session.
+/// Where a message goes, in the composer's bar: a started session's harness
+/// and folder and, on secondary pages, the session. A draft chooses its
+/// harness and folder in its empty conversation instead.
 struct ComposerDestinationView: View {
     @ObservedObject var model: AppModel
     var showsTitle = false
@@ -10,9 +11,9 @@ struct ComposerDestinationView: View {
     var body: some View {
         HStack(spacing: PanelTheme.pick(2, 6, 6)) {
             sessionControls
-            WorkspaceButton(model: model)
+            if model.current.map({ !model.canChangeRuntime($0.id) }) == true { WorkspaceButton(model: model) }
             if showsTitle, model.current?.isLegacyPrivate != true {
-                // After the model label, the session's name gives way before the harness and folder.
+                // The session's name gives way before the harness and folder.
                 destinationTitle(model.current?.title ?? "New session").layoutPriority(-1)
             }
         }
@@ -42,7 +43,7 @@ struct ComposerDestinationView: View {
     }
 
     @ViewBuilder private var sessionControls: some View {
-        if let session = model.current {
+        if let session = model.current, !model.canChangeRuntime(session.id) {
             SessionRuntimeControl(model: model, session: session)
             if session.isLegacyPrivate {
                 ContinueLegacySessionButton(model: model, session: session)
@@ -71,10 +72,28 @@ private struct DestinationLabelStyle: LabelStyle {
 }
 
 private extension View {
-    /// Refined's quiet toolbar control; the other designs' small pill.
-    @ViewBuilder func destinationButtonStyle() -> some View {
-        if PanelTheme.current == .refined { buttonStyle(NotchToolbarButtonStyle()) }
+    /// Refined's quiet toolbar control and the other designs' small pill in the
+    /// bar; a full pill in a draft's empty conversation.
+    @ViewBuilder func destinationButtonStyle(inDraft: Bool = false) -> some View {
+        if inDraft { buttonStyle(NotchPillButtonStyle(height: PanelTheme.pick(30, 30, 28))) }
+        else if PanelTheme.current == .refined { buttonStyle(NotchToolbarButtonStyle()) }
         else { buttonStyle(NotchPillButtonStyle(small: true)) }
+    }
+}
+
+/// A new draft's harness and working folder, side by side in the middle of
+/// its empty conversation, where it is clear they apply before the first message.
+struct DraftDestinationView: View {
+    @ObservedObject var model: AppModel
+    var session: CompanionSession
+    var choosingRuntime = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // Above its neighbour, so the open harness menu covers the folder button.
+            SessionRuntimeControl(model: model, session: session, choosingRuntime: choosingRuntime).zIndex(1)
+            WorkspaceButton(model: model, inDraft: true)
+        }
     }
 }
 
@@ -82,6 +101,8 @@ private extension View {
 /// by its native session, so the same button shows it in Finder.
 private struct WorkspaceButton: View {
     @ObservedObject var model: AppModel
+    /// In a draft's empty conversation: a pill, with room for a longer name.
+    var inDraft = false
 
     var body: some View {
         let path = model.currentWorkspacePath
@@ -91,8 +112,8 @@ private struct WorkspaceButton: View {
             else { model.openExternally(URL(fileURLWithPath: path, isDirectory: true)) }
         } label: {
             HStack(spacing: 5) {
-                if PanelTheme.current == .refined {
-                    Image(systemName: "folder").imageScale(.small)
+                if PanelTheme.current == .refined || inDraft {
+                    Image(systemName: PanelTheme.current == .tahoe ? "folder.fill" : "folder").imageScale(.small)
                     Text(URL(fileURLWithPath: path).lastPathComponent).lineLimit(1).truncationMode(.middle)
                 } else {
                     Label(URL(fileURLWithPath: path).lastPathComponent,
@@ -101,9 +122,9 @@ private struct WorkspaceButton: View {
                 if choosing { Image(systemName: "chevron.up.chevron.down").font(.system(size: 7.5, weight: .semibold)) }
             }
         }
-        // A long folder name stops at 150 points, so the model, the gauge and Send keep their room.
-        .modifier(WidthCap(limit: 150))
-        .destinationButtonStyle()
+        // A long folder name stops at 150 points in the bar, so Send keeps its room.
+        .modifier(WidthCap(limit: inDraft ? 220 : 150))
+        .destinationButtonStyle(inDraft: inDraft)
         .help(choosing ? "Choose this session’s working folder · \(path)" : "Show this session’s working folder in Finder · \(path)")
         .accessibilityLabel(choosing ? "Working folder, \(path)" : "Show this session’s working folder in Finder, \(path)")
         .accessibilityHint(choosing ? "Choose another folder for this new session" : "")
@@ -127,8 +148,10 @@ private struct CappedWidthLayout: Layout {
     }
 }
 
-/// Runtime choice belongs to a draft. A saved conversation always keeps its
-/// native identity, so changing the default cannot move it between agents.
+/// Runtime choice belongs to a draft, in its empty conversation; a started
+/// session shows a plain label in the composer's bar. A saved conversation
+/// always keeps its native identity, so changing the default cannot move it
+/// between agents.
 struct SessionRuntimeControl: View {
     @ObservedObject var model: AppModel
     var session: CompanionSession
@@ -145,23 +168,28 @@ struct SessionRuntimeControl: View {
         if model.canChangeRuntime(session.id) {
             if model.readyRuntimes.isEmpty {
                 Button("Connect a harness in Settings") { model.page = .settings }
-                    .destinationButtonStyle()
+                    .destinationButtonStyle(inDraft: true)
             } else {
+                let ready = model.readyRuntimes.contains(session.runtime)
                 Button { choosingRuntime.toggle() } label: {
-                    HStack(spacing: 5) {
-                        Text(model.readyRuntimes.contains(session.runtime) ? session.runtime.title : "Choose harness").lineLimit(1)
-                        Image(systemName: choosingRuntime ? "chevron.up" : "chevron.down")
+                    HStack(spacing: 6) {
+                        // VoiceOver reads only the name.
+                        if ready { AgentLogo(runtime: session.runtime, size: PanelTheme.current == .instrument ? 14 : 16) }
+                        Text(ready ? session.runtime.title : "Choose harness").lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
                             .font(PanelTheme.current == .instrument ? .system(size: 7.5, weight: .bold) : .system(size: 8, weight: .semibold))
                     }
                 }
-                .destinationButtonStyle()
+                .destinationButtonStyle(inDraft: true)
                 .accessibilityLabel("Choose harness for this new session")
                 .accessibilityValue(model.readyRuntimes.contains(session.runtime) ? session.runtime.title : "None selected")
                 .accessibilityHint(choosingRuntime ? "Close harness choices" : "Show configured harnesses")
                 .help("Choose a harness configured in Settings")
                 .background(PopupDismissalRegion(monitor: popupDismissal))
-                .overlay(alignment: .bottomLeading) {
-                    if choosingRuntime { runtimeChoices }
+                // Over its button from the leading edge, as a native pop-up menu opens: the
+                // button leads its centred pair, so the menu stays inside the panel at any width.
+                .overlay(alignment: .leading) {
+                    if choosingRuntime { runtimeChoices.fixedSize() }
                 }
                 .onChange(of: model.currentID) { _, _ in choosingRuntime = false }
                 .onChange(of: model.page) { _, _ in choosingRuntime = false }
@@ -231,7 +259,6 @@ struct SessionRuntimeControl: View {
             .padding(6).frame(width: 220)
             .notchPopover()
             .background(PopupDismissalRegion(monitor: popupDismissal))
-            .offset(y: -36)
         case .tahoe:
             VStack(spacing: 2) {
                 ForEach(model.readyRuntimes) { runtime in
@@ -252,7 +279,6 @@ struct SessionRuntimeControl: View {
             .padding(5).frame(width: 220)
             .notchPopover(cornerRadius: 12)
             .background(PopupDismissalRegion(monitor: popupDismissal))
-            .offset(y: -30)
         case .instrument:
             VStack(spacing: 0) {
                 ForEach(model.readyRuntimes) { runtime in
@@ -273,7 +299,6 @@ struct SessionRuntimeControl: View {
             .padding(5).frame(width: 214)
             .instrumentPopup()
             .background(PopupDismissalRegion(monitor: popupDismissal))
-            .offset(y: -30)
         }
     }
 }

@@ -498,6 +498,9 @@ struct CompactPanelView: View {
         .frame(width: model.geometry?.panelWidth ?? 560, height: model.geometry?.bodyHeight ?? 480, alignment: .top)
         .foregroundStyle(CompanionStyle.text)
         .environment(\.colorScheme, .dark)
+        // A new file settles into the composer with a spring, the transcript giving way with it;
+        // browsing sessions' stored files does not animate.
+        .animation(model.reducedMotion ? nil : .spring(response: 0.36, dampingFraction: 0.8), value: model.attachmentEvent)
         .onChange(of: model.composerFocusRequest) { _, _ in
             if model.expanded { focused = true }
         }

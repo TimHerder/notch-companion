@@ -22,8 +22,8 @@ final class EyeMotionTests: XCTestCase {
                 for reducedMotion in [false, true] {
                     for time in [0.0, 0.1, 0.4, 1.3, 7.9] {
                         let eyes = EyeMotion.expression(mood: mood, previous: previous, sinceMood: time,
-                                                        expanded: false, time: time, feeding: 0,
-                                                        sinceGlance: 0.3, sinceChomp: 100,
+                                                        expanded: false, time: time, receiving: 0,
+                                                        sinceGlance: 0.3, sinceAttach: 100,
                                                         reducedMotion: reducedMotion)
                         XCTAssertEqual(eyes, EyeExpression(), "\(previous) → \(mood) at \(time)")
                     }
@@ -60,17 +60,17 @@ final class EyeMotionTests: XCTestCase {
                            EyeMotion.pose(.working, expanded: true, time: 0, since: 0, reducedMotion: true))
             XCTAssertEqual(EyeMotion.pose(.waiting, expanded: false, time: time, since: time, reducedMotion: true).hop, 0)
         }
-        let chomp = EyeMotion.expression(mood: .ready, previous: .ready, sinceMood: 100, expanded: true, time: 0,
-                                         feeding: 0, sinceGlance: 0.3, sinceChomp: 0.05, reducedMotion: true)
-        XCTAssertEqual(chomp, EyeExpression())
+        let attached = EyeMotion.expression(mood: .ready, previous: .ready, sinceMood: 100, expanded: true, time: 0,
+                                         receiving: 0, sinceGlance: 0.3, sinceAttach: 0.05, reducedMotion: true)
+        XCTAssertEqual(attached, EyeExpression())
     }
 
     func testMoodChangesBlendFromThePreviousPose() {
         let start = EyeMotion.expression(mood: .failed, previous: .ready, sinceMood: 0, expanded: false, time: 0,
-                                         feeding: 0, sinceGlance: 100, sinceChomp: 100, reducedMotion: false)
+                                         receiving: 0, sinceGlance: 100, sinceAttach: 100, reducedMotion: false)
         XCTAssertEqual(start, EyeExpression())
         let settled = EyeMotion.expression(mood: .failed, previous: .ready, sinceMood: 1, expanded: false, time: 0,
-                                           feeding: 0, sinceGlance: 100, sinceChomp: 100, reducedMotion: false)
+                                           receiving: 0, sinceGlance: 100, sinceAttach: 100, reducedMotion: false)
         XCTAssertEqual(settled.tilt, -16)
         XCTAssertEqual(settled.pointer, 0)
     }
@@ -78,7 +78,7 @@ final class EyeMotionTests: XCTestCase {
     func testNoddingOffDroopsFluttersThenSettlesIntoTheDoze() {
         func eyes(_ since: TimeInterval, reduced: Bool = false) -> EyeExpression {
             EyeMotion.expression(mood: .sleeping, previous: .ready, sinceMood: since, expanded: false, time: 0,
-                                 feeding: 0, sinceGlance: 100, sinceChomp: 100, reducedMotion: reduced)
+                                 receiving: 0, sinceGlance: 100, sinceAttach: 100, reducedMotion: reduced)
         }
         XCTAssertEqual(eyes(0), EyeExpression())
         XCTAssertEqual(eyes(0.55).height, 0.42, accuracy: 0.01)
@@ -91,7 +91,7 @@ final class EyeMotionTests: XCTestCase {
     func testWakingStartlesWideThenSettles() {
         func eyes(_ since: TimeInterval) -> EyeExpression {
             EyeMotion.expression(mood: .ready, previous: .sleeping, sinceMood: since, expanded: false, time: 0,
-                                 feeding: 0, sinceGlance: 100, sinceChomp: 100, reducedMotion: false)
+                                 receiving: 0, sinceGlance: 100, sinceAttach: 100, reducedMotion: false)
         }
         XCTAssertGreaterThan(eyes(0.2).height, 1.2)
         XCTAssertGreaterThan(eyes(0.2).hop, 0.9)
@@ -115,21 +115,23 @@ final class EyeMotionTests: XCTestCase {
         }
     }
 
-    func testFeedingWidensThenDropChompsAndSmiles() {
-        func eyes(_ sinceChomp: TimeInterval) -> EyeExpression {
+    func testApproachingFileWidensThenAcceptedDropLooksDownAndSmiles() {
+        func eyes(_ sinceAttach: TimeInterval) -> EyeExpression {
             EyeMotion.expression(mood: .ready, previous: .ready, sinceMood: 100, expanded: true, time: 0,
-                                 feeding: 1, sinceGlance: 100, sinceChomp: sinceChomp, reducedMotion: false)
+                                 receiving: 1, sinceGlance: 100, sinceAttach: sinceAttach, reducedMotion: false)
         }
-        XCTAssertEqual(eyes(100).height, EyeMotion.feedingPose.height)
-        XCTAssertLessThan(eyes(0.05).height, 0.2)
-        XCTAssertLessThan(eyes(0.3).height, 0.2)
-        XCTAssertEqual(eyes(0.8).smile, 1, accuracy: 0.001)
+        XCTAssertEqual(eyes(100).height, EyeMotion.receivingPose.height)
+        XCTAssertGreaterThan(eyes(0.15).gazeY, 0.8, "follows the file down into the composer")
+        XCTAssertEqual(eyes(0.15).smile, 0)
+        XCTAssertEqual(eyes(0.6).smile, 1, accuracy: 0.001)
+        XCTAssertEqual(eyes(0.6).gazeY, 0)
+        XCTAssertEqual(eyes(EyeMotion.attachDuration), eyes(100), "settles back to the open pose")
     }
 
     func testPokedEyesFlinchThenSmileWithABounceAndSettle() {
         func eyes(_ sincePoke: TimeInterval, reducedMotion: Bool = false) -> EyeExpression {
             EyeMotion.expression(mood: .ready, previous: .ready, sinceMood: 100, expanded: false, time: 0,
-                                 feeding: 0, sinceGlance: 100, sinceChomp: 100, sincePoke: sincePoke,
+                                 receiving: 0, sinceGlance: 100, sinceAttach: 100, sincePoke: sincePoke,
                                  reducedMotion: reducedMotion)
         }
         XCTAssertLessThan(eyes(0.07).height, 0.4, "flinches shut")
