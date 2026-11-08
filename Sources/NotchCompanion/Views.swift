@@ -869,6 +869,27 @@ struct SettingsContent: View {
                     Toggle("Show SnapShot", isOn: $model.showSnapShot).toggleStyle(NotchSwitchStyle())
                         .help("Add a composer button that attaches a picture of the window you were using when the notch opened. Needs Screen Recording permission on first use.")
                 }
+                if Dictation.isAvailable {
+                    SettingsRow("Show dictation", symbol: "mic.fill", tint: .red, divider: true) {
+                        Toggle("Show dictation", isOn: $model.showDictation).toggleStyle(NotchSwitchStyle())
+                            .help("Add a composer button that types what you say into the draft. Speech is transcribed on this Mac; nothing is sent until you press Send.")
+                    }
+                    if ParakeetModel.isSupported {
+                        SettingsRow("Dictation engine", symbol: "waveform", tint: .pink, divider: true) {
+                            NotchSegmentedControl(label: "Dictation engine", options: DictationEngine.allCases, title: \.label,
+                                                  selection: Binding(get: { model.dictationEngine }, set: { engine in
+                                // Choosing Parakeet is the consent its hint asks for: fetch it now.
+                                model.dictationEngine = engine
+                                if engine == .parakeet { ParakeetModel.shared.download() }
+                            }), small: true)
+                            .help("macOS uses the system's dictation models. Parakeet downloads \(ParakeetModel.downloadSize) once and transcribes on this Mac.")
+                        }
+                        ParakeetSettingsView(model: model, parakeet: .shared)
+                    }
+                    if model.dictationEngine == .system {
+                        SettingsRow("Dictation language", symbol: "globe", tint: .blue, divider: true) { DictationLanguageMenu(model: model) }
+                    }
+                }
                 SettingsRow("Show usage", symbol: "chart.bar.fill", tint: .green, divider: true) {
                     Toggle("Show usage", isOn: $model.showUsage).toggleStyle(NotchSwitchStyle())
                         .help("Add a Usage page to Your sessions: account limits your harnesses report and tokens from sessions started here.")
@@ -970,6 +991,13 @@ struct SettingsContent: View {
             }
             SettingsGroup(PanelTheme.pick(nil, "General", "System")) {
                 SettingsRow("Open at login", symbol: "power", tint: .gray) { OpenAtLoginToggle(model: model) }
+                ForEach(ShortcutAction.allCases) { action in
+                    if action == .openPanel || Dictation.isAvailable {
+                        SettingsRow(action.title, symbol: action == .openPanel ? "command" : "mic.badge.plus", tint: .indigo, divider: true) {
+                            ShortcutRecorder(model: model, action: action)
+                        }
+                    }
+                }
                 SettingsRow("Swipe on the notch", symbol: "hand.draw.fill", tint: .blue, divider: true) {
                     Toggle("Swipe on the notch", isOn: $model.swipeGestures).toggleStyle(NotchSwitchStyle())
                         .help("Two-finger swipe down on the notch to open it, and up to close it.")
@@ -1116,6 +1144,157 @@ struct DefaultWorkspaceButton: View {
 
 /// The login item switch, with System Settings one press away when macOS
 /// still needs approval. Shared by Settings and the welcome.
+/// Click, then type the combination. Escape cancels; Delete turns it off.
+/// The model holds which recorder listens, so starting one ends any other and
+/// a window losing the keyboard ends it.
+struct ShortcutRecorder: View {
+    @ObservedObject var model: AppModel
+    var action: ShortcutAction
+    @State private var refusal: String?
+    @State private var monitor: Any?
+
+    var body: some View {
+        let shortcut = model.shortcut(for: action)
+        let recording = model.recordingShortcut == action
+        // Restoring must not take the combination from the other action.
+        let canRestore = shortcut != action.defaultShortcut
+            && !ShortcutAction.allCases.contains { $0 != action && model.shortcut(for: $0) == action.defaultShortcut }
+        HStack(spacing: 6) {
+            if !recording, model.unavailableShortcuts.contains(action) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(CompanionStyle.amber)
+                    .help("Another app already uses this shortcut. Record a different one.")
+                    .accessibilityLabel("Unavailable: another app uses this shortcut")
+            }
+            Button(recording ? refusal ?? "Type shortcut…" : shortcut?.display ?? "Off") { recording ? stop() : record() }
+                .buttonStyle(NotchPillButtonStyle(small: true, selected: recording))
+                .help(recording ? "Press the new shortcut; Escape cancels, Delete turns it off" : "Click, then press the new shortcut")
+                .accessibilityLabel("\(action.title) shortcut, \(shortcut?.spoken ?? "off")")
+            if !recording, canRestore {
+                QuietIconButton(symbol: "arrow.counterclockwise", label: "Restore \(action.defaultShortcut.display)", size: 22) {
+                    model.setShortcut(action.defaultShortcut, for: action)
+                }
+            }
+        }
+        .onChange(of: model.recordingShortcut) { _, now in if now != action { removeMonitor() } }
+        .onDisappear { stop() }
+    }
+
+    private func record() {
+        refusal = nil
+        model.recordingShortcut = action
+        removeMonitor()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Ownership, not the monitor's later removal, decides who records.
+            let owns = MainActor.assumeIsolated {
+                guard model.recordingShortcut == action else { return false }
+                receive(event)
+                return true
+            }
+            return owns ? nil : event
+        }
+    }
+
+    private func receive(_ event: NSEvent) {
+        switch ShortcutRecording.decide(event, for: action, current: model.shortcut(for:)) {
+        case .cancel: stop()
+        case .clear: model.setShortcut(nil, for: action); stop()
+        case .set(let shortcut): model.setShortcut(shortcut, for: action); stop()
+        case .refuse(let reason): refusal = reason
+        }
+    }
+
+    private func stop() {
+        removeMonitor()
+        if model.recordingShortcut == action { model.recordingShortcut = nil }
+    }
+
+    private func removeMonitor() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        refusal = nil
+    }
+}
+
+/// Under the engine switch: why one might choose Parakeet, what it costs, and
+/// its download. Deleting stays available after switching back to macOS.
+struct ParakeetSettingsView: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var parakeet: ParakeetModel
+
+    var body: some View {
+        let chosen = model.dictationEngine == .parakeet
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Parakeet is more accurate for technical terms and detects the language you speak (25 European languages). It downloads \(ParakeetModel.downloadSize) once from Hugging Face; your speech stays on this Mac.")
+                .fixedSize(horizontal: false, vertical: true)
+            if let error = parakeet.deleteError {
+                Text(error).foregroundStyle(CompanionStyle.amber).fixedSize(horizontal: false, vertical: true)
+            }
+            if chosen || parakeet.state != .missing || parakeet.hasFiles {
+                HStack(spacing: 8) {
+                    switch parakeet.state {
+                    case .downloading(let fraction):
+                        ProgressView(value: fraction).progressViewStyle(.linear).frame(maxWidth: 140)
+                            .accessibilityLabel("Downloading Parakeet")
+                        Text("\(Int((fraction * 100).rounded()))%").monospacedDigit()
+                    case .failed(let message):
+                        Text(message).foregroundStyle(CompanionStyle.amber).fixedSize(horizontal: false, vertical: true)
+                    default:
+                        Text(parakeet.status)
+                    }
+                    Spacer(minLength: 0)
+                    switch parakeet.state {
+                    case .missing: Button("Download") { parakeet.download() }.buttonStyle(NotchPillButtonStyle(small: true))
+                    case .failed: Button("Try again") { parakeet.retry() }.buttonStyle(NotchPillButtonStyle(small: true))
+                    case .downloading, .preparing, .ready: EmptyView()
+                    }
+                    // Also after a failure, so a model that will not load, or a half-deleted one, can be removed.
+                    if parakeet.state != .preparing, !parakeet.isBusy, parakeet.hasFiles {
+                        Button("Delete") { Task { await parakeet.delete() } }
+                            .buttonStyle(NotchPillButtonStyle(small: true))
+                            .disabled(parakeet.inUse)
+                            .help(parakeet.inUse ? "Parakeet is transcribing; stop dictation first."
+                                  : "Remove the downloaded Parakeet model (\(ParakeetModel.downloadSize)).")
+                    }
+                }
+            }
+        }
+        .font(PanelTheme.pick(CompanionStyle.caption, .system(size: 10.5), .system(size: 11)))
+        .foregroundStyle(PanelTheme.current == .refined ? CompanionStyle.tertiary : CompanionStyle.secondary)
+        // Full width, or a short hint is centred instead of starting at the labels.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, PanelTheme.pick(14, 12, 12)).padding(.bottom, 10)
+        .help("NVIDIA Parakeet TDT 0.6B v3 (CC BY 4.0), run with FluidAudio on the Neural Engine.")
+    }
+}
+
+/// The language dictation listens for: the system's, or one macOS can transcribe.
+struct DictationLanguageMenu: View {
+    @ObservedObject var model: AppModel
+    @State private var locales: [(id: String, name: String)] = []
+
+    var body: some View {
+        Menu {
+            Picker("Dictation language", selection: $model.dictationLanguage) {
+                Text("System (\(Dictation.name(of: .current)))").tag(String?.none)
+                Divider()
+                ForEach(locales, id: \.id) { Text($0.name).tag(Optional($0.id)) }
+            }
+            .pickerStyle(.inline).labelsHidden()
+        } label: {
+            HStack(spacing: 5) {
+                Text(model.dictationLanguage.map { Dictation.name(of: Locale(identifier: $0)) } ?? "System").lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(CompanionStyle.faint)
+            }
+        }
+        .menuStyle(.button).menuIndicator(.hidden).buttonStyle(NotchPillButtonStyle(small: true)).fixedSize()
+        .help("macOS transcribes on this Mac and downloads a language's model the first time you dictate in it.")
+        .task {
+            locales = await Dictation.languages()
+        }
+    }
+}
+
 struct OpenAtLoginToggle: View {
     @ObservedObject var model: AppModel
     @State private var opensAtLogin = LoginItem.isEnabled

@@ -36,6 +36,17 @@ change the Hermes installation. A rebuild doesn't update the running copy:
 quitting stops owned runtimes, so first verify every app-owned session and
 delegated child is idle.
 
+The package's one dependency, [FluidAudio](https://github.com/FluidInference/FluidAudio)
+(Apache-2.0), is pinned to an exact version in `Package.swift` and
+`Package.resolved` and runs Parakeet dictation. It is included with no package
+traits, so its text-to-speech, diarization and prebuilt NeMo text-normalization
+binary stay out of the app; SwiftPM still fetches that binary's archive while
+resolving. Traits need tools 6.2, so the manifest declares it and keeps the
+app's targets in the Swift 5 language mode. `Resources/ThirdPartyNotices.txt`
+carries FluidAudio's license and the Parakeet model's CC BY 4.0 attribution;
+the model itself is never bundled. The UI fixture renderer links FluidAudio
+from the package build's products.
+
 `LSUIElement` keeps the companion out of the Dock. Bundled resources include
 the original interaction sounds, app icon, the app's bridge resources and the
 agents' unmodified SVG marks (`Resources/AgentLogos/<runtime>.svg`, flattened

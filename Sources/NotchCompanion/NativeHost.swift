@@ -12,9 +12,8 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
     private var pointerTimer: Timer?
     private var eventMonitors: [Any] = []
     private var notificationTokens: [(NotificationCenter, NSObjectProtocol)] = []
-    private var hotKey: CompanionHotKey?
+    private var hotKeys: CompanionHotKeys?
     private var isStopped = false
-    private var shortcutAvailable = true
     private var trackingMenus = Set<ObjectIdentifier>()
     private var interaction = NotchInteraction()
     private var dragSources = Set<String>()
@@ -71,13 +70,41 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         updateAccessibilityPreferences()
         updateGeometry()
         installObservation()
-        hotKey = CompanionHotKey { [weak self] in self?.toggle() }
-        shortcutAvailable = hotKey?.isRegistered == true
-        statusItem?.button?.toolTip = shortcutAvailable
-            ? "Notch Companion · Control–Option–Space"
-            : "Notch Companion · click to open (keyboard shortcut unavailable)"
+        hotKeys = CompanionHotKeys()
+        model.shortcutsChanged = { [weak self] in self?.applyShortcuts() }
+        applyShortcuts()
         notchPanel.orderFrontRegardless()
         playLaunch()
+    }
+
+    /// Registers the chosen shortcuts, none while Settings records a new one.
+    private func applyShortcuts() {
+        guard let hotKeys, !isStopped else { return }
+        var unavailable = Set<ShortcutAction>()
+        // Release every combination first, so swapping two never collides with itself.
+        for action in ShortcutAction.allCases { hotKeys.unregister(action.hotKeyID) }
+        for action in ShortcutAction.allCases {
+            let shortcut = model.recordingShortcut == nil ? activeShortcut(action) : nil
+            let registered = hotKeys.register(action.hotKeyID, shortcut) { [weak self] in self?.perform(action) }
+            if !registered { unavailable.insert(action) }
+        }
+        if model.recordingShortcut == nil { model.unavailableShortcuts = unavailable }
+        let open = model.openShortcut.flatMap { unavailable.contains(.openPanel) ? nil : $0 }
+        statusItem?.button?.toolTip = open.map { "Notch Companion · \($0.spoken)" } ?? "Notch Companion · click to open"
+    }
+
+    /// Without on-device speech the dictation shortcut (and its Settings row) is absent.
+    private func activeShortcut(_ action: ShortcutAction) -> KeyShortcut? {
+        action == .dictate && !Dictation.isAvailable ? nil : model.shortcut(for: action)
+    }
+
+    private func perform(_ action: ShortcutAction) {
+        switch action {
+        case .openPanel: toggle()
+        case .dictate:
+            guard !hasPresentedSheet, trackingMenus.isEmpty else { return }
+            model.dictateNewSession()
+        }
     }
 
     /// A drop pops out of the top edge (or the camera) with the eyes in its
@@ -223,8 +250,9 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         }) { eventMonitors.append(monitor) }
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
             MainActor.assumeIsolated {
+                // The Microphone prompt is another app's window; answering it must not close the notch.
                 guard let self, self.model.expanded || self.model.glancing, !self.hasPresentedSheet,
-                      self.trackingMenus.isEmpty else { return }
+                      self.trackingMenus.isEmpty, !self.model.dictation.awaitingPermission else { return }
                 self.hide()
             }
         }) { eventMonitors.append(monitor) }
@@ -236,9 +264,10 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
                     return false
                 }
                 guard !self.hasPresentedSheet, self.trackingMenus.isEmpty else { return false }
-                let modifiers = event.modifierFlags.intersection([.control, .option, .command, .shift])
-                if event.type == .keyDown, event.keyCode == UInt16(kVK_Space), modifiers == [.control, .option] {
-                    if !event.isARepeat { self.toggle() }
+                // Settings is recording a shortcut and takes every key, Escape included.
+                if event.type == .keyDown && self.model.recordingShortcut != nil { return false }
+                if let action = ShortcutAction.allCases.first(where: { self.activeShortcut($0)?.matches(event) == true }) {
+                    if !event.isARepeat { self.perform(action) }
                     return true
                 }
                 if event.type == .keyDown {
@@ -700,6 +729,8 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         }
         guard model.expanded else { return }
         if playSound { SoundPlayer.shared.play(.collapse) }
+        // The microphone never keeps listening behind a closed notch.
+        if model.dictation.fromNotch { model.dictation.stop() }
         wantsComposerFocus = false
         HoverCursor.reset()
         model.endFileDrop()
@@ -759,6 +790,8 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
     }
 
     func windowDidResignKey(_ notification: Notification) {
+        // A recorder whose window loses the keyboard stops, so it never swallows keys unseen.
+        model.recordingShortcut = nil
         if notification.object as? NSWindow === fullWindow {
             model.setSessionVisibility(fullSessionVisible: false)
         }
@@ -767,6 +800,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if notification.object as? NSWindow === fullWindow {
             model.setSessionVisibility(fullSessionVisible: false)
+            if model.dictation.isActive && !model.dictation.fromNotch { model.dictation.stop() }
         }
     }
 
@@ -820,7 +854,8 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         menu.item(withTag: 101)?.state = SoundPlayer.shared.enabled ? .on : .off
         menu.item(withTag: 102)?.isHidden = model.deferredOperation == nil
         menu.item(withTag: 102)?.title = "Cancel pending \(model.deferredOperation?.title.lowercased() ?? "operation")"
-        menu.items.first?.title = shortcutAvailable ? "Open Notch Companion   ⌃⌥Space" : "Open Notch Companion"
+        let shortcut = model.unavailableShortcuts.contains(.openPanel) ? nil : model.openShortcut
+        menu.items.first?.title = "Open Notch Companion" + (shortcut.map { "   \($0.display)" } ?? "")
     }
 
     @objc private func openFromMenu() { show() }
@@ -963,8 +998,8 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         eventMonitors.removeAll()
         for (center, token) in notificationTokens { center.removeObserver(token) }
         notificationTokens.removeAll()
-        hotKey?.unregister()
-        hotKey = nil
+        hotKeys?.unregisterAll()
+        hotKeys = nil
         notchPanel.orderOut(nil)
         auraPanel.orderOut(nil)
         auraState.effect = nil
@@ -1145,38 +1180,5 @@ final class FileDropHostingView<Content: View>: NSHostingView<Content> {
     override func draggingEnded(_ sender: NSDraggingInfo) {
         dragLocationChanged?(nil, 0)
         updateDragPresence(false)
-    }
-}
-
-/// Registering a chosen shortcut does not require global keyboard monitoring.
-@MainActor
-private final class CompanionHotKey {
-    private var hotKeyRef: EventHotKeyRef?
-    private var handlerRef: EventHandlerRef?
-    private let action: () -> Void
-    var isRegistered: Bool { hotKeyRef != nil }
-
-    init(action: @escaping () -> Void) {
-        self.action = action
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        let context = Unmanaged.passUnretained(self).toOpaque()
-        let handlerStatus = InstallEventHandler(GetApplicationEventTarget(), { _, _, context in
-            guard let context else { return OSStatus(eventNotHandledErr) }
-            let hotKey = Unmanaged<CompanionHotKey>.fromOpaque(context).takeUnretainedValue()
-            MainActor.assumeIsolated { hotKey.action() }
-            return noErr
-        }, 1, &eventType, context, &handlerRef)
-        guard handlerStatus == noErr else { return }
-        let status = RegisterEventHotKey(UInt32(kVK_Space), UInt32(controlKey | optionKey),
-                                         EventHotKeyID(signature: 0x4E434D50, id: 1),
-                                         GetApplicationEventTarget(), OptionBits(kEventHotKeyExclusive), &hotKeyRef)
-        if status != noErr { unregister() }
-    }
-
-    func unregister() {
-        if let hotKeyRef { UnregisterEventHotKey(hotKeyRef) }
-        if let handlerRef { RemoveEventHandler(handlerRef) }
-        hotKeyRef = nil
-        handlerRef = nil
     }
 }

@@ -111,6 +111,29 @@ private development hasn't been re-run against this source snapshot. Known limit
   question card's More button and scroller flash, keyboard shortcuts for queued
   messages, and a snooze waking on a real question or approval.
 
+- Configurable shortcuts and dictation: which keys a recorder accepts, cancels,
+  clears or refuses (including the other action's combination), persistence
+  (including a shortcut turned off) and draft joining are covered by offline
+  tests, and so is dictation waiting for an input method's composition,
+  including Send or a queued Edit replacing it, against the real editor
+  coordinator with simulated marked text. The recorder view's monitor and
+  window handling are not tested, and no physical input method has been tried. The
+  microphone's converter tap feeding macOS's on-device transcriber is covered
+  by an opt-in test (`NOTCH_RUN_DICTATION_TEST=1`) with synthesized speech.
+  Parakeet's download, load and transcription are covered by an opt-in test
+  (`NOTCH_RUN_PARAKEET_TEST=1`, cached in `~/Library/Caches/NotchCompanionTests`)
+  checked on 2026-11-08 on an Apple silicon Mac with macOS 27: the
+  download is 483 MB, and synthesized English and German speech, with no
+  language chosen, came back word for word through the 16 kHz microphone tap.
+  The engine preference and Parakeet's missing and Delete states are covered
+  offline, and the Settings rows by offscreen fixtures in all three designs
+  (`settings-parakeet-560`). Not yet checked live: speaking into a physical
+  microphone, the Microphone permission prompt, a model download started from
+  Settings, a Parakeet preview while speaking, the idle unload, a failed load
+  followed by Try again, or a shortcut another app already holds. FluidAudio
+  is pinned, but it fetches the model from the Hugging Face repository's
+  `main`, so a later upstream change to the weights would reach new downloads.
+
 **Not yet done**
 
 - A downloaded release hasn't been installed through Gatekeeper on another Mac.

@@ -15,7 +15,8 @@ struct ComposerView: View {
     private var runtimeTitle: String { (model.current?.runtime ?? model.defaultRuntime).title }
     private var checksLastSend: Bool { model.current?.pendingSubmission != nil }
     private var canSend: Bool {
-        (checksLastSend || !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        (checksLastSend || !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || model.dictatingSessionID == model.currentID)
             && !model.submitting && model.canAttemptSend && !busy
             && !model.currentDraftNeedsSetup
     }
@@ -96,6 +97,7 @@ struct ComposerView: View {
                 }
             }
             field
+            DictationStatus(model: model, dictation: model.dictation)
             // Session settings sit in their own row under the field: permissions at
             // the left, the model and context gauge at the right.
             if (!isCompact || model.page == .session) && (model.showModelPicker || model.showContextUsage || model.showPermissionModes) {
@@ -227,6 +229,9 @@ struct ComposerView: View {
                 }
                 .disabled(model.snapShotSource == nil)
             }
+            if model.showDictation && Dictation.isAvailable {
+                DictationButton(model: model, dictation: model.dictation, fromNotch: isCompact)
+            }
             ComposerDestinationView(model: model, showsTitle: showsTitle).layoutPriority(1)
             Spacer(minLength: 8)
             if takesDraftWhileBusy {
@@ -280,7 +285,8 @@ struct ComposerView: View {
                                      guard let first = queued.first, model.current?.canSteer(first.attachments ?? []) == true else { return false }
                                      Task { await model.steerQueuedSend(first.id) }
                                      return true
-                                 })
+                                 },
+                                 onComposingChanged: { [id = model.currentID] in if let id { model.setComposing($0, in: id) } })
                 .id(model.currentID)
                 .frame(height: editorHeight)
           }
@@ -324,14 +330,97 @@ struct ComposerView: View {
     private func submit(queue: Bool = false) {
         if model.submitting { submissionNotice = "Sending your message…"; return }
         if model.currentDraftNeedsSetup { submissionNotice = "Connect a harness in Settings before sending."; return }
+        let id = model.currentID
+        if model.dictation.isActive, model.dictation.sessionID == id {
+            // Parakeet writes only when it stops, macOS at each pause: stop, then send the last words too.
+            submissionNotice = "Adding your last words…"
+            model.dictation.stop()
+            Task {
+                await model.dictation.finished()
+                // Final words held by an open input-method composition join when it commits.
+                if let id { await model.dictationDelivered(to: id) }
+                guard model.currentID == id else { return }
+                submissionNotice = nil
+                // A run that ended in a failure may have lost words; leave the draft to review.
+                guard model.dictation.failure == nil else { return }
+                submit(queue: queue)
+            }
+            return
+        }
         if !checksLastSend && model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             submissionNotice = "Add a message before sending."; return
         }
         if !model.canAttemptSend { submissionNotice = "Reconnect to \(runtimeTitle) before sending."; return }
         if busy && !queue && model.current?.canSteer != true { submissionNotice = "Use Command–Return to queue this message."; return }
         submissionNotice = nil
-        let id = model.currentID
         Task { guard model.currentID == id else { return }; await model.send(queue: queue) }
+    }
+}
+
+/// The bar's microphone: listens into this session's draft, and stops any
+/// dictation that is running.
+private struct DictationButton: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var dictation: Dictation
+    var fromNotch: Bool
+
+    var body: some View {
+        let here = dictation.sessionID == model.currentID
+        // Dictation into another session still shows here, so it can be stopped from any composer.
+        let listening = dictation.phase == .listening || (dictation.isActive && !here)
+        Button { model.toggleDictation(fromNotch: fromNotch) } label: {
+            if case .preparing = dictation.phase, here { ProgressView().controlSize(.mini) }
+            else {
+                Image(systemName: listening ? "waveform" : "mic")
+                    .foregroundStyle(listening ? CompanionStyle.error : CompanionStyle.secondary)
+                    .symbolEffect(.variableColor.iterative, isActive: listening && !model.reducedMotion)
+            }
+        }
+        .buttonStyle(NotchIconButtonStyle(size: 28))
+        .disabled(dictation.phase == .finishing || model.current == nil)
+        .help(dictation.isActive ? "Stop dictation" : "Dictate" + (model.dictateShortcut.map { " · \($0.spoken) starts a new session" } ?? ""))
+        .accessibilityLabel(dictation.isActive ? "Stop dictation" : "Dictate")
+    }
+}
+
+/// Under the field while dictating here: what is happening and the words not yet final.
+private struct DictationStatus: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var dictation: Dictation
+
+    var body: some View {
+        if dictation.sessionID == model.currentID, dictation.isActive {
+            HStack(spacing: 6) {
+                Circle().fill(dictation.phase == .listening ? CompanionStyle.error : CompanionStyle.faint).frame(width: 6, height: 6)
+                Text(status).foregroundStyle(CompanionStyle.secondary)
+                if !dictation.volatileText.isEmpty {
+                    Text(dictation.volatileText).foregroundStyle(CompanionStyle.text.opacity(0.75))
+                        .truncationMode(.head)
+                }
+            }
+            .font(.system(size: 11)).lineLimit(1).padding(.horizontal, 14)
+            .accessibilityElement(children: .combine)
+        } else if let failure = dictation.failure {
+            HStack(spacing: 8) {
+                Text(failure).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if dictation.needsMicrophonePermission {
+                    Button("Open Settings") { model.openExternally(Dictation.microphoneSettings) }.buttonStyle(NotchPillButtonStyle(small: true))
+                }
+                QuietIconButton(symbol: "xmark", label: "Dismiss", size: 22) { dictation.failure = nil }
+            }
+            .padding(.horizontal, 14)
+        }
+    }
+
+    private var status: String {
+        switch dictation.phase {
+        case .preparing(let step): step
+        case .listening: dictation.volatileText.isEmpty ? "Listening…" : "Listening:"
+        case .finishing: "Finishing…"
+        case .idle: ""
+        }
     }
 }
 
@@ -349,8 +438,14 @@ struct NativeComposerEditor: NSViewRepresentable {
     /// steers the oldest. Each returns whether it acted.
     var onEditQueued: (() -> Bool)? = nil
     var onSteerQueued: (() -> Bool)? = nil
+    /// An input method's composition began or ended; dictation waits for it.
+    var onComposingChanged: ((Bool) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+        if coordinator.composing { coordinator.parent.onComposingChanged?(false) }
+    }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
@@ -399,7 +494,9 @@ struct NativeComposerEditor: NSViewRepresentable {
             DispatchQueue.main.async { coordinator?.parent.focused.wrappedValue = value }
         }
         editor.onLayoutChanged = { [weak coordinator = context.coordinator] in coordinator?.updateHeight() }
+        editor.onMarkedTextChanged = { [weak coordinator = context.coordinator] in coordinator?.reportComposing() }
         context.coordinator.editor = editor
+        context.coordinator.synced = text
         scroll.documentView = editor
         editor.string = text
         return scroll
@@ -410,13 +507,7 @@ struct NativeComposerEditor: NSViewRepresentable {
         guard let editor = scroll.documentView as? ComposerTextView else { return }
         editor.setAccessibilityLabel(accessibilityLabel)
         editor.setAccessibilityHelp(accessibilityHint)
-        // Do not destroy marked text while an input method is composing.
-        if !editor.hasMarkedText(), editor.string != text {
-            // Text restored into an empty composer (a queued message's Edit) keeps typing after it.
-            let location = editor.string.isEmpty ? (text as NSString).length : min(editor.selectedRange().location, (text as NSString).length)
-            editor.string = text
-            editor.setSelectedRange(NSRange(location: location, length: 0))
-        }
+        context.coordinator.sync(to: text)
         context.coordinator.updateHeight()
         if focused.wrappedValue, editor.window?.firstResponder !== editor {
             DispatchQueue.main.async { [weak editor, weak coordinator = context.coordinator] in
@@ -430,12 +521,51 @@ struct NativeComposerEditor: NSViewRepresentable {
         var parent: NativeComposerEditor
         weak var editor: ComposerTextView?
         private var heightUpdatePending = false
+        /// The draft as the editor last wrote or took it. A draft that differs
+        /// from it was changed on purpose elsewhere (Send, a queued Edit).
+        var synced = ""
+        private(set) var composing = false
+        /// Applying the draft; the editor's own change notifications are echoes.
+        private var applying = false
         init(_ parent: NativeComposerEditor) { self.parent = parent }
 
+        /// Takes a changed draft into the editor. While an input method composes,
+        /// only a deliberate change (not a stale echo of the editor's own text)
+        /// replaces it, and the composition is dropped. Dictation never arrives
+        /// meanwhile: it waits for `onComposingChanged(false)`.
+        func sync(to text: String) {
+            guard let editor, editor.string != text else { return }
+            let discarding = editor.hasMarkedText()
+            if discarding { guard text != synced else { return } }
+            applying = true
+            defer { applying = false }
+            if discarding {
+                editor.inputContext?.discardMarkedText()
+                editor.unmarkText()
+            }
+            // Text restored into an empty composer (a queued message's Edit), or over a
+            // dropped composition, keeps typing after it.
+            let location = editor.string.isEmpty || discarding ? (text as NSString).length
+                : min(editor.selectedRange().location, (text as NSString).length)
+            editor.string = text
+            editor.setSelectedRange(NSRange(location: location, length: 0))
+            synced = text
+            reportComposing()
+        }
+
         func textDidChange(_ notification: Notification) {
-            guard let editor else { return }
+            guard let editor, !applying else { return }
+            synced = editor.string
             parent.text = editor.string
+            reportComposing()
             updateHeight()
+        }
+
+        func reportComposing() {
+            let now = editor?.hasMarkedText() ?? false
+            guard now != composing else { return }
+            composing = now
+            parent.onComposingChanged?(now)
         }
 
         func updateHeight() {
@@ -461,6 +591,8 @@ final class ComposerTextView: NSTextView {
     var onSteerQueued: (() -> Bool)?
     var onFocusChanged: ((Bool) -> Void)?
     var onLayoutChanged: (() -> Void)?
+    /// Marked text changes post no text-change notification of their own.
+    var onMarkedTextChanged: (() -> Void)?
 
     var boundedHeight: CGFloat {
         guard let layoutManager, let textContainer else { return Self.minimumHeight }
@@ -473,6 +605,15 @@ final class ComposerTextView: NSTextView {
     }
 
     override func layout() { super.layout(); onLayoutChanged?() }
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        onMarkedTextChanged?()
+    }
+    override func unmarkText() { super.unmarkText(); onMarkedTextChanged?() }
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        super.insertText(string, replacementRange: replacementRange)
+        onMarkedTextChanged?()
+    }
     override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
         if result { onFocusChanged?(true) }

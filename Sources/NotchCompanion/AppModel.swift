@@ -104,6 +104,33 @@ final class AppModel: ObservableObject {
     @Published var showSnapShot = false {
         didSet { preferences.set(showSnapShot, forKey: "notch.showSnapShot") }
     }
+    /// The composer's microphone button; the dictation shortcut works either way.
+    @Published var showDictation = true {
+        didSet { preferences.set(showDictation, forKey: "notch.showDictation") }
+    }
+    /// A BCP 47 language for dictation; nil follows the system language.
+    @Published var dictationLanguage: String? {
+        didSet { preferences.set(dictationLanguage, forKey: Dictation.languageKey) }
+    }
+    @Published var dictationEngine = DictationEngine.system {
+        didSet { preferences.set(dictationEngine.rawValue, forKey: DictationEngine.key) }
+    }
+    let dictation = Dictation()
+    /// Mirrors `dictation.sessionID`, so the composer can offer Send while words are still coming.
+    @Published private(set) var dictatingSessionID: String?
+    @Published var openShortcut: KeyShortcut? {
+        didSet { ShortcutAction.openPanel.save(openShortcut, preferences); shortcutsChanged?() }
+    }
+    @Published var dictateShortcut: KeyShortcut? {
+        didSet { ShortcutAction.dictate.save(dictateShortcut, preferences); shortcutsChanged?() }
+    }
+    /// The one Settings recorder waiting for keys; no shortcut fires meanwhile.
+    @Published var recordingShortcut: ShortcutAction? { didSet { if oldValue != recordingShortcut { shortcutsChanged?() } } }
+    /// Shortcuts macOS refused because another app holds them.
+    @Published var unavailableShortcuts: Set<ShortcutAction> = []
+    var shortcutsChanged: (() -> Void)?
+    private var composingSessionIDs = Set<String>()
+    @Published private var heldDictation: [String: String] = [:]
     /// The window that was in front when the notch last opened.
     @Published var snapShotSource: SnapShotSource?
     @Published var snapShotNeedsPermission = false
@@ -317,6 +344,12 @@ final class AppModel: ObservableObject {
         showPermissionModes = preferences.bool(forKey: "notch.showPermissionModes")
         showUsage = preferences.bool(forKey: "notch.showUsage")
         showSnapShot = preferences.bool(forKey: "notch.showSnapShot")
+        showDictation = preferences.object(forKey: "notch.showDictation") as? Bool ?? true
+        dictationLanguage = preferences.string(forKey: Dictation.languageKey)
+        dictationEngine = DictationEngine(rawValue: preferences.string(forKey: DictationEngine.key) ?? "") ?? .system
+        dictation.$sessionID.assign(to: &$dictatingSessionID)
+        openShortcut = ShortcutAction.openPanel.load(preferences)
+        dictateShortcut = ShortcutAction.dictate.load(preferences)
         rateLimits = preferences.data(forKey: "usage.rateLimits").flatMap { try? JSONDecoder().decode([String: [RuntimeRateLimit]].self, from: $0) } ?? [:]
         try? AppPaths.prepare()
         if let data = try? Data(contentsOf: storageURL), let saved = try? JSONDecoder().decode([CompanionSession].self, from: data) {
@@ -721,6 +754,7 @@ final class AppModel: ObservableObject {
         cancelDelegationPreparations()
         connectGeneration = UUID(); connecting = false; cancelDeferredOperation()
         changeTasks.values.forEach { $0.cancel() }; changeTasks.removeAll()
+        dictation.cancel()
         persistTask?.cancel(); snoozeTimer?.cancel(); save(); client.disconnect(); delegationServer.stop()
     }
 
@@ -775,6 +809,58 @@ final class AppModel: ObservableObject {
             createDraftSession(showPanel: false)
         }
         activatePanel?()
+    }
+
+    func shortcut(for action: ShortcutAction) -> KeyShortcut? {
+        action == .openPanel ? openShortcut : dictateShortcut
+    }
+
+    func setShortcut(_ shortcut: KeyShortcut?, for action: ShortcutAction) {
+        if action == .openPanel { openShortcut = shortcut } else { dictateShortcut = shortcut }
+    }
+
+    /// The microphone button: dictates into the current session's draft, or
+    /// stops whatever dictation runs.
+    func toggleDictation(fromNotch: Bool) {
+        if dictation.isActive { dictation.stop(); return }
+        guard let currentID else { return }
+        startDictation(into: currentID, fromNotch: fromNotch)
+    }
+
+    /// The dictation shortcut opens a ready draft and starts listening; pressed
+    /// again it stops, leaving the words in the draft to review and send.
+    func dictateNewSession() {
+        if dictation.isActive { dictation.stop(); return }
+        guard Dictation.isAvailable else { return }
+        startSessionFromNotch()
+        if let currentID { startDictation(into: currentID, fromNotch: true) }
+    }
+
+    private func startDictation(into sessionID: String, fromNotch: Bool) {
+        dictation.deliver = { [weak self] id, text in self?.receiveDictation(text, into: id) }
+        dictation.start(sessionID: sessionID, engine: dictationEngine, language: dictationLanguage, fromNotch: fromNotch)
+    }
+
+    /// Final words join the draft, or wait while an input method composes in
+    /// that session's editor so the commit cannot overwrite them.
+    func receiveDictation(_ text: String, into id: String) {
+        if composingSessionIDs.contains(id) {
+            heldDictation[id] = Dictation.append(text, to: heldDictation[id] ?? "")
+            return
+        }
+        update(id) { $0.draft = Dictation.append(text, to: $0.draft) }
+        scheduleSave()
+    }
+
+    /// Returns once no dictated words wait on an input method in this session.
+    func dictationDelivered(to id: String) async {
+        for await held in $heldDictation.values where held[id] == nil { return }
+    }
+
+    func setComposing(_ composing: Bool, in id: String) {
+        if composing { composingSessionIDs.insert(id); return }
+        composingSessionIDs.remove(id)
+        if let held = heldDictation.removeValue(forKey: id) { receiveDictation(held, into: id) }
     }
 
     /// The open panel is showing this session's conversation.

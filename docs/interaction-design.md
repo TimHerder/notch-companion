@@ -99,9 +99,24 @@ mask or expansion animation.
 Work-specific poses apply only in the expanded panel; the resting band and
 glance keep pointer-following eyes while work runs.
 
-Control–Option–Space opens the panel for input. Escape dismisses it and
-suppresses automatic reopening until the pointer has left. Drafts survive
-dismissal. Preserve keyboard access.
+Control–Option–Space (by default) opens the panel for input. Escape dismisses
+it and suppresses automatic reopening until the pointer has left. Drafts
+survive dismissal. Preserve keyboard access.
+
+**Global shortcuts.** Settings → **Open the notch** and **Dictate a new
+session** (Control–Option–V by default) each show a pill with the combination
+(`⌃⌥Space`). Clicking it reads “Type shortcut…”: the next key with Control,
+Option or Command (or a bare F1–F20) becomes the shortcut; Shift alone or a bare
+key answers “Add ⌃, ⌥ or ⌘”, the other action's combination “Used by …”, Escape
+cancels and a bare Delete turns it **Off** (it stays off across launches). One
+recorder listens at a time; while it does, neither shortcut fires and Escape
+does not close the panel, and it stops when its window loses the keyboard
+(collapsing the notch, clicking elsewhere). A restore button returns a changed
+shortcut to its default unless the other action now uses that default.
+Shortcuts are Carbon hot keys (no Input Monitoring); one another app holds
+shows an amber warning and drops from the menu-bar tooltip and menu. Without
+on-device speech the dictation shortcut is neither registered nor shown. Preferences:
+`notch.shortcut.openPanel`, `notch.shortcut.dictate` (empty data = off).
 
 Gaze and blink are continuous, sampled at 60 Hz; one 18 ms exponential filter
 eases gaze, with no second SwiftUI spring. Tracking reaches 1,200 points; the
@@ -1025,7 +1040,7 @@ folder whose sessions are all archived leaves the default list.
 
 The composer is **one field in every design**: a ready plan's row,
 attachments and the editor on top, and one bar along its bottom edge:
-`[+] [SnapShot] [harness · folder (started sessions) · session (secondary
+`[+] [SnapShot] [mic] [harness · folder (started sessions) · session (secondary
 pages)] … [Send/Stop]`. A new draft's harness and folder choosers sit in its
 empty conversation instead (see [controls](#controls-and-window-behavior)). A
 started session keeps a plain harness label in Refined and Instrument, whose
@@ -1172,6 +1187,69 @@ by itself, like a [file drop](#file-drops).
   `SnapShots` folder beside the session registry and is staged as an ordinary
   attachment, its chip springing in like a dropped file's. Removing it before sending deletes the
   file; a sent picture stays for the agent.
+
+## Dictation
+
+**Show dictation** (on by default, Settings → Composer) adds a microphone
+button after SnapShot in both surfaces' composer bar. Speech becomes text on
+this Mac: no audio leaves it, no model ships with the app, and nothing is sent
+until the user sends.
+
+- **Engine.** Settings → **Dictation engine** (`notch.dictationEngine`), on
+  Apple silicon: **macOS** (default, `system`) uses `SpeechTranscriber`
+  (SpeechAnalyzer); **Parakeet** (`parakeet`) runs NVIDIA's Parakeet TDT 0.6B v3
+  through FluidAudio on the Neural Engine. A hint under the switch says
+  Parakeet is more accurate for technical terms, detects the language spoken
+  (25 European languages), downloads about 480 MB once from Hugging Face and
+  keeps speech on the Mac. Choosing Parakeet starts its download; the row under
+  the hint shows progress, then **Downloaded**, or a failure with **Try again**
+  (which fetches what is missing or loads what is there). **Delete** shows
+  whenever any of its files are on disk and nothing is downloading or loading
+  them, including after a failure and after switching back to macOS, and is
+  disabled while any dictation run uses Parakeet (from the Microphone prompt on).
+  A failed Delete says why and keeps **Delete** as its retry. A missing model downloads on the first dictation
+  too, shown as “Downloading Parakeet… 42%”. The model lives in
+  `~/Library/Application Support/NotchCompanion/Speech Models` and leaves
+  memory after five idle minutes.
+- **Language.** With macOS chosen, Settings → **Dictation language**:
+  **System** (default) or any language macOS can transcribe, each by its own
+  name (`notch.dictationLanguage`, BCP 47). The first use of a language
+  downloads its model through the system, shown as “Downloading the English
+  (United States) speech model…”. Parakeet needs no language and hides the row.
+- **Button.** Clicking listens into the current session's draft; while
+  dictation runs anywhere, every other composer's button shows the red waveform
+  (animated, static under Reduce Motion) and stops it. In the session being
+  dictated into, preparing shows a spinner and listening the waveform.
+- **Status.** Under the field, for the session being dictated into: a dot and
+  “Listening…”, which becomes “Listening:” followed by the words not yet final,
+  head-truncated on one line
+  (Parakeet previews the whole clip every 1.5 s of new audio for its first
+  minute, then delivers its full text when listening stops; it stops by itself
+  after 15 minutes and says so);
+  final words join the end of the draft with one space, never replacing typed
+  text; words that arrive while an input method is composing join once it
+  commits. A failure (no microphone, unsupported language, denied access with
+  **Open Settings**) stays there until dismissed.
+- **Dictate a new session.** The shortcut opens a ready draft the way the
+  glance's New session does (reusing an untouched one), opens the panel for
+  input and starts listening; pressing it again stops. The words stay in the
+  draft for review.
+- **Sending while dictating.** Return or Send in the session being dictated
+  into stops listening, shows “Adding your last words…” until the engine has
+  delivered them (Parakeet writes only at the end, and words held by an open
+  input-method composition wait for its commit), then sends the draft with
+  them. If the run ends in a failure, nothing is sent and the draft stays for
+  review beside the failure. Send is enabled meanwhile even with an empty draft.
+- **Stopping.** The button, the shortcut,
+  collapsing the notch (for dictation started there) or closing the
+  full-session window (for dictation started there) stops listening; words
+  still being finalized land in the draft afterwards. A microphone that is
+  unplugged or switched stops it with “The microphone changed, so dictation
+  stopped.” Quitting drops unfinished words.
+- **Permission.** First use asks for Microphone access
+  (`NSMicrophoneUsageDescription`). Answering the system prompt does not count
+  as a click outside the notch, so it neither closes the panel nor cancels the
+  dictation that asked.
 
 ## Delegation
 
