@@ -5,7 +5,7 @@ work, answer approvals and drop in files from a small panel beside the camera,
 using the agents you already have installed. On a display without a notch, it
 draws a small one.
 
-> **Private release.** Apple Silicon, macOS 26 or newer.
+> **Requirements.** Apple Silicon, macOS 26 or newer.
 
 ## What it does
 

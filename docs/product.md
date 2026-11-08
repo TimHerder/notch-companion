@@ -71,5 +71,5 @@ configuration and external gateways must remain untouched.
 This is a solo-maintainer project under the [MIT License](../LICENSE). External
 contributions are closed ([policy](../CONTRIBUTING.md)). Releases are
 ad-hoc-signed Apple Silicon ZIPs for macOS 26+, published automatically when the
-maintainer merges an app change. The repository stays private until the
-maintainer decides to launch publicly. See [releasing](releasing.md).
+maintainer merges an app change. The repository has been public since
+2026-11-08. See [releasing](releasing.md).
