@@ -96,7 +96,9 @@ nothing, plus the version), `package` (zips the already-checked app), and
 optional manual tool.
 
 Published tags and assets are permanent. A retry may complete the same release,
-but it never moves a tag or replaces different bytes.
+but it never moves a tag or replaces different bytes. After each write the
+publisher re-reads GitHub for up to about 30 seconds, because GitHub's release
+and asset lists can lag a write; it never repeats the write while waiting.
 
 - **Publish failed after checks passed:** rerun only the failed publish job. It
   reuses the original artifact. Rerunning the whole workflow rebuilds the app,

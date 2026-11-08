@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from zoneinfo import ZoneInfo
 
 import release
@@ -242,6 +243,15 @@ def existing_release(repo, tag):
     return matches[0] if matches else None
 
 
+def settled(read, ready, attempts=10, delay=3):
+    """Re-read until GitHub shows a write: its release and asset lists can lag one by seconds."""
+    for attempt in range(attempts):
+        value = read()
+        if ready(value) or attempt == attempts - 1:
+            return value
+        time.sleep(delay)
+
+
 def verify_assets(repo, remote, assets):
     expected = {path.name: path for path in assets}
     uploaded = api(f"repos/{repo}/releases/{remote['id']}/assets", pages=True)
@@ -281,7 +291,7 @@ def publish():
     if remote is None:
         release.run("gh", "release", "create", tag, "--repo", repo, "--verify-tag", "--draft",
                     "--generate-notes", "--title", f"Notch Companion {plan['metadata']['version']}")
-        remote = existing_release(repo, tag)
+        remote = settled(lambda: existing_release(repo, tag), lambda found: found is not None)
     if remote is None or remote["prerelease"]:
         raise ValueError("Expected an existing full release for the verified tag.")
     missing = verify_assets(repo, remote, assets)
@@ -289,12 +299,14 @@ def publish():
         raise ValueError("A published release is missing expected assets; it cannot be modified.")
     for asset in missing:
         release.run("gh", "release", "upload", tag, str(asset), "--repo", repo)
-    if missing and verify_assets(repo, remote, assets):
+    if missing and settled(lambda: verify_assets(repo, remote, assets), lambda left: not left):
         raise ValueError("Release upload is incomplete; retry with this same artifact.")
     if remote["draft"]:
         release.run("gh", "release", "edit", tag, "--repo", repo, "--draft=false", "--latest")
-    final = existing_release(repo, tag)
-    if final is None or final["draft"] or final["prerelease"]:
+    # The same release whose assets were verified, never another one found by tag.
+    final = settled(lambda: existing_release(repo, tag), lambda found: found is not None and found["id"] == remote["id"]
+                    and not found["draft"] and not found["prerelease"])
+    if final is None or final["id"] != remote["id"] or final["draft"] or final["prerelease"]:
         raise ValueError("GitHub has not confirmed release publication.")
     print(f"Verified release: {final['html_url']}")
 
