@@ -1014,22 +1014,27 @@ import ImageIO
         }, size: notched.expandedFrame.size, name: "compact-physical-notch", output: output)
         model.geometry = external
         model.notchPresentation = .expanded(external)
-        model.eating = true
+        model.receivingFile = true
+        // The session on screen, the recently active others, then New session.
         model.updateFileDrop(at: CGPoint(x: -1, y: 32), fileCount: 2)
         try render(UnifiedNotchView(model: model), size: compact, name: "file-drop-choices", output: output)
-        let dropLayout = FileDropLayout(size: compact, headerHeight: model.geometry!.expandedBandHeight)
-        for destination in FileDropDestination.allCases {
-            let frame = dropLayout.frame(for: destination)
+        let dropTargets = model.fileDropChoice!.targets
+        let dropLayout = FileDropLayout(size: compact, headerHeight: model.geometry!.expandedBandHeight, rows: dropTargets.count)
+        for (row, name) in [(0, "file-drop-current"), (1, "file-drop-recent"), (dropTargets.count - 1, "file-drop-new")] {
+            let frame = dropLayout.frame(row: row)
             model.updateFileDrop(at: CGPoint(x: frame.midX, y: frame.midY), fileCount: 2)
-            try render(UnifiedNotchView(model: model), size: compact,
-                       name: destination == .currentSession ? "file-drop-current" : "file-drop-new", output: output)
+            try render(UnifiedNotchView(model: model), size: compact, name: name, output: output)
         }
         let normalGeometry = model.geometry!
         model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 360, height: 360), topInset: 0,
                                        leftArea: nil, rightArea: nil)
         model.notchPresentation = .expanded(model.geometry!)
-        model.sessions[0].title = "A longer project name that needs to wrap clearly inside the current session target"
-        model.updateFileDrop(at: CGPoint(x: 84, y: 120), fileCount: 1)
+        model.sessions[0].title = "A longer project name that needs to truncate inside the current session target"
+        model.endFileDrop()
+        model.updateFileDrop(at: CGPoint(x: -1, y: 32), fileCount: 1)
+        let smallFrame = FileDropLayout(size: model.notchPresentation.size, headerHeight: model.notchPresentation.bandHeight,
+                                        rows: model.fileDropChoice!.targets.count).frame(row: 0)
+        model.updateFileDrop(at: CGPoint(x: smallFrame.midX, y: smallFrame.midY), fileCount: 1)
         try render(UnifiedNotchView(model: model), size: model.notchPresentation.size, name: "file-drop-small", output: output)
         model.geometry = normalGeometry
         model.notchPresentation = .expanded(normalGeometry)
@@ -1040,7 +1045,7 @@ import ImageIO
         try render(UnifiedNotchView(model: model), size: compact, name: "file-drop-no-current", output: output)
         model.sessions[0].isArchived = false
         model.endFileDrop()
-        model.eating = false
+        model.receivingFile = false
         model.page = .sessions
         // Snoozed sessions leave the list for a Snoozed row above Archived; one has a result waiting.
         let snoozedIDs = ["snoozed", "snoozed-unread"]
@@ -1183,12 +1188,26 @@ import ImageIO
                                  client: PreviewTransport(), preferences: menuPreferences)
         defer { menuModel.shutdown(); menuPreferences.removePersistentDomain(forName: menuSuite) }
         menuModel.sessions[0].runtime = .deepseek
+        // Centred on its button, as in a draft's empty conversation.
         try render(VStack {
             Spacer()
-            HStack { SessionRuntimeControl(model: menuModel, session: menuModel.sessions[0], choosingRuntime: true); Spacer() }
+            SessionRuntimeControl(model: menuModel, session: menuModel.sessions[0], choosingRuntime: true)
+            Spacer()
         }.padding(20).frame(width: 560, height: 300)
             .background(CompanionStyle.background).foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
             size: NSSize(width: 560, height: 300), name: "ready-harness-dropdown", output: output)
+        // A new draft chooses its harness and folder in its empty conversation;
+        // permissions, model and context sit in the row under the field.
+        menuModel.expanded = true
+        menuModel.notchPresentation = model.notchPresentation
+        menuModel.geometry = model.geometry
+        menuModel.sessions[0].runtime = .codex
+        menuModel.sessions[0].workspacePath = "/tmp/notch-companion"
+        menuModel.showModelPicker = true
+        menuModel.showContextUsage = true
+        menuModel.showPermissionModes = true
+        try render(UnifiedNotchView(model: menuModel), size: compact, name: "compact-draft-chooser", output: output)
+        try render(FullSessionView(model: menuModel), size: full, name: "full-draft-chooser", output: output)
         let emptySuite = "notch-empty-harness-\(UUID().uuidString)"
         let emptyPreferences = UserDefaults(suiteName: emptySuite)!
         let emptyModel = AppModel(storageURL: temporary.appendingPathComponent("empty-sessions.json"), playsSounds: false,
@@ -1299,7 +1318,7 @@ import ImageIO
                     ForEach(moods, id: \.1) { mood, label in
                         VStack(spacing: 4) {
                             EyesDrawing(expansion: expansion, mood: mood, previousMood: mood, sinceMood: 0.6, sinceGlance: 100,
-                                        sinceChomp: 100, time: 0, feeding: 0, pointer: .zero, blink: 0, reducedMotion: false)
+                                        sinceAttach: 100, time: 0, receiving: 0, pointer: .zero, blink: 0, reducedMotion: false)
                                 .frame(width: 76, height: 64).background(Color.black, in: RoundedRectangle(cornerRadius: 10))
                             Text(label).font(.system(size: 10)).foregroundStyle(.white)
                         }
@@ -1321,7 +1340,7 @@ import ImageIO
                     ForEach(moment.times, id: \.self) { since in
                         VStack(spacing: 4) {
                             EyesDrawing(expansion: 0, mood: moment.mood, previousMood: moment.previous, sinceMood: since,
-                                        sinceGlance: 100, sinceChomp: 100, time: 0, feeding: 0, pointer: .zero, blink: 0,
+                                        sinceGlance: 100, sinceAttach: 100, time: 0, receiving: 0, pointer: .zero, blink: 0,
                                         reducedMotion: false)
                                 .frame(width: 76, height: 64).background(Color.black, in: RoundedRectangle(cornerRadius: 10))
                             Text(String(format: "%.2f s", since)).font(.system(size: 10).monospacedDigit()).foregroundStyle(.white)
@@ -1334,7 +1353,7 @@ import ImageIO
                 ForEach([0.04, 0.1, 0.18, 0.3, 0.45, 0.7] as [TimeInterval], id: \.self) { since in
                     VStack(spacing: 4) {
                         EyesDrawing(expansion: 0, mood: .ready, previousMood: .ready, sinceMood: 100, sinceGlance: 100,
-                                    sinceChomp: 100, time: 0, feeding: 0, pointer: .zero, blink: 0, reducedMotion: false,
+                                    sinceAttach: 100, time: 0, receiving: 0, pointer: .zero, blink: 0, reducedMotion: false,
                                     sincePoke: since)
                             .frame(width: 76, height: 64).background(Color.black, in: RoundedRectangle(cornerRadius: 10))
                         Text(String(format: "%.2f s", since)).font(.system(size: 10).monospacedDigit()).foregroundStyle(.white)
@@ -1886,7 +1905,7 @@ import ImageIO
                     ForEach(times, id: \.self) { time in
                         mascotCell(library: library, side: side, frame: .init(clip: clip, index: 0),
                                    eyes: EyesDrawing(expansion: 0, mood: .ready, previousMood: .ready, sinceMood: 100,
-                                                     sinceGlance: 100, sinceChomp: 100, time: 0, feeding: 0, pointer: .zero,
+                                                     sinceGlance: 100, sinceAttach: 100, time: 0, receiving: 0, pointer: .zero,
                                                      blink: 0, reducedMotion: false, sincePoke: time),
                                    wobble: MascotTimeline.wobble(sincePoke: time, reducedMotion: false))
                             .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -1907,8 +1926,8 @@ import ImageIO
 
     @MainActor static func previewEyes(_ mood: CompanionMood, previous: CompanionMood? = nil, since: TimeInterval = 0.6,
                                        time: TimeInterval, pointer: CGSize = .zero, blink: CGFloat = 0) -> EyesDrawing {
-        EyesDrawing(expansion: 0, mood: mood, previousMood: previous ?? mood, sinceMood: since, sinceGlance: 100, sinceChomp: 100,
-                    time: time, feeding: 0, pointer: pointer, blink: blink, reducedMotion: false)
+        EyesDrawing(expansion: 0, mood: mood, previousMood: previous ?? mood, sinceMood: since, sinceGlance: 100, sinceAttach: 100,
+                    time: time, receiving: 0, pointer: pointer, blink: blink, reducedMotion: false)
     }
 
     /// The mascot in motion through the real drawing code at fixed times: the

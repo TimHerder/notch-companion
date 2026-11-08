@@ -90,7 +90,7 @@ mask or expansion animation.
 | New tool call | Expanded, a brief glance toward the transcript. |
 | Working | Expanded, narrowed eyes scan like reading; the title's status dot breathes and its tooltip names the running tool. |
 | Pointer leaves | A passive preview closes 300 ms after the pointer leaves the unified surface; the full panel plays the collapse cue once, the glance closes silently. Moving within it never dismisses it. |
-| File approaching | Drag entry opens the panel before the drop, widens the eyes and shows Current session / New session targets. |
+| File approaching | Drag entry opens the panel before the drop, widens the eyes and lists where the files can go. |
 | Needs input | Wider eyes with a small periodic hop; expanded, they look toward the request. |
 | Finished | A brief `^ ^` smile with three twinkles, then settled. |
 | Dozing | After 150 s with no work, question, announcement, open tier or nearby pointer, the eyes nod off into soft `‿ ‿` lids that bob with slow breaths; a pointer within 140 points wakes them with a small start. |
@@ -106,7 +106,7 @@ dismissal. Preserve keyboard access.
 Gaze and blink are continuous, sampled at 60 Hz; one 18 ms exponential filter
 eases gaze, with no second SwiftUI spring. Tracking reaches 1,200 points; the
 expression/blink range is 140 points, and hover-to-open still requires entering
-the resting band. Expression changes blend over 220 ms. Feeding widens the
+the resting band. Expression changes blend over 220 ms. An approaching file widens the
 eyes; avoid large idle bounces. Expanded attention uses fixed directions toward
 the transcript and request area, not tracked row positions. Reduced motion
 keeps each state's static pose, drops scans, hops, shakes, glances and timed
@@ -610,36 +610,45 @@ Empty results and non-Git folders without a native diff add no card. Read
 errors and oversized diffs show an explanation and the editor action, never a
 partial total. See the [runtime limits](backend-runtime.md#change-summaries).
 
-## File eating
+## File drops
 
 1. A dragged file enters the band; the eyes widen and the panel opens before
-   the drop. A large rounded **inset tray** fills most of the surface:
-   **Current session** (with its name) on the left, **New session** on the
-   right, a subtle divider between. The conversation stays visible behind a
-   light blur and darkening, with a subdued header and crisp eyes. Never
-   separate floating windows.
-2. The hovered half gains an accent fill and **Release to attach**. Only the
-   tray accepts files; its corners, the header and margins reject drops while
-   keeping the chooser open. No dead gap: the exact midpoint belongs to the
-   right. The silhouette is unchanged. Targets accept files only after the
-   expansion settles.
-3. On drop the file shrinks toward the eyes, which chomp twice and smile.
-   Current session keeps the destination shown at drag entry, including from a
-   child/detail view. New session creates a fresh draft without interrupting
-   work or changing other drafts.
-4. The chooser disappears, the panel pins open, the conversation shows
-   removable attachments and the composer takes focus.
+   the drop. An inset **tray** under the header lists where the files can go,
+   one row each, headed “Attach 2 files to”: the session on screen (marked
+   **Current**, a delegated child included), then up to three other sessions
+   from Your sessions, most recently active first (never archived,
+   auto-archived, snoozed or delegated ones), then **New session** as a dashed
+   row naming the harness it would use. A row names its session and harness.
+   The conversation stays visible behind a light blur and darkening, with a
+   subdued header and crisp eyes. Never separate floating windows.
+2. The hovered row gains an accent fill and **Release to attach** (a trackpad
+   detent as the file crosses rows). Only the rows accept files; the tray's
+   title, padding and corners, the header and margins reject drops while
+   keeping the chooser open. Rows meet edge to edge, so there is no dead gap
+   between them. The silhouette is unchanged. Rows accept files only after the
+   expansion settles; they keep a comfortable height on small screens and the
+   tray never grows past the content area.
+3. On drop the tray dissolves (0.18 s), the file's drag image glides into the
+   notch composer's attach button, and its chip springs into the field as the
+   transcript gives way (0.36 s). The eyes follow it down and give a quick
+   smile. The rows are fixed at drag entry, so a selection change elsewhere
+   never redirects the drop. New session creates a fresh draft without
+   interrupting work or changing other drafts; another session keeps its draft.
+4. The panel pins open on the destination, the conversation shows removable
+   attachments and the composer takes focus.
 5. The user adds instructions and sends explicitly.
 
 Dropping never deletes or moves the original and never runs a task. Readable
 regular files are staged locally; backend attachment RPCs run on send; errors
-stay visible and staged files remain for retry. With no usable current session
-only New session is available. Multiple files attach together; duplicates are
-ignored. Cancelling creates nothing. The conversation stays mounted under the
-chooser, and showing it does not acknowledge an obscured unread result.
-Subdued background controls get no clicks or accessibility focus. The file
-picker and full-session window attach to their composer directly. The
-left/right split holds at small clamped sizes and never stacks.
+stay visible and staged files remain for retry. A session deleted or archived
+mid-drag takes nothing and never passes the files on to another one. With no
+usable session only New session is offered. Multiple files attach together;
+duplicates are ignored. Cancelling creates nothing. The conversation stays
+mounted under the chooser, and showing it does not acknowledge an obscured
+unread result. Subdued background controls get no clicks or accessibility
+focus. The file picker and full-session window attach to their composer
+directly; a drop on the full-session window lands where it was dropped. Reduce
+Motion drops the glide, the spring and the eyes' reaction.
 
 ## Delegated agents
 
@@ -664,7 +673,7 @@ navigation; see [Delegation](#delegation).
 
 Quiet Companion: white eyes on the black notch, graphite surfaces, warm white
 text and muted sage actions. The mascot is neutral, not green. Personality comes
-from expressions, gaze, blink timing and restrained feeding motion. Keep the
+from expressions, gaze, blink timing and restrained reactions. Keep the
 expanded UI quiet and native; playful effects stay brief, with no constant
 bouncing or unsolicited large expansions. The expanded panel has three
 [designs](#panel-designs); the compact tiers look the same in all of them.
@@ -761,7 +770,7 @@ notch, dots, live activity, announcements, aura, rim comet, glance and stage use
 ### Agent logos
 
 Where the user picks an agent (the agent chooser, including Settings' default
-agent, the welcome's agent step and a draft's harness menu) each row shows the
+agent, the welcome's agent step and a draft's harness button and menu) each row shows the
 agent's official mark at about 16 points (14 in Instrument's harness menu)
 just before its name. The mark keeps its own colours in every design: never
 tinted, desaturated, cropped or stretched; an optical scale offsets padding
@@ -784,8 +793,12 @@ top banner and Settings, not in the composer.
 Use inline choosers inside the fixed panel, with plain monochrome buttons and
 no native menu tracking.
 
-- The draft's agent button opens a compact overlay of harnesses (each its
-  [logo](#agent-logos) and name) whose current profile passed a Settings
+- A new draft's empty conversation holds only its harness and folder
+  buttons, side by side in its middle (no greeting or hints; with no harness
+  ready, “Connect a harness to get started.” above them). The harness button
+  (its [logo](#agent-logos), name and a chevron) opens a compact overlay
+  centred on itself, as a native pop-up menu opens, of harnesses (each its
+  logo and name) whose current profile passed a Settings
   connection check. Readiness survives restart; profile or installation
   changes and failed connections require a new check. With none ready, link
   to Settings and keep drafts and files editable with Send disabled. The
@@ -874,9 +887,9 @@ identify selection.
   User messages stay literal.
 - **Destination.** On secondary pages with a composer (not Settings, Your
   sessions, runtime setup/chooser or Welcome), it names the selected parent
-  session. The folder beside it is that session's: a draft chooses it until its
+  session. A draft chooses its folder in its empty conversation until its
   native session exists (OpenClaw drafts keep their agent's workspace); a
-  started session's folder opens in Finder. Settings labels the separate default “Default folder
+  started session's folder sits in the composer's bar and opens in Finder. Settings labels the separate default “Default folder
   for new sessions.”
 - **Session browsers.** Both share search, rename, archive/restore and one
   **Archived** chip inside the search capsule in every state, typing included.
@@ -1005,43 +1018,46 @@ folder whose sessions are all archived leaves the default list.
 ## Composer model controls
 
 The composer is **one field in every design**: a ready plan's row,
-attachments and the editor on top, and one bar along its bottom edge holding
-every control:
-`[+] [SnapShot] [harness (drafts) · folder · session (secondary pages)] …
-[model] [permission mode] [context gauge] [Send/Stop]`. Nothing sits in a row
-above or under the field, so a tall draft, a queue or a banner can never push a
-control out of view. Session settings (model with reasoning effort, permission
-mode, context gauge) are plain secondary-color buttons in the bar's trailing
-group, shown on the session page (compact) or always (full window). Each is
-optional (model and context on by default, permission modes off). A draft's
-harness chooser stays in the bar. A started session keeps a plain harness label
-in Refined and Instrument, whose placeholder hides behind a draft or the busy
-hint; Tahoe drops it (the placeholder “Ask Codex…” and the editor's spoken label
-name the harness), and Legacy Hermes keeps its label everywhere. The folder chip
-stops at 150 points on one line. When the bar is tight the model's effort drops
-first, then a model name longer than a dozen characters truncates, down to about a
-dozen (a shorter name and **Runtime default** stay whole), and the
-permission mode shows only its glyph (its name stays in help and VoiceOver);
-then the session name, the harness label, **Continue in Hermes…** and the folder
-chip share what is left, truncating rather than pushing the field past the
-panel's margins, and **Restore archived session** keeps only its icon. The gauge
-and Send keep their size.
+attachments and the editor on top, and one bar along its bottom edge:
+`[+] [SnapShot] [harness · folder (started sessions) · session (secondary
+pages)] … [Send/Stop]`. A new draft's harness and folder choosers sit in its
+empty conversation instead (see [controls](#controls-and-window-behavior)). A
+started session keeps a plain harness label in Refined and Instrument, whose
+placeholder hides behind a draft or the busy hint; Tahoe drops it (the
+placeholder “Ask Codex…” and the editor's spoken label name the harness), and
+Legacy Hermes keeps its label everywhere. The folder chip stops at 150 points
+on one line. When the bar is tight the session name truncates first, then the
+harness label, **Continue in Hermes…** and the folder chip share what is left,
+truncating rather than pushing the field past the panel's margins, and
+**Restore archived session** keeps only its icon. Send keeps its size.
+
+Session settings sit in a quiet 22-point row **under the field**, as plain
+secondary-color text buttons: the permission mode at the left, then the model
+with its reasoning effort and the context gauge at the right. The row shows on
+the session page (compact) or always (full window) when at least one of them
+is on; each is optional (model and context on by default, permission modes
+off). It takes its height from the transcript, not the panel. When the row is
+tight the model's effort drops first, then a model name longer than a dozen
+characters truncates, down to about a dozen (a shorter name and **Runtime
+default** stay whole); the permission mode shows only its glyph when even that
+is not enough (its name stays in help and VoiceOver). The gauge keeps its size.
 
 The model label shows the runtime's display name for the selected, reported or
 default model (the ID only when unnamed; **Runtime default** when none is
 known), no “Next:” prefix, then the effort when the model has efforts (`xhigh`
-reads **Extra high**) one step quieter than the name, no chevron. A long name truncates within the bar; it
+reads **Extra high**) one step quieter than the name, no chevron. A long name truncates within the row; it
 never collapses to a lone “…”.
 
-The model picker is a bounded overlay rising from the bar with an inset **Search
+The model picker is a bounded overlay rising from the row with an inset **Search
 models…** field, refresh and Close. Search filters by name or ID without
 changing selection. Choosing a model with efforts keeps the picker open for
 **Reasoning effort**; the section is omitted when unsupported. No footer hints.
 Loading, errors and empty results stay visible. Choices apply on Send and are
 disabled during parent/child work or unresolved sends. Changing session or
 runtime, or collapsing, dismisses it. Model, permission and context overlays
-open upward from the bar's trailing group, above the field's edge and the
-editor. The context gauge stays as it is (a ring, Instrument's
+open upward from their control in the row under the field, over the field and
+the editor (the model picker and context bubble from its trailing edge, the
+permission chooser from its leading edge). The context gauge stays as it is (a ring, Instrument's
 segment meter). Its bubble has a fixed 264-point width, so it never jumps
 between states: a **Context** section label with Close, the percentage
 (unclamped, `≈` for estimates) with `42k / 200k` at the right and a
@@ -1061,8 +1077,8 @@ toggle on click. Closing removes the click monitoring.
 
 ## Permission modes
 
-An optional control (icon and mode name) in the composer's bar, between the model
-and the context gauge, sets how much the agent may do unasked in this conversation: **Default
+An optional control (icon and mode name) at the left of the row under the
+composer's field sets how much the agent may do unasked in this conversation: **Default
 permissions** (the harness's own settings), **Ask**, **Auto-edit**, **Plan**,
 **Full access**. Off by default behind **Show permission modes**; shown only
 for harnesses that map at least one mode, listing only those
@@ -1117,7 +1133,7 @@ row, opening **Usage**, a scrolling page within the panel bounds; Back returns.
 **Show SnapShot** (off by default) adds a camera button beside the notch
 composer's attach button for harnesses that accept images. It attaches a
 picture of the window that was in front when the notch opened and never sends
-by itself, like [file eating](#file-eating).
+by itself, like a [file drop](#file-drops).
 
 - **Which window.** As the panel opens, before it can take focus, record the
   frontmost app and its frontmost normal on-screen window (layer 0, at least
@@ -1128,8 +1144,8 @@ by itself, like [file eating](#file-eating).
   cursor. First use asks for Screen Recording permission; while missing, a hint
   above the composer links to that System Settings pane. No other route.
 - **Staging.** The PNG, named after app and window title, goes in the private
-  `SnapShots` folder beside the session registry and is staged with the eat
-  animation as an ordinary attachment. Removing it before sending deletes the
+  `SnapShots` folder beside the session registry and is staged as an ordinary
+  attachment, its chip springing in like a dropped file's. Removing it before sending deletes the
   file; a sent picture stays for the agent.
 
 ## Delegation

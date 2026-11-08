@@ -11,8 +11,9 @@ private struct ComposerFixture: View {
     var body: some View { ComposerView(model: model, focused: $focused, isCompact: isCompact, showsTitle: showsTitle) }
 }
 
-/// The composer's one bar must fit the compact column with every control on:
-/// its leading items give way so the field never spills past the margins.
+/// The composer's field and the settings row under it must fit the compact
+/// column with every control on: the bar's leading items give way so the field
+/// never spills past the margins.
 @MainActor final class ComposerBarLayoutTests: XCTestCase {
     func testStartedSessionBarWithEveryControlFitsTheCompactColumnInEveryDesign() throws {
         let savedTheme = PanelTheme.current
@@ -68,68 +69,6 @@ private struct ComposerFixture: View {
                 let size = NSHostingController(rootView: ComposerFixture(model: model))
                     .sizeThatFits(in: CGSize(width: column, height: 1000))
                 XCTAssertLessThanOrEqual(size.width, column, "\(theme.label)'s Codex composer spills past the column (archived: \(archived))")
-            }
-        }
-    }
-
-    /// A short model name and Runtime default keep their width beside a long session
-    /// name in the full window's bar, instead of collapsing to a lone "…".
-    func testShortModelNameAndRuntimeDefaultKeepTheirWidthBesideALongSessionName() throws {
-        _ = NSApplication.shared
-        let savedTheme = PanelTheme.current
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("composer-bar-\(UUID().uuidString)")
-        let suite = "composer-bar-\(UUID().uuidString)"
-        let preferences = UserDefaults(suiteName: suite)!
-        let model = AppModel(storageURL: folder.appendingPathComponent("sessions.json"), playsSounds: false, preferences: preferences)
-        defer {
-            PanelTheme.current = savedTheme
-            model.shutdown(); preferences.removePersistentDomain(forName: suite)
-            try? FileManager.default.removeItem(at: folder)
-        }
-        model.showModelPicker = true
-        model.showContextUsage = true
-        model.sessions[0].runtime = .codex
-        model.sessions[0].storedID = "native-session"
-        // A short folder, so a short session name leaves the bar room to spare.
-        model.sessions[0].workspacePath = "/tmp/Site"
-        // The full window at its minimum width, less the 252-point sidebar and the 22-point margins.
-        let bar: CGFloat = 780 - 252 - 44
-        let longTitle = String(String(repeating: "A long session name ", count: 4).prefix(64))
-        // SwiftUI builds no accessibility tree without a client, so the label is found by its pixels.
-        func render(_ title: String, model shown: Bool) throws -> NSBitmapImageRep {
-            model.sessions[0].title = title
-            model.showModelPicker = shown
-            let fixture = ComposerFixture(model: model, isCompact: false, showsTitle: true)
-            // A whole label's fractional width can round the bar up by half a point (one pixel).
-            XCTAssertLessThanOrEqual(NSHostingController(rootView: fixture).sizeThatFits(in: CGSize(width: bar, height: 1000)).width, bar + 0.5,
-                                     "\(PanelTheme.current.label)'s bar spills past the window")
-            let hosting = NSHostingView(rootView: fixture)
-            let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: bar, height: 80),
-                                  styleMask: [.borderless], backing: .buffered, defer: false)
-            window.isReleasedWhenClosed = false
-            window.contentView = hosting
-            defer { window.close() }
-            hosting.layoutSubtreeIfNeeded()
-            let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-            return bitmap
-        }
-        func differs(_ a: NSBitmapImageRep, _ b: NSBitmapImageRep, column x: Int) -> Bool {
-            (0..<a.pixelsHigh).contains { a.colorAt(x: x, y: $0) != b.colorAt(x: x, y: $0) }
-        }
-        for name in ["gpt-5.2", nil] {
-            model.sessions[0].runtimeInfo = RuntimeSessionInfo(model: name, provider: nil,
-                context: RuntimeContextUsage(used: 42000, limit: 200000, estimated: true))
-            for theme in PanelTheme.allCases {
-                PanelTheme.current = theme
-                let label = "\(theme.label), \(name ?? "Runtime default")"
-                // With a short session name, the columns the model control alone draws are its natural width.
-                let natural = try render("Notes", model: true), without = try render("Notes", model: false)
-                let columns = (0..<natural.pixelsWide).filter { differs(natural, without, column: $0) }
-                XCTAssertGreaterThan(columns.count, 20, label)
-                // Beside a 64-character name it draws the same, in the same place.
-                let crowded = try render(longTitle, model: true)
-                XCTAssertFalse(columns.contains { differs(natural, crowded, column: $0) }, "\(label) gives way to the session name")
             }
         }
     }

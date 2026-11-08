@@ -66,8 +66,12 @@ final class AppModel: ObservableObject {
     @Published var pointerOffset = CGSize.zero
     /// Set by the host after a quiet spell with nobody near; the eyes doze.
     @Published var drowsy = false
-    @Published var eating = false
-    @Published private(set) var attachmentFeedEvent = 0
+    /// A file is over the notch or just landed; the eyes widen toward it.
+    @Published var receivingFile = false
+    /// Counts accepted attachments (drop, picker, SnapShot), never browsing stored ones.
+    @Published private(set) var attachmentEvent = 0
+    /// The notch composer's attach button in whole-notch coordinates; a dropped file glides into it.
+    var attachButtonFrame: CGRect?
     /// Counts the pointer touching the visible eyes or mascot; each one boops them.
     @Published var pokeEvent = 0
     @Published private(set) var fileDropChoice: FileDropChoice?
@@ -197,9 +201,8 @@ final class AppModel: ObservableObject {
     private var liveCache: LiveActivity??
 
     var current: CompanionSession? { sessions.first { $0.id == currentID } }
-    var fileDropCurrentSession: CompanionSession? {
-        guard let id = fileDropChoice?.currentSessionID else { return nil }
-        return sessions.first { $0.id == id && !$0.isArchived }
+    func fileDropSession(_ id: String) -> CompanionSession? {
+        sessions.first { $0.id == id && !$0.isArchived }
     }
     var currentRequest: PendingRequest? { requests.first { $0.sessionID == current?.runtimeID } }
     var currentWorkspacePath: String { current?.workspacePath ?? workspacePath }
@@ -1155,8 +1158,7 @@ final class AppModel: ObservableObject {
     }
 
     func updateFileDrop(at point: CGPoint, fileCount: Int) {
-        var choice = fileDropChoice ?? FileDropChoice(currentSessionID: current?.isArchived == false ? currentID : nil,
-                                                      fileCount: fileCount)
+        var choice = fileDropChoice ?? newFileDropChoice(fileCount: fileCount)
         choice.fileCount = fileCount
         if fileDropChoice == nil { fileDropChoice = choice }
         choice.destination = fileDropDestination(at: point)
@@ -1165,11 +1167,25 @@ final class AppModel: ObservableObject {
 
     func endFileDrop() { fileDropChoice = nil }
 
+    /// The session on screen (a child included), the most recently active
+    /// others from Your sessions, then New session.
+    private func newFileDropChoice(fileCount: Int) -> FileDropChoice {
+        let shown = current.flatMap { $0.isArchived ? nil : $0.id }
+        let now = Date()
+        let recent = topLevelSessions
+            .filter { $0.id != shown && !$0.isArchived && $0.snoozedUntil == nil && !isAutoArchived($0, now: now) }
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .prefix(FileDropChoice.sessionLimit - (shown == nil ? 0 : 1))
+        let ids = (shown.map { [$0] } ?? []) + recent.map(\.id)
+        return FileDropChoice(targets: ids.map(FileDropDestination.session) + [.newSession],
+                              currentSessionID: shown, fileCount: fileCount)
+    }
+
     func fileDropDestination(at point: CGPoint) -> FileDropDestination? {
-        guard fileDropChoice != nil, expanded, notchPresentation.progress == 1,
+        guard let targets = fileDropChoice?.targets, expanded, notchPresentation.progress == 1,
               notchPresentation.contains(point) else { return nil }
-        return FileDropLayout(size: notchPresentation.size, headerHeight: notchPresentation.bandHeight)
-            .destination(at: point, hasCurrentSession: fileDropCurrentSession != nil)
+        return FileDropLayout(size: notchPresentation.size, headerHeight: notchPresentation.bandHeight, rows: targets.count)
+            .row(at: point).map { targets[$0] }
     }
 
     /// Resolve and attach synchronously so another window cannot redirect the
@@ -1178,9 +1194,10 @@ final class AppModel: ObservableObject {
         guard let choice = fileDropChoice, let destination = choice.destination,
               !FileAttachmentValidation.readableFiles(urls).isEmpty else { return false }
         switch destination {
-        case .currentSession:
-            guard let session = fileDropCurrentSession else { return false }
-            selectSession(session.id)
+        case .session(let id):
+            // A session deleted or archived mid-drag never redirects into another one.
+            guard fileDropSession(id) != nil else { return false }
+            selectSession(id)
         case .newSession:
             createDraftSession(showPanel: false)
         }
@@ -1200,14 +1217,14 @@ final class AppModel: ObservableObject {
             !(current?.attachments.contains { $0.url.standardizedFileURL == url.standardizedFileURL } ?? false)
         }
         mutateCurrent { session in session.attachments.append(contentsOf: accepted.map { Attachment(url: $0) }) }
-        attachmentFeedEvent += 1
-        eating = true
+        attachmentEvent += 1
+        receivingFile = true
         play(.attach)
         if showPanel { requestOpenPanel?() }
         page = .session
         Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(650))
-            self?.eating = false
+            self?.receivingFile = false
         }
         save()
         return true

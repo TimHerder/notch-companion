@@ -376,8 +376,8 @@ private struct WelcomeEyesArt: View {
                 var face = context
                 face.translateBy(x: size.width / 2, y: size.height / 2)
                 face.scaleBy(x: 1.45, y: 1.45)
-                EyesDrawing(expansion: 1, mood: .ready, previousMood: .ready, sinceMood: 100, sinceGlance: 100, sinceChomp: 100,
-                            time: time, feeding: 0, pointer: .zero,
+                EyesDrawing(expansion: 1, mood: .ready, previousMood: .ready, sinceMood: 100, sinceGlance: 100, sinceAttach: 100,
+                            time: time, receiving: 0, pointer: .zero,
                             blink: reducedMotion ? 0 : CGFloat(MascotMotion.blinkAmount(at: time + 0.9)), reducedMotion: reducedMotion)
                     .draw(in: face, expanded: true)
             }
@@ -422,7 +422,7 @@ private struct WelcomeMascotArt: View {
                                        reveal: 1, closing: false, spotlight: lit ? PanelTheme.pick(CompanionStyle.accent, IslandStyle.accent, IslandStyle.accent) : .white,
                                        spotlightAmount: lit ? 0.75 : 0.35, ground: library.ground),
                     eyes: EyesDrawing(expansion: 1, mood: .ready, previousMood: .ready, sinceMood: 100, sinceGlance: 100,
-                                      sinceChomp: 100, time: time + phase, feeding: 0, pointer: .zero,
+                                      sinceAttach: 100, time: time + phase, receiving: 0, pointer: .zero,
                                       blink: reducedMotion ? 0 : CGFloat(MascotMotion.blinkAmount(at: time + phase)),
                                       reducedMotion: reducedMotion),
                     frame: .init(clip: "idle", index: index), fading: nil, library: library)

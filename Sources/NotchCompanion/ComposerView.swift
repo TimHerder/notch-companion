@@ -94,6 +94,11 @@ struct ComposerView: View {
                 }
             }
             field
+            // Session settings sit in their own row under the field: permissions at
+            // the left, the model and context gauge at the right.
+            if (!isCompact || model.page == .session) && (model.showModelPicker || model.showContextUsage || model.showPermissionModes) {
+                ModelControlsView(model: model).padding(.horizontal, PanelTheme.pick(6, 8, 2)).padding(.top, -2)
+            }
             if let hint {
                 Text(hint).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
                     // On the editor's inset, now that every design shares the field.
@@ -172,9 +177,7 @@ struct ComposerView: View {
 
     /// One field in every design: a ready plan's row, files and the editor on
     /// top, one bar along its bottom edge with attach, SnapShot, where the
-    /// message goes, the session's model, permissions and context, and Send.
-    /// Nothing sits outside it, so a tall draft or a banner can never push a
-    /// control out of view.
+    /// message goes and Send.
     private var field: some View {
         let theme = PanelTheme.current
         let lit = focused.wrappedValue
@@ -182,6 +185,7 @@ struct ComposerView: View {
             if let session = model.current, session.planReadyTurnID != nil { planHeader(session) }
             if model.current?.attachments.isEmpty == false {
                 AttachmentStrip(model: model).padding(.horizontal, 10).padding(.top, 10)
+                    .transition(model.reducedMotion ? .opacity : .scale(scale: 0.85, anchor: .topLeading).combined(with: .opacity))
             }
             Group {
                 if theme == .instrument {
@@ -200,18 +204,19 @@ struct ComposerView: View {
             .textCursor()
             bar.padding(.horizontal, 7).padding(.bottom, 7)
         }
-        // The surface is a background layer, so the bar's choosers float above its edge.
         .background { fieldSurface(lit: lit) }
         .animation(.easeOut(duration: 0.15), value: lit)
     }
 
-    /// `[+] [SnapShot] [destination, folder] … [model] [permissions] [context] [Send]`.
-    /// When it is tight the model label truncates first (the destination has
-    /// priority), then the session name, then the harness label and folder; the
-    /// gauge, permission mode and Send keep their size.
+    /// `[+] [SnapShot] [harness, folder, session] … [Send]`. When it is tight the
+    /// session name truncates first, then the harness label and folder; Send keeps its size.
     private var bar: some View {
         HStack(spacing: 2) {
             QuietIconButton(symbol: "plus", label: "Attach files") { model.pickFiles(showPanel: isCompact) }
+                // A file dropped on the notch glides into this button.
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(UnifiedNotchView.coordinateSpace)) } action: { frame in
+                    if isCompact { model.attachButtonFrame = frame }
+                }
             // The notch remembers the window in front when it opened; the full window is in front itself.
             if isCompact && model.showSnapShot && model.current?.capabilities.images == true {
                 QuietIconButton(symbol: "camera.viewfinder",
@@ -222,9 +227,6 @@ struct ComposerView: View {
             }
             ComposerDestinationView(model: model, showsTitle: showsTitle).layoutPriority(1)
             Spacer(minLength: 8)
-            if (!isCompact || model.page == .session) && (model.showModelPicker || model.showContextUsage || model.showPermissionModes) {
-                ModelControlsView(model: model).padding(.trailing, 4)
-            }
             if takesDraftWhileBusy {
                 Button { Task { await model.interrupt() } } label: { Image(systemName: "stop.fill").font(.system(size: 9, weight: .bold)) }
                     .buttonStyle(NotchIconButtonStyle(size: 28))

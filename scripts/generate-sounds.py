@@ -158,14 +158,13 @@ def collapse(c):
 
 
 def attach(c):
-    # Two bites on the chomp frames (0 s and 0.24 s), a gulp, then a sparkle with the smile.
-    tone(c, 0, 0.09, 300, 170, glide=0.04, decay=40, pan=-0.1, partials=((1.0, 1.0, 1.0), (2.0, 0.3, 1.5)))
-    crunch(c, 0, 0.55, -0.1, seed=10)
-    tone(c, 0.24, 0.09, 330, 185, glide=0.04, decay=40, pan=0.1, partials=((1.0, 1.0, 1.0), (2.0, 0.3, 1.5)))
-    crunch(c, 0.24, 0.65, 0.1, seed=20)
-    tone(c, 0.37, 0.12, 360, 720, 0.7, glide=0.06, decay=22)
-    tone(c, 0.43, 0.3, 1318.51, amp=0.16, decay=9, pan=-0.12, partials=MALLET)
-    tone(c, 0.49, 0.3, 1975.53, amp=0.12, decay=10, pan=0.14, partials=MALLET)
+    # The file glides into the composer: a soft paper swish settling downward, a muted tap as it
+    # lands (with the chip's spring), then a quiet rising glint as the eyes smile.
+    noise(c, 0, 0.17, 3400, 1100, 0.55, q=0.8, attack=0.05, decay=12, pan=0.15, seed=7)
+    tone(c, 0.15, 0.14, 240, 200, glide=0.03, decay=34, partials=((1.0, 1.0, 1.0), (2.0, 0.18, 1.6)))
+    noise(c, 0.15, 0.012, 4200, amp=0.16, decay=320, pan=-0.05, seed=8)
+    tone(c, 0.21, 0.3, 1046.5, amp=0.17, decay=11, pan=-0.1, partials=MALLET)
+    tone(c, 0.29, 0.28, 1567.98, amp=0.12, decay=12, pan=0.12, partials=MALLET)
 
 
 def send(c):
@@ -203,7 +202,7 @@ def main() -> None:
     palette = {  # name: (duration, builder, peak target, room)
         "expand": (0.42, expand, 0.23, 0.14),
         "collapse": (0.65, collapse, 0.148, 0.05),
-        "attach": (0.85, attach, 0.44, 0.12),
+        "attach": (0.62, attach, 0.3, 0.12),
         "send": (0.38, send, 0.23, 0.12),
         "complete": (1.0, complete, 0.28, 0.18),
         "attention": (0.6, attention, 0.22, 0.14),
