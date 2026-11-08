@@ -35,6 +35,23 @@ import XCTest
         XCTAssertFalse(KeyShortcut.openPanelDefault.matches(key(kVK_ANSI_V, "v", [.control, .option])))
     }
 
+    func testRecorderCancelsClearsRefusesAndNeverDuplicatesTheOtherAction() {
+        var current: [ShortcutAction: KeyShortcut] = [.openPanel: .openPanelDefault, .dictate: .dictateDefault]
+        let decide = { (event: NSEvent) in ShortcutRecording.decide(event, for: .dictate, current: { current[$0] }) }
+        XCTAssertEqual(decide(key(kVK_Escape, "\u{1b}", [])), .cancel)
+        XCTAssertEqual(decide(key(kVK_Delete, "\u{7f}", [])), .clear)
+        XCTAssertEqual(decide(key(kVK_ForwardDelete, "", [])), .clear)
+        XCTAssertEqual(decide(key(kVK_ANSI_A, "a", [])), .refuse("Add ⌃, ⌥ or ⌘"))
+        XCTAssertEqual(decide(key(kVK_Space, " ", [.control, .option])), .refuse("Used by Open the notch"))
+        XCTAssertEqual(decide(key(kVK_ANSI_D, "d", [.control, .option])),
+                       .set(KeyShortcut(keyCode: UInt32(kVK_ANSI_D), modifiers: UInt32(controlKey | optionKey), key: "D")))
+        // Another layout labels the same key differently; it is still the same combination.
+        current[.openPanel] = KeyShortcut(keyCode: UInt32(kVK_ANSI_Y), modifiers: UInt32(controlKey | optionKey), key: "Z")
+        XCTAssertEqual(decide(key(kVK_ANSI_Y, "y", [.control, .option])), .refuse("Used by Open the notch"))
+        current[.openPanel] = nil
+        XCTAssertEqual(decide(key(kVK_Space, " ", [.control, .option])), .set(.openPanelDefault), "A shortcut turned off frees its keys")
+    }
+
     func testShortcutsPersistAndAClearedOneStaysOff() {
         let suite = "notch-shortcuts-\(UUID().uuidString)"
         let preferences = UserDefaults(suiteName: suite)!
@@ -62,6 +79,15 @@ import XCTest
         XCTAssertNil(reopened.dictateShortcut, "Turning a shortcut off must not bring the default back")
         XCTAssertEqual(reopened.dictationLanguage, "en-US")
         reopened.shutdown()
+    }
+
+    func testDictationArrivingDuringInputMethodCompositionIsKept() {
+        // The editor last agreed on "Hello"; dictation then appended while a Japanese
+        // composition was open, and the user committed "仮" after it.
+        let draft = Dictation.append("from dictation", to: "Hello")
+        XCTAssertEqual(NativeComposerEditor.merge(editor: "Hello仮", draft: draft, synced: "Hello"), "Hello仮 from dictation")
+        XCTAssertNil(NativeComposerEditor.merge(editor: "Hello仮", draft: "Hello", synced: "Hello"), "Nothing changed outside")
+        XCTAssertNil(NativeComposerEditor.merge(editor: "Hello仮", draft: "", synced: "Hello"), "A cleared draft yields to typing")
     }
 
     func testDictatedWordsJoinTheDraftWithOneSpace() {

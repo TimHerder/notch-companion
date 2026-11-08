@@ -47,6 +47,9 @@ struct KeyShortcut: Codable, Equatable {
         self.init(keyCode: UInt32(event.keyCode), modifiers: UInt32(modifiers), key: key)
     }
 
+    /// The same keys are the same shortcut whatever label the layout gave them.
+    static func == (a: KeyShortcut, b: KeyShortcut) -> Bool { a.keyCode == b.keyCode && a.modifiers == b.modifiers }
+
     func matches(_ event: NSEvent) -> Bool {
         event.type == .keyDown && UInt32(event.keyCode) == keyCode
             && KeyShortcut(event: event)?.modifiers == modifiers
@@ -85,6 +88,29 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
 
     func save(_ shortcut: KeyShortcut?, _ defaults: UserDefaults) {
         defaults.set(shortcut.flatMap { try? JSONEncoder().encode($0) } ?? Data(), forKey: key)
+    }
+}
+
+/// What a key typed into a Settings recorder does.
+enum ShortcutRecording: Equatable {
+    case cancel
+    /// Turns the shortcut off.
+    case clear
+    case set(KeyShortcut)
+    /// Keeps recording and shows why the key was refused.
+    case refuse(String)
+
+    /// Escape cancels and a bare Delete clears; anything else must be a valid
+    /// combination no other action uses.
+    static func decide(_ event: NSEvent, for action: ShortcutAction, current: (ShortcutAction) -> KeyShortcut?) -> ShortcutRecording {
+        let bare = event.modifierFlags.intersection([.control, .option, .shift, .command]).isEmpty
+        if bare && Int(event.keyCode) == kVK_Escape { return .cancel }
+        if bare && [kVK_Delete, kVK_ForwardDelete].contains(Int(event.keyCode)) { return .clear }
+        guard let shortcut = KeyShortcut(event: event) else { return .refuse("Add ⌃, ⌥ or ⌘") }
+        if let other = ShortcutAction.allCases.first(where: { $0 != action && current($0) == shortcut }) {
+            return .refuse("Used by \(other.title)")
+        }
+        return .set(shortcut)
     }
 }
 

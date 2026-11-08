@@ -1131,36 +1131,44 @@ struct DefaultWorkspaceButton: View {
 /// The login item switch, with System Settings one press away when macOS
 /// still needs approval. Shared by Settings and the welcome.
 /// Click, then type the combination. Escape cancels; Delete turns it off.
+/// The model holds which recorder listens, so starting one ends any other and
+/// a window losing the keyboard ends it.
 struct ShortcutRecorder: View {
     @ObservedObject var model: AppModel
     var action: ShortcutAction
-    @State private var prompt: String?
+    @State private var refusal: String?
     @State private var monitor: Any?
 
     var body: some View {
         let shortcut = model.shortcut(for: action)
+        let recording = model.recordingShortcut == action
+        // Restoring must not take the combination from the other action.
+        let canRestore = shortcut != action.defaultShortcut
+            && !ShortcutAction.allCases.contains { $0 != action && model.shortcut(for: $0) == action.defaultShortcut }
         HStack(spacing: 6) {
-            if prompt == nil, model.unavailableShortcuts.contains(action) {
+            if !recording, model.unavailableShortcuts.contains(action) {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(CompanionStyle.amber)
                     .help("Another app already uses this shortcut. Record a different one.")
                     .accessibilityLabel("Unavailable: another app uses this shortcut")
             }
-            Button(prompt ?? shortcut?.display ?? "Off") { prompt == nil ? record() : stop() }
-                .buttonStyle(NotchPillButtonStyle(small: true, selected: prompt != nil))
-                .help(prompt == nil ? "Click, then press the new shortcut" : "Press the new shortcut; Escape cancels, Delete turns it off")
+            Button(recording ? refusal ?? "Type shortcut…" : shortcut?.display ?? "Off") { recording ? stop() : record() }
+                .buttonStyle(NotchPillButtonStyle(small: true, selected: recording))
+                .help(recording ? "Press the new shortcut; Escape cancels, Delete turns it off" : "Click, then press the new shortcut")
                 .accessibilityLabel("\(action.title) shortcut, \(shortcut?.spoken ?? "off")")
-            if prompt == nil, shortcut != action.defaultShortcut {
+            if !recording, canRestore {
                 QuietIconButton(symbol: "arrow.counterclockwise", label: "Restore \(action.defaultShortcut.display)", size: 22) {
                     model.setShortcut(action.defaultShortcut, for: action)
                 }
             }
         }
+        .onChange(of: model.recordingShortcut) { _, now in if now != action { removeMonitor() } }
         .onDisappear { stop() }
     }
 
     private func record() {
-        prompt = "Type shortcut…"
-        model.recordingShortcut = true
+        refusal = nil
+        model.recordingShortcut = action
+        removeMonitor()
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             MainActor.assumeIsolated { receive(event) }
             return nil
@@ -1168,26 +1176,23 @@ struct ShortcutRecorder: View {
     }
 
     private func receive(_ event: NSEvent) {
-        let bare = event.modifierFlags.intersection([.control, .option, .shift, .command]).isEmpty
-        if bare && event.keyCode == 53 { return stop() }
-        if bare && (event.keyCode == 51 || event.keyCode == 117) {
-            model.setShortcut(nil, for: action)
-            return stop()
+        switch ShortcutRecording.decide(event, for: action, current: model.shortcut(for:)) {
+        case .cancel: stop()
+        case .clear: model.setShortcut(nil, for: action); stop()
+        case .set(let shortcut): model.setShortcut(shortcut, for: action); stop()
+        case .refuse(let reason): refusal = reason
         }
-        guard let shortcut = KeyShortcut(event: event) else { prompt = "Add ⌃, ⌥ or ⌘"; return }
-        if let other = ShortcutAction.allCases.first(where: { $0 != action && model.shortcut(for: $0) == shortcut }) {
-            prompt = "Used by \(other.title)"
-            return
-        }
-        stop()
-        model.setShortcut(shortcut, for: action)
     }
 
     private func stop() {
+        removeMonitor()
+        if model.recordingShortcut == action { model.recordingShortcut = nil }
+    }
+
+    private func removeMonitor() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
-        prompt = nil
-        model.recordingShortcut = false
+        refusal = nil
     }
 }
 

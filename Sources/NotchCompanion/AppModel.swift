@@ -119,8 +119,8 @@ final class AppModel: ObservableObject {
     @Published var dictateShortcut: KeyShortcut? {
         didSet { ShortcutAction.dictate.save(dictateShortcut, preferences); shortcutsChanged?() }
     }
-    /// A Settings recorder is waiting for keys, so the shortcuts must not fire.
-    @Published var recordingShortcut = false { didSet { shortcutsChanged?() } }
+    /// The one Settings recorder waiting for keys; no shortcut fires meanwhile.
+    @Published var recordingShortcut: ShortcutAction? { didSet { if oldValue != recordingShortcut { shortcutsChanged?() } } }
     /// Shortcuts macOS refused because another app holds them.
     @Published var unavailableShortcuts: Set<ShortcutAction> = []
     var shortcutsChanged: (() -> Void)?

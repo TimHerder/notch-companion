@@ -26,6 +26,8 @@ final class Dictation: ObservableObject {
     @Published private(set) var volatileText = ""
     @Published var failure: String?
     @Published private(set) var needsMicrophonePermission = false
+    /// macOS is asking for Microphone access in its own window.
+    @Published private(set) var awaitingPermission = false
     /// Started from the notch, so collapsing the notch stops it.
     private(set) var fromNotch = false
 
@@ -35,6 +37,7 @@ final class Dictation: ObservableObject {
     private var engine: AVAudioEngine?
     private var input: AsyncStream<AnalyzerInput>.Continuation?
     private var analyzer: SpeechAnalyzer?
+    private var deviceChange: NSObjectProtocol?
 
     var isActive: Bool { phase != .idle }
 
@@ -75,7 +78,9 @@ final class Dictation: ObservableObject {
 
     private func run(_ generation: UUID, language: String?) async {
         do {
-            guard await microphoneAllowed() else {
+            let allowed = await microphoneAllowed()
+            guard self.generation == generation else { return }
+            guard allowed else {
                 needsMicrophonePermission = true
                 throw DictationError("Allow Microphone access for Notch Companion to dictate.")
             }
@@ -105,6 +110,14 @@ final class Dictation: ObservableObject {
             self.analyzer = analyzer
             self.engine = engine
             self.input = input
+            // A microphone unplugged or switched stops the engine; keep what was heard and say why.
+            deviceChange = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.generation == generation else { return }
+                    self.stop()
+                    self.failure = "The microphone changed, so dictation stopped."
+                }
+            }
             engine.prepare()
             try engine.start()
             try await analyzer.start(inputSequence: stream)
@@ -131,7 +144,10 @@ final class Dictation: ObservableObject {
     private func microphoneAllowed() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: return true
-        case .notDetermined: return await AVCaptureDevice.requestAccess(for: .audio)
+        case .notDetermined:
+            awaitingPermission = true
+            defer { awaitingPermission = false }
+            return await AVCaptureDevice.requestAccess(for: .audio)
         default: return false
         }
     }
@@ -147,6 +163,8 @@ final class Dictation: ObservableObject {
     }
 
     private func stopAudio() {
+        if let deviceChange { NotificationCenter.default.removeObserver(deviceChange) }
+        deviceChange = nil
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil

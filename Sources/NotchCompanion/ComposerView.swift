@@ -348,7 +348,8 @@ private struct DictationButton: View {
 
     var body: some View {
         let here = dictation.sessionID == model.currentID
-        let listening = dictation.phase == .listening && here
+        // Listening into another session still shows here, so it can be stopped from any composer.
+        let listening = dictation.phase == .listening
         Button { model.toggleDictation(fromNotch: fromNotch) } label: {
             if case .preparing = dictation.phase, here { ProgressView().controlSize(.mini) }
             else {
@@ -422,6 +423,14 @@ struct NativeComposerEditor: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
+    /// Text added to the end of the draft while the editor could not take it
+    /// (an input method was composing) joins the editor's text; any other
+    /// outside change yields to what the user typed.
+    static func merge(editor: String, draft: String, synced: String) -> String? {
+        guard draft != synced, draft.hasPrefix(synced) else { return nil }
+        return editor + draft.dropFirst(synced.count)
+    }
+
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
         scroll.drawsBackground = false
@@ -470,6 +479,7 @@ struct NativeComposerEditor: NSViewRepresentable {
         }
         editor.onLayoutChanged = { [weak coordinator = context.coordinator] in coordinator?.updateHeight() }
         context.coordinator.editor = editor
+        context.coordinator.synced = text
         scroll.documentView = editor
         editor.string = text
         return scroll
@@ -486,6 +496,7 @@ struct NativeComposerEditor: NSViewRepresentable {
             let location = editor.string.isEmpty ? (text as NSString).length : min(editor.selectedRange().location, (text as NSString).length)
             editor.string = text
             editor.setSelectedRange(NSRange(location: location, length: 0))
+            context.coordinator.synced = text
         }
         context.coordinator.updateHeight()
         if focused.wrappedValue, editor.window?.firstResponder !== editor {
@@ -500,10 +511,23 @@ struct NativeComposerEditor: NSViewRepresentable {
         var parent: NativeComposerEditor
         weak var editor: ComposerTextView?
         private var heightUpdatePending = false
+        /// The draft as the editor last saw it. The draft moving away from it
+        /// means something (dictation) changed it while composition held the editor.
+        var synced = ""
         init(_ parent: NativeComposerEditor) { self.parent = parent }
 
         func textDidChange(_ notification: Notification) {
             guard let editor else { return }
+            if parent.text != synced {
+                // Keep the outside change until the input method commits, then take it in.
+                if editor.hasMarkedText() { return updateHeight() }
+                if let merged = NativeComposerEditor.merge(editor: editor.string, draft: parent.text, synced: synced) {
+                    let selection = editor.selectedRange()
+                    editor.string = merged
+                    editor.setSelectedRange(selection)
+                }
+            }
+            synced = editor.string
             parent.text = editor.string
             updateHeight()
         }

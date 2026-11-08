@@ -81,14 +81,21 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
     private func applyShortcuts() {
         guard let hotKeys, !isStopped else { return }
         var unavailable = Set<ShortcutAction>()
+        // Release every combination first, so swapping two never collides with itself.
+        for action in ShortcutAction.allCases { hotKeys.unregister(action.hotKeyID) }
         for action in ShortcutAction.allCases {
-            let shortcut = model.recordingShortcut ? nil : model.shortcut(for: action)
+            let shortcut = model.recordingShortcut == nil ? activeShortcut(action) : nil
             let registered = hotKeys.register(action.hotKeyID, shortcut) { [weak self] in self?.perform(action) }
             if !registered { unavailable.insert(action) }
         }
-        if !model.recordingShortcut { model.unavailableShortcuts = unavailable }
+        if model.recordingShortcut == nil { model.unavailableShortcuts = unavailable }
         let open = model.openShortcut.flatMap { unavailable.contains(.openPanel) ? nil : $0 }
         statusItem?.button?.toolTip = open.map { "Notch Companion · \($0.spoken)" } ?? "Notch Companion · click to open"
+    }
+
+    /// Without on-device speech the dictation shortcut (and its Settings row) is absent.
+    private func activeShortcut(_ action: ShortcutAction) -> KeyShortcut? {
+        action == .dictate && !Dictation.isAvailable ? nil : model.shortcut(for: action)
     }
 
     private func perform(_ action: ShortcutAction) {
@@ -243,8 +250,9 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         }) { eventMonitors.append(monitor) }
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
             MainActor.assumeIsolated {
+                // The Microphone prompt is another app's window; answering it must not close the notch.
                 guard let self, self.model.expanded || self.model.glancing, !self.hasPresentedSheet,
-                      self.trackingMenus.isEmpty else { return }
+                      self.trackingMenus.isEmpty, !self.model.dictation.awaitingPermission else { return }
                 self.hide()
             }
         }) { eventMonitors.append(monitor) }
@@ -257,8 +265,8 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
                 }
                 guard !self.hasPresentedSheet, self.trackingMenus.isEmpty else { return false }
                 // Settings is recording a shortcut and takes every key, Escape included.
-                if event.type == .keyDown && self.model.recordingShortcut { return false }
-                if let action = ShortcutAction.allCases.first(where: { self.model.shortcut(for: $0)?.matches(event) == true }) {
+                if event.type == .keyDown && self.model.recordingShortcut != nil { return false }
+                if let action = ShortcutAction.allCases.first(where: { self.activeShortcut($0)?.matches(event) == true }) {
                     if !event.isARepeat { self.perform(action) }
                     return true
                 }
@@ -782,6 +790,8 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
     }
 
     func windowDidResignKey(_ notification: Notification) {
+        // A recorder whose window loses the keyboard stops, so it never swallows keys unseen.
+        model.recordingShortcut = nil
         if notification.object as? NSWindow === fullWindow {
             model.setSessionVisibility(fullSessionVisible: false)
         }
@@ -790,6 +800,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if notification.object as? NSWindow === fullWindow {
             model.setSessionVisibility(fullSessionVisible: false)
+            if model.dictation.isActive && !model.dictation.fromNotch { model.dictation.stop() }
         }
     }
 

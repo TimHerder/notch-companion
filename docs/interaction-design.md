@@ -108,11 +108,14 @@ session** (Control–Option–V by default) each show a pill with the combinatio
 (`⌃⌥Space`). Clicking it reads “Type shortcut…”: the next key with Control,
 Option or Command (or a bare F1–F20) becomes the shortcut; Shift alone or a bare
 key answers “Add ⌃, ⌥ or ⌘”, the other action's combination “Used by …”, Escape
-cancels and a bare Delete turns it **Off** (it stays off across launches). While
-recording, neither shortcut fires and Escape does not close the panel. A
-restore button returns a changed shortcut to its default. Shortcuts are
-Carbon hot keys (no Input Monitoring); one another app holds shows an amber
-warning and drops from the menu-bar tooltip and menu. Preferences:
+cancels and a bare Delete turns it **Off** (it stays off across launches). One
+recorder listens at a time; while it does, neither shortcut fires and Escape
+does not close the panel, and it stops when its window loses the keyboard
+(collapsing the notch, clicking elsewhere). A restore button returns a changed
+shortcut to its default unless the other action now uses that default.
+Shortcuts are Carbon hot keys (no Input Monitoring); one another app holds
+shows an amber warning and drops from the menu-bar tooltip and menu. Without
+on-device speech the dictation shortcut is neither registered nor shown. Preferences:
 `notch.shortcut.openPanel`, `notch.shortcut.dictate` (empty data = off).
 
 Gaze and blink are continuous, sampled at 60 Hz; one 18 ms exponential filter
@@ -1183,21 +1186,29 @@ Mac, no model ships with the app, and nothing is sent until the user sends.
   BCP 47). The first use of a language downloads its model through the system,
   shown as “Downloading the English (United States) speech model…”.
 - **Button.** Clicking listens into the current session's draft; while
-  dictation runs anywhere, clicking stops it. Preparing shows a spinner,
-  listening a red animated waveform (static under Reduce Motion).
+  dictation runs anywhere, every composer's button shows the red waveform
+  (animated, static under Reduce Motion) and stops it. Preparing shows a
+  spinner in the session being dictated into.
 - **Status.** Under the field, for the session being dictated into: a dot and
   “Listening…” followed by the words not yet final, head-truncated on one line;
   final words join the end of the draft with one space, never replacing typed
-  text. A failure (no microphone, unsupported language, denied access with
+  text; words that arrive while an input method is composing join once it
+  commits. A failure (no microphone, unsupported language, denied access with
   **Open Settings**) stays there until dismissed.
 - **Dictate a new session.** The shortcut opens a ready draft the way the
   glance's New session does (reusing an untouched one), opens the panel for
   input and starts listening; pressing it again stops. The words stay in the
   draft for review.
-- **Stopping.** Sending from that session, the button, the shortcut, or
-  collapsing the notch (for dictation started from the notch) stops listening;
-  words still being finalized land in the draft afterwards. Quitting drops them.
-  First use asks for Microphone access (`NSMicrophoneUsageDescription`).
+- **Stopping.** Sending from that session, the button, the shortcut,
+  collapsing the notch (for dictation started there) or closing the
+  full-session window (for dictation started there) stops listening; words
+  still being finalized land in the draft afterwards. A microphone that is
+  unplugged or switched stops it with “The microphone changed, so dictation
+  stopped.” Quitting drops unfinished words.
+- **Permission.** First use asks for Microphone access
+  (`NSMicrophoneUsageDescription`). Answering the system prompt does not count
+  as a click outside the notch, so it neither closes the panel nor cancels the
+  dictation that asked.
 
 ## Delegation
 
