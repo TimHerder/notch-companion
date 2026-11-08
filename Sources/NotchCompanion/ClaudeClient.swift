@@ -16,7 +16,7 @@ final class ClaudeClient: RuntimeTransport {
         var info: [String: Any] = [:]
         var catalog = RuntimeModelCatalog()
         var effortOverride: String?
-        /// The profile's own Ultracode, read when the process opens; nil when the CLI does not report it.
+        /// The profile's own Ultracode, whatever the model, read when the process opens; nil when the CLI does not report it.
         var nativeUltracode: Bool?
         /// Launched with bypass allowed, and whether native history exists to resume.
         var allowsBypass = false
@@ -160,10 +160,6 @@ final class ClaudeClient: RuntimeTransport {
                       effort == nil || applied["effort"] as? String == effort,
                       ultracode == nil || (applied["ultracode"] as? Bool ?? false) == ultracode else {
                     throw AppError("Claude Code did not apply the selected model and effort. Your message was not sent.")
-                }
-                if let on = applied["ultracode"] as? Bool {
-                    session.info["ultracode"] = on
-                    emit(session.state.event("session.info", ["ultracode": on]))
                 }
             }
             // The control response acknowledges the selection but does not
@@ -335,8 +331,12 @@ final class ClaudeClient: RuntimeTransport {
             if initialized["session_state"] as? String == "running" { session.state.active = true }
             session.catalog = Self.catalog(models)
             let settings = try? await control(session, ["subtype": "get_settings"])
-            session.nativeUltracode = (settings?["applied"] as? [String: Any])?["ultracode"] as? Bool
-            session.info["ultracode"] = session.nativeUltracode
+            // A rejected read is tolerated; a process that stopped during it is not.
+            guard sessions[id] === session else { throw AppError("Claude Code stopped while opening this session. No message was sent.") }
+            // `ultracode` holds only on a model that offers it; older CLIs report nothing else.
+            let applied = settings?["applied"] as? [String: Any]
+            session.nativeUltracode = applied?["ultracodeRequested"] as? Bool ?? applied?["ultracode"] as? Bool
+            session.info["profile_ultracode"] = session.nativeUltracode
             if let delegation {
                 // Delegation is additive: a server that does not connect leaves the session usable.
                 let added = try? await control(session, ["subtype": "mcp_set_servers", "servers": Self.delegationServers(delegation)])

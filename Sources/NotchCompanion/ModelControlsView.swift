@@ -26,8 +26,8 @@ struct ModelControlsView: View {
             let modelTitle = shown.map { catalog?.title(for: $0) ?? $0.model }
             let shownOption = shown.flatMap { catalog?.option(for: $0) }
             let effort = shownOption?.reasoningEfforts.isEmpty == false ? shown?.reasoningEffort ?? shownOption?.defaultReasoningEffort : nil
-            // The conversation's choice, else what Claude last applied (the profile's own included).
-            let ultracode = shownOption?.offersUltracode == true && (session.modelOverride?.ultracode ?? session.runtimeInfo?.ultracode) == true
+            // What the next send applies: the conversation's choice, else the profile's own.
+            let ultracode = shownOption?.offersUltracode == true && (session.modelOverride?.ultracode ?? session.runtimeInfo?.profileUltracode) == true
             let ultracodeTag = Text("· Ultracode").foregroundStyle(CompanionStyle.ultracode).lineLimit(1)
             let permissionTitle = session.permissionMode?.title ?? "Default permissions"
             let context = session.runtimeInfo?.context
@@ -562,7 +562,7 @@ struct ModelControlsView: View {
                             .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.secondary))
                     }
                     Spacer(minLength: 0)
-                    Toggle("Ultracode", isOn: Binding(get: { (choice.ultracode ?? session.runtimeInfo?.ultracode) == true }) { on in
+                    Toggle("Ultracode", isOn: Binding(get: { (choice.ultracode ?? session.runtimeInfo?.profileUltracode) == true }) { on in
                         var selection = choice
                         selection.ultracode = on
                         model.setModel(selection, for: session.id)

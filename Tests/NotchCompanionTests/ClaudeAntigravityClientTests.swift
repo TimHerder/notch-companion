@@ -189,13 +189,10 @@ final class ClaudeAntigravityClientTests: XCTestCase {
         try await client.connect()
         let opened = try await client.request("session.create", params: ["cwd": directory.path, "project_trusted": true])
         let id = try XCTUnwrap(opened["session_id"] as? String)
-        XCTAssertEqual((opened["info"] as? [String: Any])?["ultracode"] as? Bool, true, "The row shows the profile's own Ultracode")
+        // Opened on a model without Ultracode, the profile's own still reads on.
+        XCTAssertEqual((opened["info"] as? [String: Any])?["profile_ultracode"] as? Bool, true, "The row shows the profile's own Ultracode")
         var completions = 0
-        var reported: [Bool] = []
-        client.onEvent = { name, payload in
-            if name == "message.complete" { completions += 1 }
-            if name == "session.info", let on = payload["ultracode"] as? Bool { reported.append(on) }
-        }
+        client.onEvent = { name, _ in if name == "message.complete" { completions += 1 } }
         // An effort change alone would drop it.
         _ = try await client.request("session.model.set", params: ["session_id": id, "model": "fixture-selected", "reasoning_effort": "low"])
         _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "ultracode", "turn_id": UUID().uuidString])
@@ -206,11 +203,36 @@ final class ClaudeAntigravityClientTests: XCTestCase {
         // A reopened process starts from the profile again, and an unset choice keeps it.
         client.disconnect()
         try await client.connect()
-        _ = try await client.request("session.resume", params: ["session_id": id, "cwd": directory.path, "project_trusted": true])
+        let resumed = try await client.request("session.resume", params: ["session_id": id, "cwd": directory.path, "project_trusted": true])
+        XCTAssertEqual((resumed["info"] as? [String: Any])?["profile_ultracode"] as? Bool, true)
         _ = try await client.request("session.model.set", params: ["session_id": id, "model": "fixture-selected", "reasoning_effort": "low"])
         _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "ultracode", "turn_id": UUID().uuidString])
         try await wait { completions == 3 }
-        XCTAssertEqual(reported, [true, false, true])
+    }
+
+    func testClaudeOpenFailsWhenTheProcessStopsDuringTheSettingsRead() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notch-claude-stop-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = directory.appendingPathComponent("claude-fixture")
+        try #"""
+        #!/usr/bin/env python3
+        import json, sys
+        for line in sys.stdin:
+            frame=json.loads(line)
+            if frame['request']['subtype']=='get_settings': sys.exit(1)
+            print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':frame['request_id'],'response':{'models':[]}}}),flush=True)
+        """#.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let client = ClaudeClient(profileID: directory.path, executableURL: executable)
+        defer { client.disconnect() }
+        try await client.connect()
+        do {
+            // With delegation, the next control used to wait on the stopped process forever.
+            _ = try await client.request("session.create", params: ["cwd": directory.path, "project_trusted": true,
+                                                                    "delegation": ["url": "http://127.0.0.1:9/mcp", "token": "tok"]])
+            XCTFail("A process that stopped while opening is not an open session")
+        } catch {}
     }
 
     func testClaudeWithoutUltracodeFieldRefusesItButStillSends() async throws {
@@ -299,7 +321,9 @@ final class ClaudeAntigravityClientTests: XCTestCase {
                 body={'models':[{'value':'default','resolvedModel':'fixture-model'},{'value':'fixture-selected','supportsEffort':True,'supportedEffortLevels':['low','high','xhigh']}],'session_state':'idle'} if kind=='initialize' else {}
                 if kind=='get_settings':
                     body={'applied':{'model':selected_model,'effort':effort or 'medium'}}
-                    if reports: body['applied'].update(ultracode=ultracode, ultracodeAvailable=workflows)
+                    # Like Claude Code, the applied state holds only on a model with xhigh; the request is the profile's own.
+                    offers=workflows and selected_model=='fixture-selected'
+                    if reports: body['applied'].update(ultracode=ultracode and offers, ultracodeRequested=ultracode, ultracodeAvailable=offers)
                 emit({'type':'control_response','response':{'subtype':'success','request_id':frame['request_id'],'response':body}})
             elif frame['type']=='control_response':
                 body=frame['response']['response']

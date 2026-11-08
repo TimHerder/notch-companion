@@ -74,9 +74,11 @@ private development hasn't been re-run against this source snapshot. Known limit
 - Claude Code Ultracode: the `apply_flag_settings`/`get_settings` shapes were
   checked live against Claude Code 2.1.308 with no prompt (throwaway
   `--no-session-persistence` frontend), including keeping an `--effort ultracode`
-  profile's own state across an effort change. Restating it beside effort, the
-  profile's own state across a reconnect, the workflows-off refusal and a CLI
-  without the field are covered by protocol fixtures, and the row's tag and
+  profile's own state across an effort change and reading it from
+  `ultracodeRequested` when the opening model lacks Ultracode. Restating it beside
+  effort, the profile's own state across a reconnect, the workflows-off refusal,
+  a CLI without the field and a process stopping during the opening read are
+  covered by protocol fixtures, and the row's tag and
   the picker's switch by the `model-chooser-ultracode` offscreen fixture in all
   three designs. Not yet checked with a live Ultracode prompt or a physical click.
 
