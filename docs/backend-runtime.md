@@ -461,6 +461,19 @@ their native effort.
   `get_settings.applied` must confirm both before the prompt; omitting effort
   clears a prior override. Never `update_settings` or user/project defaults. A
   CLI that cannot apply or verify effort leaves the message unsent.
+  **Ultracode** (`RuntimeModelChoice.ultracode`) is offered on the models whose
+  efforts include `xhigh`, the CLI's own test, and travels with any effort as
+  `apply_flag_settings.ultracode`. Each process reads the profile's own state when
+  it opens from `get_settings.applied.ultracodeRequested`, which holds whatever
+  the opening model (`ultracode` is on only for a model that offers it), and
+  reports it as `profile_ultracode` session info. A rejected read is tolerated; a
+  process that stops during it fails the open. Claude drops Ultracode when effort
+  changes, so every apply restates it: the conversation's choice, or else the
+  profile's own (off on a model without it). The row and switch show that same
+  pending state. `get_settings.applied.ultracode` must match; a CLI without the
+  field counts as off. Turning it on is refused, leaving the message
+  unsent, when `ultracodeAvailable` is false (dynamic workflows off) or missing
+  (an older CLI). Delegated children keep their own profile's setting.
 
 Context usage is the latest native occupancy/request snapshot (`context_used`
 or `last.totalTokens`; Hermes `session.info`/`session.usage`/completion usage,

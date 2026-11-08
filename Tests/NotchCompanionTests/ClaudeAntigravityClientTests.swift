@@ -157,13 +157,132 @@ final class ClaudeAntigravityClientTests: XCTestCase {
         }
     }
 
+    func testClaudeAppliesUltracodeBesideEffort() async throws {
+        let (directory, executable) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let client = ClaudeClient(profileID: directory.path, executableURL: executable)
+        defer { client.disconnect() }
+        try await client.connect()
+        let opened = try await client.request("session.create", params: ["cwd": directory.path, "project_trusted": true])
+        let id = try XCTUnwrap(opened["session_id"] as? String)
+        let catalog = try XCTUnwrap(opened["catalog"] as? RuntimeModelCatalog)
+        XCTAssertTrue(catalog.contains(RuntimeModelChoice(model: "fixture-selected", ultracode: true)))
+        XCTAssertFalse(catalog.contains(RuntimeModelChoice(model: "fixture-model", ultracode: true)), "Only models with xhigh offer Ultracode")
+        var completions = 0
+        client.onEvent = { name, _ in if name == "message.complete" { completions += 1 } }
+        _ = try await client.request("session.model.set", params: ["session_id": id, "model": "fixture-selected", "reasoning_effort": "high", "ultracode": true])
+        // The fixture drops Ultracode on an effort change unless the adapter restates it.
+        _ = try await client.request("session.model.set", params: ["session_id": id, "model": "fixture-selected", "reasoning_effort": "low", "ultracode": true])
+        _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "ultracode", "turn_id": UUID().uuidString])
+        try await wait { completions == 1 }
+        // Clearing the choice returns to the profile's own, here off.
+        _ = try await client.request("session.model.set", params: ["session_id": id, "model": "fixture-selected", "reasoning_effort": "low"])
+        _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "off", "turn_id": UUID().uuidString])
+        try await wait { completions == 2 }
+    }
+
+    func testClaudeKeepsTheProfilesOwnUltracodeUntilChosen() async throws {
+        let (directory, executable) = try fixture(nativeUltracode: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let client = ClaudeClient(profileID: directory.path, executableURL: executable)
+        defer { client.disconnect() }
+        try await client.connect()
+        let opened = try await client.request("session.create", params: ["cwd": directory.path, "project_trusted": true])
+        let id = try XCTUnwrap(opened["session_id"] as? String)
+        // Opened on a model without Ultracode, the profile's own still reads on.
+        XCTAssertEqual((opened["info"] as? [String: Any])?["profile_ultracode"] as? Bool, true, "The row shows the profile's own Ultracode")
+        var completions = 0
+        client.onEvent = { name, _ in if name == "message.complete" { completions += 1 } }
+        // An effort change alone would drop it.
+        _ = try await client.request("session.model.set", params: ["session_id": id, "model": "fixture-selected", "reasoning_effort": "low"])
+        _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "ultracode", "turn_id": UUID().uuidString])
+        try await wait { completions == 1 }
+        _ = try await client.request("session.model.set", params: ["session_id": id, "model": "fixture-selected", "reasoning_effort": "low", "ultracode": false])
+        _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "off", "turn_id": UUID().uuidString])
+        try await wait { completions == 2 }
+        // A reopened process starts from the profile again, and an unset choice keeps it.
+        client.disconnect()
+        try await client.connect()
+        let resumed = try await client.request("session.resume", params: ["session_id": id, "cwd": directory.path, "project_trusted": true])
+        XCTAssertEqual((resumed["info"] as? [String: Any])?["profile_ultracode"] as? Bool, true)
+        _ = try await client.request("session.model.set", params: ["session_id": id, "model": "fixture-selected", "reasoning_effort": "low"])
+        _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "ultracode", "turn_id": UUID().uuidString])
+        try await wait { completions == 3 }
+    }
+
+    func testClaudeOpenFailsWhenTheProcessStopsDuringTheSettingsRead() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notch-claude-stop-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = directory.appendingPathComponent("claude-fixture")
+        try #"""
+        #!/usr/bin/env python3
+        import json, sys
+        for line in sys.stdin:
+            frame=json.loads(line)
+            if frame['request']['subtype']=='get_settings': sys.exit(1)
+            print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':frame['request_id'],'response':{'models':[]}}}),flush=True)
+        """#.write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let client = ClaudeClient(profileID: directory.path, executableURL: executable)
+        defer { client.disconnect() }
+        try await client.connect()
+        do {
+            // With delegation, the next control used to wait on the stopped process forever.
+            _ = try await client.request("session.create", params: ["cwd": directory.path, "project_trusted": true,
+                                                                    "delegation": ["url": "http://127.0.0.1:9/mcp", "token": "tok"]])
+            XCTFail("A process that stopped while opening is not an open session")
+        } catch {}
+    }
+
+    func testClaudeWithoutUltracodeFieldRefusesItButStillSends() async throws {
+        let (directory, executable) = try fixture(reportsUltracode: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let client = ClaudeClient(profileID: directory.path, executableURL: executable)
+        defer { client.disconnect() }
+        try await client.connect()
+        let opened = try await client.request("session.create", params: ["cwd": directory.path, "project_trusted": true])
+        let id = try XCTUnwrap(opened["session_id"] as? String)
+        do {
+            _ = try await client.request("session.model.set", params: ["session_id": id, "model": "fixture-selected", "ultracode": true])
+            XCTFail("A CLI that does not report Ultracode cannot confirm it")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("does not report Ultracode"), error.localizedDescription)
+        }
+        var completions = 0
+        client.onEvent = { name, _ in if name == "message.complete" { completions += 1 } }
+        for ultracode in [false, nil] as [Bool?] {
+            var params: [String: Any] = ["session_id": id, "model": "fixture-selected", "reasoning_effort": "low"]
+            params["ultracode"] = ultracode
+            _ = try await client.request("session.model.set", params: params)
+        }
+        _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "off", "turn_id": UUID().uuidString])
+        try await wait { completions == 1 }
+    }
+
+    func testClaudeExplainsUltracodeWithoutWorkflows() async throws {
+        let (directory, executable) = try fixture(workflows: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let client = ClaudeClient(profileID: directory.path, executableURL: executable)
+        defer { client.disconnect() }
+        try await client.connect()
+        let opened = try await client.request("session.create", params: ["cwd": directory.path, "project_trusted": true])
+        let id = try XCTUnwrap(opened["session_id"] as? String)
+        do {
+            _ = try await client.request("session.model.set", params: ["session_id": id, "model": "fixture-selected", "ultracode": true])
+            XCTFail("Ultracode that Claude Code did not turn on must leave the message unsent")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("dynamic workflows"), error.localizedDescription)
+        }
+    }
+
     private func wait(_ predicate: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(5)
         while !predicate(), Date() < deadline { try await Task.sleep(nanoseconds: 20_000_000) }
         XCTAssertTrue(predicate(), "Fixture transport failed to settle")
     }
 
-    private func fixture(ignoresEffort: Bool = false) throws -> (URL, URL) {
+    private func fixture(ignoresEffort: Bool = false, workflows: Bool = true, nativeUltracode: Bool = false, reportsUltracode: Bool = true) throws -> (URL, URL) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notch-native-fixture-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let executable = directory.appendingPathComponent("native-cli")
@@ -176,6 +295,9 @@ final class ClaudeAntigravityClientTests: XCTestCase {
         assert sid or {'--no-session-persistence','--strict-mcp-config'} <= set(sys.argv), 'A catalog probe must not save a session or start MCP servers'
         selected_model = 'fixture-model'
         effort = None
+        ultracode = \#(nativeUltracode ? "True" : "False")
+        workflows = \#(workflows ? "True" : "False")
+        reports = \#(reportsUltracode ? "True" : "False")
         def finish():
             emit({'type':'assistant','session_id':sid,'message':{'model':selected_model,'content':[], 'usage':{'input_tokens':12,'cache_creation_input_tokens':70,'cache_read_input_tokens':110,'output_tokens':900}}})
             emit({'type':'result','session_id':sid,'is_error':False,'result':'fixture answer','usage':{'input_tokens':90000},'modelUsage':{selected_model:{'contextWindow':16000,'inputTokens':90000}}})
@@ -187,13 +309,21 @@ final class ClaudeAntigravityClientTests: XCTestCase {
                 if kind=='set_model':
                     selected_model=frame['request']['model']
                 elif kind=='apply_flag_settings':
-                    assert set(frame['request']['settings']) == {'effortLevel'}
-                    effort=\#(ignoresEffort ? "None" : "frame['request']['settings']['effortLevel']")
-                    assert effort in [None, 'low', 'high']
+                    settings=frame['request']['settings']
+                    assert set(settings) in [{'effortLevel'}, {'effortLevel','ultracode'}]
+                    requested=\#(ignoresEffort ? "None" : "settings['effortLevel']")
+                    assert requested in [None, 'low', 'high', 'xhigh']
+                    # Like Claude Code, an effort change alone drops Ultracode; an older CLI ignores the flag.
+                    ultracode=settings['ultracode'] and workflows and reports if 'ultracode' in settings else ultracode and requested==effort
+                    effort=requested
                 else:
                     assert kind in ['initialize', 'get_settings'], 'Never write user or project settings'
-                body={'models':[{'value':'default','resolvedModel':'fixture-model'},{'value':'fixture-selected','supportsEffort':True,'supportedEffortLevels':['low','high']}],'session_state':'idle'} if kind=='initialize' else {}
-                if kind=='get_settings': body={'applied':{'model':selected_model,'effort':effort or 'medium'}}
+                body={'models':[{'value':'default','resolvedModel':'fixture-model'},{'value':'fixture-selected','supportsEffort':True,'supportedEffortLevels':['low','high','xhigh']}],'session_state':'idle'} if kind=='initialize' else {}
+                if kind=='get_settings':
+                    body={'applied':{'model':selected_model,'effort':effort or 'medium'}}
+                    # Like Claude Code, the applied state holds only on a model with xhigh; the request is the profile's own.
+                    offers=workflows and selected_model=='fixture-selected'
+                    if reports: body['applied'].update(ultracode=ultracode and offers, ultracodeRequested=ultracode, ultracodeAvailable=offers)
                 emit({'type':'control_response','response':{'subtype':'success','request_id':frame['request_id'],'response':body}})
             elif frame['type']=='control_response':
                 body=frame['response']['response']
@@ -206,7 +336,8 @@ final class ClaudeAntigravityClientTests: XCTestCase {
                 emit({'type':'system','subtype':'session_state_changed','state':'running','session_id':sid})
                 emit(frame)
                 text=frame['message']['content'][0]['text']
-                assert effort == {'approval':'high','question':'low','clear':None}[text], 'Apply or clear effort before sending'
+                assert (effort, ultracode) == {'approval':('high',False),'question':('low',False),'clear':(None,False),
+                    'ultracode':('low',True),'off':('low',False)}[text], 'Apply or clear effort and Ultracode before sending'
                 if text=='approval':
                     emit({'type':'control_request','request_id':'approval','request':{'subtype':'can_use_tool','tool_name':'Bash','input':{'command':'must not run'}}})
                 elif text=='question':

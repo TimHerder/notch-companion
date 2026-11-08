@@ -570,6 +570,7 @@ final class AppModel: ObservableObject {
         var params: [String: Any] = ["session_id": sessionID, "model": choice.model]
         if let provider = choice.provider { params["provider"] = provider }
         if let effort = choice.reasoningEffort { params["reasoning_effort"] = effort }
+        if let ultracode = choice.ultracode { params["ultracode"] = ultracode }
         let result = try await client.request("session.model.set", params: params)
         if result["confirm_required"] as? Bool == true {
             let message = result["confirm_message"] as? String ?? result["warning"] as? String ?? "Hermes requires confirmation to use this model."

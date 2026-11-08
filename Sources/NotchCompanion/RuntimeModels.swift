@@ -4,6 +4,8 @@ struct RuntimeModelChoice: Codable, Hashable, Identifiable {
     var model: String
     var provider: String? = nil
     var reasoningEffort: String? = nil
+    /// Claude Code's Ultracode, beside any effort; nil keeps the profile's own.
+    var ultracode: Bool? = nil
     var id: String { (provider ?? "") + ":" + model }
 
     /// Hermes accepts a slash-command argument string. Catalog values must not
@@ -26,6 +28,7 @@ struct RuntimeModelOption: Identifiable, Equatable {
     var title: String
     var reasoningEfforts: [String] = []
     var defaultReasoningEffort: String? = nil
+    var offersUltracode = false
     var id: String { choice.id }
 
     static func effortTitle(_ effort: String) -> String { effort == "xhigh" ? "Extra high" : effort.capitalized }
@@ -56,6 +59,7 @@ struct RuntimeModelCatalog: Equatable {
 
     func contains(_ choice: RuntimeModelChoice) -> Bool {
         guard option(for: choice) != nil || defaultModel?.id == choice.id else { return false }
+        guard choice.ultracode != true || option(for: choice)?.offersUltracode == true else { return false }
         return choice.reasoningEffort.map { option(for: choice)?.reasoningEfforts.contains($0) == true } ?? true
     }
 
@@ -157,6 +161,8 @@ struct RuntimeSessionInfo: Codable, Equatable {
     var capabilities: RuntimeCapabilities? = nil
     var capabilityNote: String? = nil
     var nativeInterface: String? = nil
+    /// Claude Code's own Ultracode for this profile, applied when a conversation has no choice.
+    var profileUltracode: Bool? = nil
 
     mutating func merge(_ payload: [String: Any], runtime: RuntimeKind) {
         if let value = payload["interface"] as? String { nativeInterface = value }
@@ -166,6 +172,7 @@ struct RuntimeSessionInfo: Codable, Equatable {
             capabilities = supported
         }
         if let note = payload["capability_note"] as? String { capabilityNote = note }
+        if let value = payload["profile_ultracode"] as? Bool { profileUltracode = value }
         if payload["context_reset"] as? Bool == true { context = nil }
         let usage = payload["usage"] as? [String: Any]
         if let value = nonempty(payload["model"]) ?? nonempty(usage?["model"]), value != model {

@@ -26,6 +26,9 @@ struct ModelControlsView: View {
             let modelTitle = shown.map { catalog?.title(for: $0) ?? $0.model }
             let shownOption = shown.flatMap { catalog?.option(for: $0) }
             let effort = shownOption?.reasoningEfforts.isEmpty == false ? shown?.reasoningEffort ?? shownOption?.defaultReasoningEffort : nil
+            // What the next send applies: the conversation's choice, else the profile's own.
+            let ultracode = shownOption?.offersUltracode == true && (session.modelOverride?.ultracode ?? session.runtimeInfo?.profileUltracode) == true
+            let ultracodeTag = Text("· Ultracode").foregroundStyle(CompanionStyle.ultracode).lineLimit(1)
             let permissionTitle = session.permissionMode?.title ?? "Default permissions"
             let context = session.runtimeInfo?.context
             // Unclamped, so an over-limit report reads as more than 100 %.
@@ -99,6 +102,7 @@ struct ModelControlsView: View {
                                     if let effort {
                                         Text(RuntimeModelOption.effortTitle(effort)).foregroundStyle(CompanionStyle.tertiary).lineLimit(1)
                                     }
+                                    if ultracode { ultracodeTag }
                                 }
                                 if shortModel { name.fixedSize() } else { name.frame(minWidth: 84) }
                             }
@@ -112,6 +116,7 @@ struct ModelControlsView: View {
                                         // Not faint: that fails AA contrast on the Glass and Smoked bodies.
                                         Text(RuntimeModelOption.effortTitle(effort)).lineLimit(1).foregroundStyle(CompanionStyle.secondary)
                                     }
+                                    if ultracode { ultracodeTag }
                                 }
                                 if shortModel { name.fixedSize() } else { name.frame(minWidth: 84) }
                             }
@@ -120,7 +125,7 @@ struct ModelControlsView: View {
                     .sessionControlStyle()
                     .disabled(!model.canChangeModel(session.id))
                     .accessibilityLabel("Choose \(session.runtime.title) model and reasoning effort")
-                    .accessibilityValue([modelTitle, effort.map(RuntimeModelOption.effortTitle)].compactMap { $0 }.joined(separator: ", "))
+                    .accessibilityValue([modelTitle, effort.map(RuntimeModelOption.effortTitle), ultracode ? "Ultracode" : nil].compactMap { $0 }.joined(separator: ", "))
                     .background(PopupDismissalRegion(monitor: popupDismissal))
                     .help(session.isLegacyPrivate ? "Model selection is unavailable for Legacy Hermes."
                           : session.isBusy ? "Wait for this session and its delegated work to finish."
@@ -453,6 +458,7 @@ struct ModelControlsView: View {
                             if let effort = session.modelOverride?.reasoningEffort, option.reasoningEfforts.contains(effort) {
                                 choice.reasoningEffort = effort
                             } else { choice.reasoningEffort = option.defaultReasoningEffort }
+                            if let on = session.modelOverride?.ultracode { choice.ultracode = on && option.offersUltracode }
                             model.setModel(choice, for: session.id)
                             if option.reasoningEfforts.isEmpty { choosingModel = false }
                         }
@@ -547,6 +553,24 @@ struct ModelControlsView: View {
                     .accessibilityLabel("Reasoning effort: \(effort)")
                     .accessibilityAddTraits(selected ? .isSelected : [])
                 }
+            }
+            if option.offersUltracode {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Ultracode").foregroundStyle(CompanionStyle.ultracode)
+                        Text("Multi-agent workflows at any effort").font(CompanionStyle.caption)
+                            .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.secondary))
+                    }
+                    Spacer(minLength: 0)
+                    Toggle("Ultracode", isOn: Binding(get: { (choice.ultracode ?? session.runtimeInfo?.profileUltracode) == true }) { on in
+                        var selection = choice
+                        selection.ultracode = on
+                        model.setModel(selection, for: session.id)
+                    })
+                    .toggleStyle(NotchSwitchStyle())
+                }
+                .padding(.leading, PanelTheme.pick(10, 0, 0)).padding(.top, 2)
+                .help("Lets Claude Code orchestrate multi-agent workflows in this conversation. Applies on Send.")
             }
         }
     }

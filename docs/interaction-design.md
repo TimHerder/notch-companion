@@ -1051,13 +1051,18 @@ is not enough (its name stays in help and VoiceOver). The gauge keeps its size.
 The model label shows the runtime's display name for the selected, reported or
 default model (the ID only when unnamed; **Runtime default** when none is
 known), no “Next:” prefix, then the effort when the model has efforts (`xhigh`
-reads **Extra high**) one step quieter than the name, no chevron. A long name truncates within the row; it
+reads **Extra high**) one step quieter than the name, no chevron. Claude Code's
+Ultracode, chosen or the profile's own, follows as **· Ultracode** in lavender
+and drops with the effort. A long name truncates within the row; it
 never collapses to a lone “…”.
 
 The model picker is a bounded overlay rising from the row with an inset **Search
 models…** field, refresh and Close. Search filters by name or ID without
 changing selection. Choosing a model with efforts keeps the picker open for
-**Reasoning effort**; the section is omitted when unsupported. No footer hints.
+**Reasoning effort**; the section is omitted when unsupported. Below the effort
+chips, a model that offers Ultracode adds a lavender **Ultracode** row with a
+switch; it keeps its state across efforts and models that offer it, and **Use
+runtime default** returns to the profile's own. No footer hints.
 Loading, errors and empty results stay visible. Choices apply on Send and are
 disabled during parent/child work or unresolved sends. Changing session or
 runtime, or collapsing, dismisses it. Model, permission and context overlays

@@ -1155,9 +1155,10 @@ import XCTest
             try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
         }
         let requests = frames.compactMap { $0["request"] as? [String: Any] }
-        XCTAssertEqual(requests.map { $0["subtype"] as? String }, ["initialize", "mcp_set_servers"])
+        // get_settings only reads the profile's Ultracode.
+        XCTAssertEqual(requests.map { $0["subtype"] as? String }, ["initialize", "get_settings", "mcp_set_servers"])
         XCTAssertEqual(requests[0]["appendSystemPrompt"] as? String, "Delegation rules.", "Appended, never replacing the profile's prompt")
-        let servers = try XCTUnwrap(requests[1]["servers"] as? [String: Any])
+        let servers = try XCTUnwrap(requests[2]["servers"] as? [String: Any])
         XCTAssertEqual(Array(servers.keys), ["notch"], "Only the companion's server; the user's MCP config stays")
         XCTAssertFalse((frames[0]["argv"] as? [String] ?? []).contains { $0.contains("tok") }, "The token stays out of argv")
     }
