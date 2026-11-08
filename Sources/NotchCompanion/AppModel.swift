@@ -130,7 +130,7 @@ final class AppModel: ObservableObject {
     @Published var unavailableShortcuts: Set<ShortcutAction> = []
     var shortcutsChanged: (() -> Void)?
     private var composingSessionIDs = Set<String>()
-    private var heldDictation: [String: String] = [:]
+    @Published private var heldDictation: [String: String] = [:]
     /// The window that was in front when the notch last opened.
     @Published var snapShotSource: SnapShotSource?
     @Published var snapShotNeedsPermission = false
@@ -850,6 +850,11 @@ final class AppModel: ObservableObject {
         }
         update(id) { $0.draft = Dictation.append(text, to: $0.draft) }
         scheduleSave()
+    }
+
+    /// Returns once no dictated words wait on an input method in this session.
+    func dictationDelivered(to id: String) async {
+        for await held in $heldDictation.values where held[id] == nil { return }
     }
 
     func setComposing(_ composing: Bool, in id: String) {

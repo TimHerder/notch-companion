@@ -335,6 +335,8 @@ struct ComposerView: View {
             model.dictation.stop()
             Task {
                 await model.dictation.finished()
+                // Final words held by an open input-method composition join when it commits.
+                if let id { await model.dictationDelivered(to: id) }
                 guard model.currentID == id else { return }
                 submissionNotice = nil
                 // A run that ended in a failure may have lost words; leave the draft to review.

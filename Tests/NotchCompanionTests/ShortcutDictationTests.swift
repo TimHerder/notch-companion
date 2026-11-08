@@ -201,6 +201,34 @@ import XCTest
         XCTAssertEqual(model.draft, "Queued message!")
     }
 
+    func testSendWaitsForWordsHeldByAnInputMethod() async throws {
+        let suite = "notch-held-\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: suite)!
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        let model = AppModel(storageURL: folder.appendingPathComponent("sessions.json"), playsSounds: false,
+                             client: ShortcutTransport(), preferences: preferences)
+        defer { model.shutdown(); preferences.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        await model.newSession(showPanel: false)
+        let id = try XCTUnwrap(model.currentID)
+        model.draft = "Regarding the crash:"
+
+        // Dictation finalizes while a composition is open: its words wait, and so does Send.
+        model.setComposing(true, in: id)
+        model.receiveDictation("it happens on launch", into: id)
+        var delivered = false
+        let waiting = Task { await model.dictationDelivered(to: id); delivered = true }
+        await Task.yield(); await Task.yield()
+        XCTAssertFalse(delivered)
+        XCTAssertEqual(model.draft, "Regarding the crash:")
+
+        model.setComposing(false, in: id)
+        await waiting.value
+        XCTAssertTrue(delivered)
+        XCTAssertEqual(model.draft, "Regarding the crash: it happens on launch")
+        // Nothing held: it returns at once.
+        await model.dictationDelivered(to: id)
+    }
+
     func testDictatedWordsJoinTheDraftWithOneSpace() {
         XCTAssertEqual(Dictation.append(" Hello there.", to: ""), "Hello there.")
         XCTAssertEqual(Dictation.append("Second part.", to: "First part."), "First part. Second part.")

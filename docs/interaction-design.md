@@ -1222,7 +1222,8 @@ until the user sends.
   draft for review.
 - **Sending while dictating.** Return or Send in the session being dictated
   into stops listening, shows “Adding your last words…” until the engine has
-  delivered them (Parakeet writes only at the end), then sends the draft with
+  delivered them (Parakeet writes only at the end, and words held by an open
+  input-method composition wait for its commit), then sends the draft with
   them. If the run ends in a failure, nothing is sent and the draft stays for
   review beside the failure. Send is enabled meanwhile even with an empty draft.
 - **Stopping.** The button, the shortcut,
