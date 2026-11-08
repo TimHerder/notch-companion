@@ -181,6 +181,19 @@ final class ClaudeAntigravityClientTests: XCTestCase {
         try await wait { completions == 2 }
     }
 
+    func testClaudeNamesTheProfilesOwnPermissionMode() {
+        XCTAssertEqual(ClaudeClient.profilePermission("bypassPermissions"), "fullAccess")
+        XCTAssertEqual(ClaudeClient.profilePermission("manual"), "ask")
+        XCTAssertEqual(ClaudeClient.profilePermission("auto"), "Auto")
+        XCTAssertNil(ClaudeClient.profilePermission(nil), "An older CLI reports nothing, so Default stays unnamed")
+        var info = RuntimeSessionInfo()
+        info.merge(["profile_permission_mode": "fullAccess"], runtime: .claude)
+        XCTAssertEqual(info.profilePermissionMode, .fullAccess)
+        info.merge(["profile_permission_mode": "Auto"], runtime: .claude)
+        XCTAssertNil(info.profilePermissionMode)
+        XCTAssertEqual(info.profilePermissionTitle, "Auto")
+    }
+
     func testClaudeKeepsTheProfilesOwnUltracodeUntilChosen() async throws {
         let (directory, executable) = try fixture(nativeUltracode: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -191,6 +204,7 @@ final class ClaudeAntigravityClientTests: XCTestCase {
         let id = try XCTUnwrap(opened["session_id"] as? String)
         // Opened on a model without Ultracode, the profile's own still reads on.
         XCTAssertEqual((opened["info"] as? [String: Any])?["profile_ultracode"] as? Bool, true, "The row shows the profile's own Ultracode")
+        XCTAssertEqual((opened["info"] as? [String: Any])?["profile_permission_mode"] as? String, "fullAccess", "Default permissions names the mode the profile opened in")
         var completions = 0
         client.onEvent = { name, _ in if name == "message.complete" { completions += 1 } }
         // An effort change alone would drop it.
@@ -318,7 +332,7 @@ final class ClaudeAntigravityClientTests: XCTestCase {
                     effort=requested
                 else:
                     assert kind in ['initialize', 'get_settings'], 'Never write user or project settings'
-                body={'models':[{'value':'default','resolvedModel':'fixture-model'},{'value':'fixture-selected','supportsEffort':True,'supportedEffortLevels':['low','high','xhigh']}],'session_state':'idle'} if kind=='initialize' else {}
+                body={'models':[{'value':'default','resolvedModel':'fixture-model'},{'value':'fixture-selected','supportsEffort':True,'supportedEffortLevels':['low','high','xhigh']}],'session_state':'idle','current_permission_mode':'bypassPermissions'} if kind=='initialize' else {}
                 if kind=='get_settings':
                     body={'applied':{'model':selected_model,'effort':effort or 'medium'}}
                     # Like Claude Code, the applied state holds only on a model with xhigh; the request is the profile's own.

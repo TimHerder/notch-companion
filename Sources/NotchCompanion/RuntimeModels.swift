@@ -163,6 +163,10 @@ struct RuntimeSessionInfo: Codable, Equatable {
     var nativeInterface: String? = nil
     /// Claude Code's own Ultracode for this profile, applied when a conversation has no choice.
     var profileUltracode: Bool? = nil
+    /// The harness's own permission mode, which Default permissions uses: a `PermissionMode` raw value or a native title.
+    var profilePermission: String? = nil
+    var profilePermissionMode: PermissionMode? { profilePermission.flatMap(PermissionMode.init(rawValue:)) }
+    var profilePermissionTitle: String? { profilePermissionMode?.title ?? profilePermission }
 
     mutating func merge(_ payload: [String: Any], runtime: RuntimeKind) {
         if let value = payload["interface"] as? String { nativeInterface = value }
@@ -173,6 +177,7 @@ struct RuntimeSessionInfo: Codable, Equatable {
         }
         if let note = payload["capability_note"] as? String { capabilityNote = note }
         if let value = payload["profile_ultracode"] as? Bool { profileUltracode = value }
+        if let value = nonempty(payload["profile_permission_mode"]) { profilePermission = value }
         if payload["context_reset"] as? Bool == true { context = nil }
         let usage = payload["usage"] as? [String: Any]
         if let value = nonempty(payload["model"]) ?? nonempty(usage?["model"]), value != model {

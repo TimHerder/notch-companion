@@ -438,10 +438,10 @@ private struct SkipLabelStyle: ViewModifier {
 struct FullAccessMarker: View {
     var session: CompanionSession?
     var body: some View {
-        if let session, session.permissionMode == .fullAccess {
+        if let session, session.effectivePermissionMode == .fullAccess {
             Image(systemName: PermissionMode.fullAccess.symbol).font(.system(size: 11, weight: .medium))
                 .foregroundStyle(CompanionStyle.amber)
-                .help("Full access: \(session.runtime.title) runs commands and edits files here without asking.")
+                .help("Full access\(session.permissionMode == nil ? " (\(session.runtime.title)'s own settings)" : ""): \(session.runtime.title) runs commands and edits files here without asking.")
                 .accessibilityLabel("Full access is on for this session")
         }
     }
