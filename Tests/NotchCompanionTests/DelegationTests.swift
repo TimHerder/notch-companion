@@ -1158,6 +1158,8 @@ import XCTest
         // get_settings only reads the profile's Ultracode.
         XCTAssertEqual(requests.map { $0["subtype"] as? String }, ["initialize", "get_settings", "mcp_set_servers"])
         XCTAssertEqual(requests[0]["appendSystemPrompt"] as? String, "Delegation rules.", "Appended, never replacing the profile's prompt")
+        XCTAssertEqual(requests[0]["supportedDialogKinds"] as? [String], ["computer_use_approval"])
+        XCTAssertTrue((frames[0]["argv"] as? [String] ?? []).contains("--mcp-config"), "Claude's own computer-use server joins at launch")
         let servers = try XCTUnwrap(requests[2]["servers"] as? [String: Any])
         XCTAssertEqual(Array(servers.keys), ["notch"], "Only the companion's server; the user's MCP config stays")
         XCTAssertFalse((frames[0]["argv"] as? [String] ?? []).contains { $0.contains("tok") }, "The token stays out of argv")

@@ -56,15 +56,29 @@ final class ClaudeClient: RuntimeTransport {
     static let capabilities: [String: Bool] = ["resume": true, "attachments": true, "images": true,
         "approvals": true, "questions": true, "modelSelection": true, "contextUsage": true, "delegation": true]
 
-    static func arguments(id: String, resume: Bool, allowBypass: Bool = false, delegation: [String: Any]? = nil) throws -> [String] {
+    static func arguments(id: String, resume: Bool, allowBypass: Bool = false, delegation: [String: Any]? = nil, computerUse executable: String? = nil) throws -> [String] {
         guard UUID(uuidString: id) != nil else { throw AppError("Claude Code requires a valid saved native session UUID.") }
+        let allowed = (delegation.map { [allowedDelegationTools($0)] } ?? []) + (executable == nil ? [] : [computerUseTools])
         // Only a session the user gave Full access may switch into bypass; the
         // flag alone leaves the native mode unchanged.
         return ["--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                 "--include-partial-messages", "--replay-user-messages", "--permission-prompt-tool", "stdio",
                 "--forward-subagent-text", resume ? "--resume=\(id)" : "--session-id=\(id)"]
             + (allowBypass ? ["--allow-dangerously-skip-permissions"] : [])
-            + (delegation.map { ["--allowedTools", allowedDelegationTools($0)] } ?? [])
+            + (executable.map { ["--mcp-config", computerUseConfig($0)] } ?? [])
+            + (allowed.isEmpty ? [] : ["--allowedTools", allowed.joined(separator: ",")])
+    }
+
+    /// Pre-allowed as the CLI's own setup does; the per-app grant is the approval.
+    static let computerUseTools = "mcp__computer-use__*"
+
+    /// Claude's built-in computer-use server, which the CLI adds itself only to
+    /// interactive sessions. The CLI still runs it in-process and applies its own
+    /// gates: the project's /mcp switch, the plan and the per-app grant.
+    static func computerUseConfig(_ executable: String) -> String {
+        let config = ["mcpServers": ["computer-use": ["type": "stdio", "command": executable, "args": ["--computer-use-mcp"]]]]
+        let data = try! JSONSerialization.data(withJSONObject: config, options: [.sortedKeys, .withoutEscapingSlashes])
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// Pre-approves the companion's tools, as T3 Code does; a Plan session only the read-only ones.
@@ -312,7 +326,7 @@ final class ClaudeClient: RuntimeTransport {
     }
 
     private func open(id: String, cwd: URL, resume: Bool, allowBypass: Bool = false, delegation: [String: Any]? = nil) async throws -> Session {
-        let arguments = try Self.arguments(id: id, resume: resume, allowBypass: allowBypass, delegation: delegation)
+        let arguments = try Self.arguments(id: id, resume: resume, allowBypass: allowBypass, delegation: delegation, computerUse: executable?.path)
         let session = Session(id: id, cwd: cwd)
         session.allowsBypass = allowBypass
         session.delegation = delegation
@@ -333,7 +347,8 @@ final class ClaudeClient: RuntimeTransport {
                 throw AppError("Claude Code connection changed before the session opened. No message was sent.")
             }
             try session.process.start(executable: executable, arguments: arguments, environment: environment, cwd: cwd)
-            var initialize: [String: Any] = ["subtype": "initialize", "forwardSubagentText": true]
+            var initialize: [String: Any] = ["subtype": "initialize", "forwardSubagentText": true,
+                                             "supportedDialogKinds": [ClaudeProtocolState.computerUseDialog]]
             // Appended to Claude's own system prompt; the profile's instructions stay.
             if let instructions = delegation?["instructions"] as? String { initialize["appendSystemPrompt"] = instructions }
             let initialized = try await control(session, initialize)

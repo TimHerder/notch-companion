@@ -90,6 +90,19 @@ struct ClaudeProtocolState {
     mutating func interaction(_ frame: [String: Any]) -> (events: [Event], reply: [String: Any]?) {
         guard let id = frame["request_id"] as? String, !id.isEmpty else { return ([], nil) }
         let request = frame["request"] as? [String: Any] ?? [:]
+        if active, request["subtype"] as? String == "request_user_dialog", request["dialog_kind"] as? String == Self.computerUseDialog,
+           let payload = request["payload"] as? [String: Any] {
+            guard requests[id] == nil else { return ([], nil) }
+            // Missing macOS access: the CLI rechecks it and tells Claude once this settles.
+            if let tcc = payload["tccState"] as? [String: Any] {
+                let missing = [("Accessibility", "accessibility"), ("Screen Recording", "screenRecording")].filter { tcc[$0.1] as? Bool != true }.map(\.0)
+                return ([event("runtime.notice", ["message": "Claude computer use needs \(missing.joined(separator: " and ")) for Notch Companion. Allow it in System Settings → Privacy & Security, then ask Claude again."])],
+                        Self.response(id, ["behavior": "completed", "result": Self.computerUseGrant(nil)]))
+            }
+            requests[id] = Interaction(input: payload, tool: Self.computerUseDialog)
+            return ([event("approval.request", ["request_id": id, "choices": ["once", "deny"],
+                "command": Self.describeComputerUse(payload), "plan": false])], nil)
+        }
         guard active, request["subtype"] as? String == "can_use_tool",
               let name = request["tool_name"] as? String, let input = request["input"] as? [String: Any] else {
             return ([event("runtime.notice", ["message": "Claude Code requested an unsupported interaction. It was declined; complete it in the native CLI if needed."])],
@@ -142,12 +155,59 @@ struct ClaudeProtocolState {
         return name + "\n\n" + String(json.prefix(8_000))
     }
 
+    static let computerUseDialog = "computer_use_approval"
+
+    /// The apps and extras a computer-use grant covers, as the CLI's own dialog lists them.
+    static func describeComputerUse(_ payload: [String: Any]) -> String {
+        let apps = payload["apps"] as? [[String: Any]] ?? []
+        func list(_ title: String, _ include: (_ resolved: Bool, _ granted: Bool) -> Bool) -> String? {
+            let rows = apps.filter { include($0["resolved"] is [String: Any], $0["alreadyGranted"] as? Bool == true) }.map { app -> String in
+                let resolved = app["resolved"] as? [String: Any]
+                let name = resolved?["displayName"] as? String ?? app["requestedName"] as? String ?? "App"
+                return "• " + name + ((resolved?["bundleId"] as? String).map { " (\($0))" } ?? "")
+            }
+            return rows.isEmpty ? nil : ([title] + rows).joined(separator: "\n")
+        }
+        let flags = payload["requestedFlags"] as? [String: Any] ?? [:]
+        let extras = [("clipboardRead", "• Read the clipboard"), ("clipboardWrite", "• Write the clipboard"), ("systemKeyCombos", "• System key combinations")]
+            .filter { flags[$0.0] as? Bool == true }.map(\.1)
+        let hidden = (payload["willHide"] as? [Any])?.count ?? 0
+        let sections: [String?] = [
+            "Computer use", (payload["reason"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+            list("Control these apps for this session:") { $0 && !$1 }, list("Already allowed:") { $0 && $1 }, list("Not installed:") { !$0 && !$1 },
+            extras.isEmpty ? nil : (["Also:"] + extras).joined(separator: "\n"),
+            hidden > 0 ? "\(hidden) other \(hidden == 1 ? "app" : "apps") will be hidden while Claude works." : nil]
+        return String(sections.compactMap { $0 }.joined(separator: "\n\n").prefix(8_000))
+    }
+
+    /// The CLI's own result shape. Nil grants nothing, as the CLI's Deny does.
+    static func computerUseGrant(_ payload: [String: Any]?, at date: Date = Date()) -> [String: Any] {
+        var flags = ["clipboardRead": false, "clipboardWrite": false, "systemKeyCombos": false]
+        var granted = [[String: Any]](), denied = [[String: Any]]()
+        guard let payload else { return ["granted": granted, "denied": denied, "flags": flags] }
+        let requested = payload["requestedFlags"] as? [String: Any] ?? [:]
+        for key in flags.keys where requested[key] as? Bool == true { flags[key] = true }
+        let grantedAt = Int(date.timeIntervalSince1970 * 1000)
+        for app in payload["apps"] as? [[String: Any]] ?? [] {
+            if let resolved = app["resolved"] as? [String: Any], let bundle = resolved["bundleId"] as? String {
+                guard app["alreadyGranted"] as? Bool != true, !granted.contains(where: { $0["bundleId"] as? String == bundle }) else { continue }
+                granted.append(["bundleId": bundle, "displayName": resolved["displayName"] as? String ?? bundle, "grantedAt": grantedAt])
+            } else if let name = app["requestedName"] as? String {
+                denied.append(["bundleId": name, "reason": "not_installed"])
+            }
+        }
+        return ["granted": granted, "denied": denied, "flags": flags]
+    }
+
     mutating func answer(_ params: [String: Any], approval: Bool) throws -> [String: Any]? {
         let id = params["request_id"] as? String ?? ""
         guard params["session_id"] as? String == sessionID, var pending = requests[id] else { throw AppError("This Claude Code request has expired.") }
         if approval {
             guard pending.tool != "AskUserQuestion", let choice = params["choice"] as? String, ["once", "deny"].contains(choice) else { throw AppError("Claude Code offered only Allow once or Deny for this action.") }
             requests.removeValue(forKey: id)
+            if pending.tool == Self.computerUseDialog {
+                return Self.response(id, ["behavior": "completed", "result": Self.computerUseGrant(choice == "once" ? pending.input : nil)])
+            }
             return Self.response(id, choice == "once" ? ["behavior": "allow", "updatedInput": pending.input] : ["behavior": "deny", "message": "The user denied this action."])
         }
         let questions = pending.input["questions"] as? [[String: Any]] ?? []
