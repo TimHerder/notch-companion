@@ -63,7 +63,7 @@ def tone(channels, start, duration, frequency, end_frequency=None, amp=1.0, *, p
 
 def noise(channels, start, duration, center, end_center=None, amp=1.0, *, q=1.2, pan=0.0,
           attack=0.0008, decay=200.0, seed=1) -> None:
-    """Band-passed noise (state-variable filter) for clicks, crunches, and air."""
+    """Band-passed noise (state-variable filter) for clicks, swishes, and air."""
     end_center = end_center or center
     rng = random.Random(seed)
     length = round(duration * SAMPLE_RATE)
@@ -81,13 +81,6 @@ def noise(channels, start, duration, center, end_center=None, amp=1.0, *, q=1.2,
         low += f * band
         shape = smoothstep(t / attack) * smoothstep((duration - t - 1.0 / SAMPLE_RATE) / release)
         mix(channels, offset, index, amp * shape * math.exp(-decay * t) * band, gains)
-
-
-def crunch(channels, start, amp, pan, seed) -> None:
-    """A bite: a few ultra-short ticks read as texture rather than one click."""
-    for step, (delay, level) in enumerate(((0.0, 1.0), (0.009, 0.6), (0.021, 0.35))):
-        noise(channels, start + delay, 0.018, 2600 + 500 * step, amp=amp * level, q=1.6, pan=pan,
-              decay=160, seed=seed + step)
 
 
 def room(channels, wet: float) -> None:

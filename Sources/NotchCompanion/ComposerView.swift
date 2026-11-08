@@ -213,9 +213,9 @@ struct ComposerView: View {
     private var bar: some View {
         HStack(spacing: 2) {
             QuietIconButton(symbol: "plus", label: "Attach files") { model.pickFiles(showPanel: isCompact) }
-                // A file dropped on the notch glides into this button.
+                // A file dropped on the notch glides into this button, as laid out on the session page.
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(UnifiedNotchView.coordinateSpace)) } action: { frame in
-                    if isCompact { model.attachButtonFrame = frame }
+                    if isCompact, model.page == .session, let geometry = model.geometry { model.attachButtonFrame = (frame, geometry) }
                 }
             // The notch remembers the window in front when it opened; the full window is in front itself.
             if isCompact && model.showSnapShot && model.current?.capabilities.images == true {

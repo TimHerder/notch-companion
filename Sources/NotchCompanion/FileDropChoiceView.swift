@@ -7,11 +7,10 @@ struct FileDropChoiceView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        if let choice = model.fileDropChoice {
-            GeometryReader { proxy in
-                let layout = FileDropLayout(size: proxy.size, headerHeight: model.geometry?.expandedBandHeight ?? 64,
-                                            rows: choice.targets.count)
-                let tray = layout.trayFrame
+        // The same layout the drop is hit-tested with.
+        if let choice = model.fileDropChoice, let layout = model.fileDropLayout(rows: choice.targets.count) {
+            let tray = layout.trayFrame
+            ZStack(alignment: .topLeading) {
                 VStack(alignment: .leading, spacing: 0) {
                     title(files: choice.fileCount)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -29,6 +28,7 @@ struct FileDropChoiceView: View {
                 .position(x: tray.midX, y: tray.midY)
                 .animation(model.reducedMotion ? nil : .easeOut(duration: 0.12), value: choice.destination)
             }
+            .frame(width: layout.size.width, height: layout.size.height, alignment: .topLeading)
             .foregroundStyle(CompanionStyle.text)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("File destinations")
@@ -107,7 +107,10 @@ struct FileDropChoiceView: View {
         }
         .opacity(enabled ? 1 : 0.45)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(isNew ? "New session" : "\(session?.title ?? "Session")\(isCurrent ? ", current session" : "")")
+        // The harness tells apart sessions that share a title.
+        .accessibilityLabel(isNew ? ["New session", model.newSessionRuntimeTitle].compactMap { $0 }.joined(separator: ", ")
+                            : [session?.title ?? "Session", session?.runtime.title, isCurrent ? "current session" : nil]
+                                .compactMap { $0 }.joined(separator: ", "))
         .accessibilityValue(enabled ? (selected ? "Release to attach" : "Drop target") : "Unavailable")
     }
 

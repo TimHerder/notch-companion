@@ -626,11 +626,16 @@ partial total. See the [runtime limits](backend-runtime.md#change-summaries).
    title, padding and corners, the header and margins reject drops while
    keeping the chooser open. Rows meet edge to edge, so there is no dead gap
    between them. The silhouette is unchanged. Rows accept files only after the
-   expansion settles; they keep a comfortable height on small screens and the
-   tray never grows past the content area.
+   expansion settles at its final size (a spring's overshoot would shift them
+   under the pointer), and are hit-tested with the very layout they are drawn
+   with; they keep a comfortable height on small screens and the tray never
+   grows past the content area. Each row's spoken label names its harness, so
+   sessions sharing a title stay apart.
 3. On drop the tray dissolves (0.18 s), the file's drag image glides into the
-   notch composer's attach button, and its chip springs into the field as the
-   transcript gives way (0.36 s). The eyes follow it down and give a quick
+   attach button of the notch composer's session page (as last measured on this
+   screen; when the destination shows a question, approval or project trust
+   instead, or nothing was measured yet, it vanishes where it was dropped), and
+   its chip springs into the field as the transcript gives way (0.36 s). The eyes follow it down and give a quick
    smile. The rows are fixed at drag entry, so a selection change elsewhere
    never redirects the drop. New session creates a fresh draft without
    interrupting work or changing other drafts; another session keeps its draft.
@@ -797,7 +802,8 @@ no native menu tracking.
   buttons, side by side in its middle (no greeting or hints; with no harness
   ready, “Connect a harness to get started.” above them). The harness button
   (its [logo](#agent-logos), name and a chevron) opens a compact overlay
-  centred on itself, as a native pop-up menu opens, of harnesses (each its
+  over itself from its leading edge, as a native pop-up menu opens (so it stays
+  inside the narrowest panel beside a long folder name), of harnesses (each its
   logo and name) whose current profile passed a Settings
   connection check. Readiness survives restart; profile or installation
   changes and failed connections require a new check. With none ready, link

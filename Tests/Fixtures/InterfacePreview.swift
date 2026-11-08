@@ -1208,6 +1208,13 @@ import ImageIO
         menuModel.showPermissionModes = true
         try render(UnifiedNotchView(model: menuModel), size: compact, name: "compact-draft-chooser", output: output)
         try render(FullSessionView(model: menuModel), size: full, name: "full-draft-chooser", output: output)
+        // The open harness menu beside a long folder in the narrowest panel (a 360-point screen's
+        // 336-point panel, less its margins), outlined so any overflow shows.
+        menuModel.sessions[0].workspacePath = "/tmp/A deliberately long project folder name"
+        try render(DraftDestinationView(model: menuModel, session: menuModel.sessions[0], choosingRuntime: true)
+            .frame(width: 296, height: 260).border(Color.red.opacity(0.6), width: 0.5).padding(20)
+            .background(CompanionStyle.background).foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
+            size: NSSize(width: 336, height: 300), name: "draft-harness-menu-narrow", output: output)
         let emptySuite = "notch-empty-harness-\(UUID().uuidString)"
         let emptyPreferences = UserDefaults(suiteName: emptySuite)!
         let emptyModel = AppModel(storageURL: temporary.appendingPathComponent("empty-sessions.json"), playsSounds: false,

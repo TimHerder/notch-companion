@@ -86,10 +86,12 @@ private extension View {
 struct DraftDestinationView: View {
     @ObservedObject var model: AppModel
     var session: CompanionSession
+    var choosingRuntime = false
 
     var body: some View {
         HStack(spacing: 8) {
-            SessionRuntimeControl(model: model, session: session)
+            // Above its neighbour, so the open harness menu covers the folder button.
+            SessionRuntimeControl(model: model, session: session, choosingRuntime: choosingRuntime).zIndex(1)
             WorkspaceButton(model: model, inDraft: true)
         }
     }
@@ -184,9 +186,9 @@ struct SessionRuntimeControl: View {
                 .accessibilityHint(choosingRuntime ? "Close harness choices" : "Show configured harnesses")
                 .help("Choose a harness configured in Settings")
                 .background(PopupDismissalRegion(monitor: popupDismissal))
-                // Centred on its button, as a native pop-up menu opens, so it
-                // stays inside the empty conversation around it.
-                .overlay {
+                // Over its button from the leading edge, as a native pop-up menu opens: the
+                // button leads its centred pair, so the menu stays inside the panel at any width.
+                .overlay(alignment: .leading) {
                     if choosingRuntime { runtimeChoices.fixedSize() }
                 }
                 .onChange(of: model.currentID) { _, _ in choosingRuntime = false }

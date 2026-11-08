@@ -237,6 +237,51 @@ final class FileDropChoiceTests: XCTestCase {
         }
     }
 
+    /// The panel's spring clamps progress at 1 while its outline still overshoots;
+    /// the rows are drawn at the settled size, so none accepts a file until then.
+    func testRowsAcceptNothingWhileTheOpeningSpringOvershoots() throws {
+        let (model, _, folder, _) = try fixture()
+        defer { cleanUp(model, folder) }
+        let geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 360, height: 360), topInset: 0, leftArea: nil, rightArea: nil)
+        model.geometry = geometry
+        model.sessions = (0..<5).map { CompanionSession(id: "s\($0)", title: "Session \($0)") }
+        model.currentID = "s0"
+        model.notchPresentation = .expanded(geometry)
+        model.updateFileDrop(at: CGPoint(x: -1, y: 64), fileCount: 1)
+        let target = try XCTUnwrap(model.fileDropChoice?.targets[3])
+        let point = try XCTUnwrap(self.point(target, model: model))
+        let opening = UnifiedNotchMotion(from: .resting(geometry), to: .expanded(geometry), startedAt: 0)
+        let overshooting = try XCTUnwrap(stride(from: 0.05, to: opening.duration, by: 0.01).lazy
+            .map { opening.presentation(at: $0) }
+            .first { $0.progress == 1 && $0.size != geometry.expandedFrame.size && $0.contains(point) },
+            "The opening spring is expected to overshoot after progress reaches 1.")
+        model.notchPresentation = overshooting
+        XCTAssertNil(model.fileDropDestination(at: point))
+        model.notchPresentation = opening.presentation(at: opening.duration)
+        XCTAssertEqual(model.fileDropDestination(at: point), target)
+        model.endFileDrop()
+    }
+
+    /// The drag image lands on the session page's attach button, measured on this
+    /// screen, and only when the destination shows a composer.
+    func testLandingFrameIsTheSessionPagesAttachButtonWhenTheDestinationShowsAComposer() throws {
+        let (model, _, folder, _) = try fixture()
+        defer { cleanUp(model, folder) }
+        let button = CGRect(x: 27, y: 480, width: 28, height: 28)
+        XCTAssertNil(model.attachLandingFrame, "Nothing measured yet: the file vanishes where it was dropped.")
+        model.attachButtonFrame = (button, model.geometry!)
+        model.page = .session
+        XCTAssertEqual(model.attachLandingFrame, button)
+        model.projectTrustSessionID = model.currentID
+        XCTAssertNil(model.attachLandingFrame, "Project trust replaces the composer.")
+        model.projectTrustSessionID = nil
+        model.page = .settings
+        XCTAssertNil(model.attachLandingFrame)
+        model.page = .session
+        model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1440, height: 900), topInset: 0, leftArea: nil, rightArea: nil)
+        XCTAssertNil(model.attachLandingFrame, "A frame measured on another screen is stale.")
+    }
+
     func testAcceptedDropsSignalAnAttachmentInBothKindsOfDestinationButSessionSelectionDoesNot() throws {
         let (model, _, folder, file) = try fixture()
         defer { cleanUp(model, folder) }

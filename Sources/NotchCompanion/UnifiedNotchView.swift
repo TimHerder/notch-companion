@@ -124,9 +124,9 @@ struct UnifiedNotchView: View {
                         .allowsHitTesting(false)
                         .accessibilityHidden(true)
                         .transition(.opacity)
+                    // Sized and laid out like its hit-testing: the settled expanded panel.
                     FileDropChoiceView(model: model)
                         .panelThemed()
-                        .frame(width: bodyWidth, height: model.geometry?.expandedFrame.height ?? 544)
                         .opacity(contentOpacity)
                         .allowsHitTesting(false)
                         .accessibilityHidden(!interactive)

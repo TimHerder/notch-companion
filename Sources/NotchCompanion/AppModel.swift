@@ -70,8 +70,10 @@ final class AppModel: ObservableObject {
     @Published var receivingFile = false
     /// Counts accepted attachments (drop, picker, SnapShot), never browsing stored ones.
     @Published private(set) var attachmentEvent = 0
-    /// The notch composer's attach button in whole-notch coordinates; a dropped file glides into it.
-    var attachButtonFrame: CGRect?
+    /// The notch composer's attach button on the session page, in whole-notch
+    /// coordinates, and the geometry it was measured on. A drop always lands on
+    /// the session page, so this is where the dropped file glides.
+    var attachButtonFrame: (frame: CGRect, geometry: NotchGeometry)?
     /// Counts the pointer touching the visible eyes or mascot; each one boops them.
     @Published var pokeEvent = 0
     @Published private(set) var fileDropChoice: FileDropChoice?
@@ -1182,10 +1184,26 @@ final class AppModel: ObservableObject {
     }
 
     func fileDropDestination(at point: CGPoint) -> FileDropDestination? {
-        guard let targets = fileDropChoice?.targets, expanded, notchPresentation.progress == 1,
+        // Only once the panel has settled: mid-spring its outline still overshoots
+        // while the rows are drawn at the expanded size, so they would not line up.
+        guard let targets = fileDropChoice?.targets, let layout = fileDropLayout(rows: targets.count), expanded,
+              notchPresentation.progress == 1, notchPresentation.size == geometry?.expandedFrame.size,
               notchPresentation.contains(point) else { return nil }
-        return FileDropLayout(size: notchPresentation.size, headerHeight: notchPresentation.bandHeight, rows: targets.count)
-            .row(at: point).map { targets[$0] }
+        return layout.row(at: point).map { targets[$0] }
+    }
+
+    /// One layout for drawing the rows and hit-testing them: the settled expanded panel's.
+    func fileDropLayout(rows: Int) -> FileDropLayout? {
+        geometry.map { FileDropLayout(size: $0.expandedFrame.size, headerHeight: $0.expandedBandHeight, rows: rows) }
+    }
+
+    /// Where a just-dropped file's drag image lands: the attach button, if the
+    /// destination shows a composer and the button was measured on this screen.
+    // shortcut: a send-check or SnapShot notice on the destination shifts the button a little; measure per session if it shows.
+    var attachLandingFrame: CGRect? {
+        guard let measured = attachButtonFrame, measured.geometry == geometry, page == .session,
+              currentRequest == nil, projectTrustSessionID != currentID else { return nil }
+        return measured.frame
     }
 
     /// Resolve and attach synchronously so another window cannot redirect the

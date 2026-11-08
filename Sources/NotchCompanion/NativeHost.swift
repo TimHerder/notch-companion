@@ -174,7 +174,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         // the full window's own composer is where it was dropped.
         if expandsOnDrop {
             view.landingFrame = { [weak self] in
-                guard let self, let button = self.model.attachButtonFrame else { return nil }
+                guard let self, let button = self.model.attachLandingFrame else { return nil }
                 let frame = self.model.notchPresentation.frame
                 return CGRect(x: frame.minX + button.minX, y: frame.maxY - button.maxY,
                               width: button.width, height: button.height).insetBy(dx: 6, dy: 6)
