@@ -68,18 +68,42 @@ import XCTest
         XCTAssertEqual(model.dictateShortcut, .dictateDefault)
         XCTAssertTrue(model.showDictation)
         XCTAssertNil(model.dictationLanguage, "Dictation follows the system language until one is chosen")
+        XCTAssertEqual(model.dictationEngine, .system, "macOS dictation is the default; Parakeet is opt-in")
 
         let custom = KeyShortcut(keyCode: UInt32(kVK_ANSI_K), modifiers: UInt32(cmdKey | shiftKey), key: "K")
         model.setShortcut(custom, for: .openPanel)
         model.setShortcut(nil, for: .dictate)
         model.dictationLanguage = "en-US"
+        model.dictationEngine = .parakeet
         model.shutdown()
 
         let reopened = open()
         XCTAssertEqual(reopened.openShortcut, custom)
         XCTAssertNil(reopened.dictateShortcut, "Turning a shortcut off must not bring the default back")
         XCTAssertEqual(reopened.dictationLanguage, "en-US")
+        XCTAssertEqual(reopened.dictationEngine, .parakeet)
         reopened.shutdown()
+    }
+
+    func testParakeetStartsMissingAndDeleteRemovesOnlyItsFolder() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("parakeet-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent("Speech Models")
+        let parakeet = ParakeetModel(folder: folder)
+        XCTAssertEqual(parakeet.state, .missing)
+        XCTAssertEqual(parakeet.status, "Not downloaded")
+        XCTAssertFalse(parakeet.isDownloaded)
+
+        // A partial download leaves files that are not a usable model; Delete clears them.
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("parakeet-tdt-0.6b-v3"), withIntermediateDirectories: true)
+        try Data("partial".utf8).write(to: folder.appendingPathComponent("parakeet-tdt-0.6b-v3/Encoder.mlmodelc.partial"))
+        let sibling = root.appendingPathComponent("sessions.json")
+        try Data("[]".utf8).write(to: sibling)
+        XCTAssertFalse(ParakeetModel(folder: folder).isDownloaded)
+        await parakeet.delete()
+        XCTAssertEqual(parakeet.state, .missing)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sibling.path), "Only the model folder goes")
     }
 
     /// The real editor coordinator bound to a session draft, as the composer wires it.
@@ -183,7 +207,7 @@ import XCTest
         let file = try AVAudioFile(forReading: clip)
         let converter = try XCTUnwrap(AVAudioConverter(from: file.processingFormat, to: format))
         let (stream, input) = AsyncStream.makeStream(of: AnalyzerInput.self)
-        let tap = Dictation.tap(converter: converter, format: format, input: input)
+        let tap = Dictation.tap(converter: converter, format: format) { input.yield(AnalyzerInput(buffer: $0)) }
         let analyzer = SpeechAnalyzer(modules: [transcriber])
         let collected = Task {
             var text = ""
@@ -200,5 +224,54 @@ import XCTest
         try await analyzer.finalizeAndFinishThroughEndOfInput()
         let text = try await collected.value.lowercased()
         XCTAssertTrue(text.contains("settings") && text.contains("microphone"), text)
+    }
+
+    /// Parakeet downloads into a reusable test cache (about 480 MB on first run),
+    /// then English and German speech, synthesized at 22.05 kHz, goes through the
+    /// microphone's converter tap at 16 kHz into it with no language chosen.
+    func testParakeetDownloadsAndTranscribesWithoutAChosenLanguage() async throws {
+        guard ProcessInfo.processInfo.environment["NOTCH_RUN_PARAKEET_TEST"] == "1" else {
+            throw XCTSkip("Set NOTCH_RUN_PARAKEET_TEST=1 to download Parakeet (about 480 MB, cached) and transcribe with it.")
+        }
+        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("NotchCompanionTests/Speech Models", isDirectory: true)
+        let parakeet = ParakeetModel(folder: folder)
+        _ = try await parakeet.recognizer()
+        XCTAssertEqual(parakeet.state, .ready)
+        XCTAssertTrue(parakeet.isDownloaded)
+        let bytes = (FileManager.default.enumerator(at: folder, includingPropertiesForKeys: [.fileSizeKey])?.allObjects as? [URL] ?? [])
+            .reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+        print("Parakeet folder: \(bytes / 1_000_000) MB")
+        XCTAssertTrue((400_000_000...560_000_000).contains(bytes), "Settings promises about 480 MB; found \(bytes / 1_000_000) MB")
+
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+        for (voice, sentence, expected) in [("Samantha", "Refactor the login handler and add unit tests.", ["login", "handler"]),
+                                            ("Anna", "Bitte prüfe die Datenbank und schreibe einen Bericht.", ["datenbank", "bericht"])] {
+            let clip = FileManager.default.temporaryDirectory.appendingPathComponent("parakeet-\(UUID().uuidString).aiff")
+            defer { try? FileManager.default.removeItem(at: clip) }
+            let say = Process()
+            say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+            say.arguments = ["-v", voice, "-o", clip.path, sentence]
+            try say.run(); say.waitUntilExit()
+            let file = try AVAudioFile(forReading: clip)
+            let converter = try XCTUnwrap(AVAudioConverter(from: file.processingFormat, to: format))
+            let (stream, input) = AsyncStream.makeStream(of: [Float].self)
+            let tap = Dictation.tap(converter: converter, format: format) { buffer in
+                input.yield(Array(UnsafeBufferPointer(start: buffer.floatChannelData![0], count: Int(buffer.frameLength))))
+            }
+            while file.framePosition < file.length {
+                let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 4096))
+                try file.read(into: buffer, frameCount: 4096)
+                tap(buffer, AVAudioTime(sampleTime: file.framePosition, atRate: file.processingFormat.sampleRate))
+            }
+            input.finish()
+            var samples: [Float] = []
+            for await chunk in stream { samples += chunk }
+            let text = try await parakeet.transcribe(samples)
+            print("Parakeet (\(voice)): \(text)")
+            XCTAssertTrue(expected.allSatisfy(text.lowercased().contains), text)
+        }
+        // A tap on the button (under a second) is padded rather than refused.
+        _ = try await parakeet.transcribe([Float](repeating: 0, count: 4_000))
     }
 }

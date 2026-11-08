@@ -29,9 +29,14 @@ if [[ ! -f "$RESOURCE_ACCESSOR" ]]; then
     # Swift 6.3's swiftbuild engine separates intermediates from products.
     RESOURCE_ACCESSOR="$PROJECT_ROOT/.build/out/Intermediates.noindex/NotchCompanion.build/Debug/NotchCompanion-p.build/DerivedSources/resource_bundle_accessor.swift"
 fi
-xcrun swiftc -parse-as-library -module-name NotchCompanion \
+# FluidAudio (Parakeet dictation) links from the package build's products.
+FLUID_SOURCES="$PROJECT_ROOT/.build/checkouts/FluidAudio/Sources"
+xcrun swiftc -parse-as-library -module-name NotchCompanion -I "$BIN_PATH" \
+    -Xcc -I"$FLUID_SOURCES/FastClusterWrapper/include" -Xcc -I"$FLUID_SOURCES/MachTaskSelfWrapper/include" \
     "${SOURCES[@]}" "$RESOURCE_ACCESSOR" \
-    "$PROJECT_ROOT/Tests/Fixtures/InterfacePreview.swift" -o "$BUILD_PATH/render"
+    "$PROJECT_ROOT/Tests/Fixtures/InterfacePreview.swift" \
+    "$BIN_PATH/FluidAudio.o" "$BIN_PATH/FastClusterWrapper.o" "$BIN_PATH/MachTaskSelfWrapper.o" -lc++ \
+    -o "$BUILD_PATH/render"
 ditto "$BIN_PATH/NotchCompanion_NotchCompanion.bundle" "$BUILD_PATH/NotchCompanion_NotchCompanion.bundle"
 for THEME in "${THEMES[@]}"; do
     OUTPUT_PATH="$BUILD_PATH"

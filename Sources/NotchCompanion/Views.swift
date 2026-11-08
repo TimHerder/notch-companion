@@ -874,7 +874,21 @@ struct SettingsContent: View {
                         Toggle("Show dictation", isOn: $model.showDictation).toggleStyle(NotchSwitchStyle())
                             .help("Add a composer button that types what you say into the draft. Speech is transcribed on this Mac by macOS; nothing is sent until you press Send.")
                     }
-                    SettingsRow("Dictation language", symbol: "globe", tint: .blue, divider: true) { DictationLanguageMenu(model: model) }
+                    if ParakeetModel.isSupported {
+                        SettingsRow("Dictation engine", symbol: "waveform", tint: .pink, divider: true) {
+                            NotchSegmentedControl(label: "Dictation engine", options: DictationEngine.allCases, title: \.label,
+                                                  selection: Binding(get: { model.dictationEngine }, set: { engine in
+                                // Choosing Parakeet is the consent its hint asks for: fetch it now.
+                                model.dictationEngine = engine
+                                if engine == .parakeet { ParakeetModel.shared.download() }
+                            }), small: true)
+                            .help("macOS uses the system's dictation models. Parakeet downloads \(ParakeetModel.downloadSize) once and transcribes on this Mac.")
+                        }
+                        ParakeetSettingsView(model: model, parakeet: .shared)
+                    }
+                    if model.dictationEngine == .system {
+                        SettingsRow("Dictation language", symbol: "globe", tint: .blue, divider: true) { DictationLanguageMenu(model: model) }
+                    }
                 }
                 SettingsRow("Show usage", symbol: "chart.bar.fill", tint: .green, divider: true) {
                     Toggle("Show usage", isOn: $model.showUsage).toggleStyle(NotchSwitchStyle())
@@ -1198,6 +1212,61 @@ struct ShortcutRecorder: View {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
         refusal = nil
+    }
+}
+
+/// Under the engine switch: why one might choose Parakeet, what it costs, and
+/// its download. Deleting stays available after switching back to macOS.
+struct ParakeetSettingsView: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var parakeet: ParakeetModel
+    @ObservedObject private var dictation: Dictation
+
+    init(model: AppModel, parakeet: ParakeetModel) {
+        self.model = model
+        self.parakeet = parakeet
+        dictation = model.dictation
+    }
+
+    var body: some View {
+        let chosen = model.dictationEngine == .parakeet
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Parakeet is more accurate for technical terms and detects the language you speak (25 European languages). It downloads \(ParakeetModel.downloadSize) once from Hugging Face; your speech stays on this Mac.")
+                .fixedSize(horizontal: false, vertical: true)
+            if chosen || parakeet.state != .missing {
+                HStack(spacing: 8) {
+                    switch parakeet.state {
+                    case .downloading(let fraction):
+                        ProgressView(value: fraction).progressViewStyle(.linear).frame(maxWidth: 140)
+                            .accessibilityLabel("Downloading Parakeet")
+                        Text("\(Int((fraction * 100).rounded()))%").monospacedDigit()
+                    case .failed(let message):
+                        Text(message).foregroundStyle(CompanionStyle.amber).fixedSize(horizontal: false, vertical: true)
+                    default:
+                        Text(parakeet.status)
+                    }
+                    Spacer(minLength: 0)
+                    switch parakeet.state {
+                    case .missing, .failed:
+                        Button(parakeet.state == .missing ? "Download" : "Try again") { parakeet.download() }
+                            .buttonStyle(NotchPillButtonStyle(small: true))
+                    case .ready:
+                        // The model is in use while Parakeet dictation runs.
+                        Button("Delete") { Task { await parakeet.delete() } }
+                            .buttonStyle(NotchPillButtonStyle(small: true))
+                            .disabled(dictation.isActive && chosen)
+                            .help("Remove the downloaded Parakeet model (\(ParakeetModel.downloadSize)).")
+                    case .downloading, .preparing: EmptyView()
+                    }
+                }
+            }
+        }
+        .font(PanelTheme.pick(CompanionStyle.caption, .system(size: 10.5), .system(size: 11)))
+        .foregroundStyle(PanelTheme.current == .refined ? CompanionStyle.tertiary : CompanionStyle.secondary)
+        // Full width, or a short hint is centred instead of starting at the labels.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, PanelTheme.pick(14, 12, 12)).padding(.bottom, 10)
+        .help("NVIDIA Parakeet TDT 0.6B v3 (CC BY 4.0), run with FluidAudio on the Neural Engine.")
     }
 }
 

@@ -38,7 +38,8 @@ Users can independently choose Eyes or Mascot (Mote, Fold or Soot), Compact or
 Popup updates, and panel/body appearance. Motion communicates real state and
 respects Reduce Motion. Hover is passive; clicking or a shortcut opens for
 input. File drops stage attachments, never submit a task. Dictation types
-macOS's on-device transcription into the draft and never sends. Drafts
+on-device transcription (macOS's, or an optional downloaded Parakeet model)
+into the draft and never sends. Drafts
 survive closing, settings changes, connection errors and unavailable agents.
 
 Each session has its own work/unread indicator. Children stay under the parent.

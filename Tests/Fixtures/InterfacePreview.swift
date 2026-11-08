@@ -735,6 +735,14 @@ import ImageIO
                     .environment(\.colorScheme, .dark),
                     size: NSSize(width: width, height: 3200), name: "settings-version-\(Int(width))", output: output)
             }
+            // Parakeet chosen: its status row replaces the language menu (Not downloaded unless this Mac has it).
+            model.dictationEngine = .parakeet
+            try render(SettingsContent(model: model, inNotch: true).padding(20)
+                .frame(width: 560, height: 3200, alignment: .top)
+                .background(CompanionStyle.background).foregroundStyle(CompanionStyle.text)
+                .environment(\.colorScheme, .dark),
+                size: NSSize(width: 560, height: 3200), name: "settings-parakeet-560", output: output)
+            model.dictationEngine = .system
             return
         }
         if CommandLine.arguments.contains("--busy-composer-only") {

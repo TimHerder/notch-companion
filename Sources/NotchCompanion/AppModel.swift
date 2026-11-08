@@ -112,6 +112,9 @@ final class AppModel: ObservableObject {
     @Published var dictationLanguage: String? {
         didSet { preferences.set(dictationLanguage, forKey: Dictation.languageKey) }
     }
+    @Published var dictationEngine = DictationEngine.system {
+        didSet { preferences.set(dictationEngine.rawValue, forKey: DictationEngine.key) }
+    }
     let dictation = Dictation()
     @Published var openShortcut: KeyShortcut? {
         didSet { ShortcutAction.openPanel.save(openShortcut, preferences); shortcutsChanged?() }
@@ -341,6 +344,7 @@ final class AppModel: ObservableObject {
         showSnapShot = preferences.bool(forKey: "notch.showSnapShot")
         showDictation = preferences.object(forKey: "notch.showDictation") as? Bool ?? true
         dictationLanguage = preferences.string(forKey: Dictation.languageKey)
+        dictationEngine = DictationEngine(rawValue: preferences.string(forKey: DictationEngine.key) ?? "") ?? .system
         openShortcut = ShortcutAction.openPanel.load(preferences)
         dictateShortcut = ShortcutAction.dictate.load(preferences)
         rateLimits = preferences.data(forKey: "usage.rateLimits").flatMap { try? JSONDecoder().decode([String: [RuntimeRateLimit]].self, from: $0) } ?? [:]
@@ -831,7 +835,7 @@ final class AppModel: ObservableObject {
 
     private func startDictation(into sessionID: String, fromNotch: Bool) {
         dictation.deliver = { [weak self] id, text in self?.receiveDictation(text, into: id) }
-        dictation.start(sessionID: sessionID, language: dictationLanguage, fromNotch: fromNotch)
+        dictation.start(sessionID: sessionID, engine: dictationEngine, language: dictationLanguage, fromNotch: fromNotch)
     }
 
     /// Final words join the draft, or wait while an input method composes in

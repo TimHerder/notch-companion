@@ -1177,20 +1177,36 @@ by itself, like a [file drop](#file-drops).
 ## Dictation
 
 **Show dictation** (on by default, Settings → Composer) adds a microphone
-button after SnapShot in both surfaces' composer bar. macOS's on-device
-`SpeechTranscriber` (SpeechAnalyzer) turns speech into text: no audio leaves the
-Mac, no model ships with the app, and nothing is sent until the user sends.
+button after SnapShot in both surfaces' composer bar. Speech becomes text on
+this Mac: no audio leaves it, no model ships with the app, and nothing is sent
+until the user sends.
 
-- **Language.** Settings → **Dictation language**: **System** (default) or any
-  language macOS can transcribe, each by its own name (`notch.dictationLanguage`,
-  BCP 47). The first use of a language downloads its model through the system,
-  shown as “Downloading the English (United States) speech model…”.
+- **Engine.** Settings → **Dictation engine** (`notch.dictationEngine`), on
+  Apple silicon: **macOS** (default, `system`) uses `SpeechTranscriber`
+  (SpeechAnalyzer); **Parakeet** (`parakeet`) runs NVIDIA's Parakeet TDT 0.6B v3
+  through FluidAudio on the Neural Engine. A hint under the switch says
+  Parakeet is more accurate for technical terms, detects the language spoken
+  (25 European languages), downloads about 480 MB once from Hugging Face and
+  keeps speech on the Mac. Choosing Parakeet starts its download; the row under
+  the hint shows progress, then **Downloaded** with **Delete** (still offered
+  after switching back to macOS; disabled while Parakeet dictation runs), or a
+  failure with **Try again**. A missing model downloads on the first dictation
+  too, shown as “Downloading Parakeet… 42%”. The model lives in
+  `~/Library/Application Support/NotchCompanion/Speech Models` and leaves
+  memory after five idle minutes.
+- **Language.** With macOS chosen, Settings → **Dictation language**:
+  **System** (default) or any language macOS can transcribe, each by its own
+  name (`notch.dictationLanguage`, BCP 47). The first use of a language
+  downloads its model through the system, shown as “Downloading the English
+  (United States) speech model…”. Parakeet needs no language and hides the row.
 - **Button.** Clicking listens into the current session's draft; while
   dictation runs anywhere, every composer's button shows the red waveform
   (animated, static under Reduce Motion) and stops it. Preparing shows a
   spinner in the session being dictated into.
 - **Status.** Under the field, for the session being dictated into: a dot and
-  “Listening…” followed by the words not yet final, head-truncated on one line;
+  “Listening…” followed by the words not yet final, head-truncated on one line
+  (Parakeet previews the whole clip every 1.5 s of new audio for its first
+  minute, then delivers its full text when listening stops);
   final words join the end of the draft with one space, never replacing typed
   text; words that arrive while an input method is composing join once it
   commits. A failure (no microphone, unsupported language, denied access with
