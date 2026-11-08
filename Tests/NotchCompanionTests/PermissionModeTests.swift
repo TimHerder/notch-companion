@@ -277,7 +277,7 @@ import XCTest
             request = frame['request']; kind = request['subtype']
             log.write(json.dumps({'control': kind, 'mode': request.get('mode')}) + '\n'); log.flush()
             body = {}
-            if kind == 'initialize': body = {'models': [], 'session_state': 'idle'}
+            if kind == 'initialize': body = {'models': [], 'session_state': 'idle', 'current_permission_mode': 'plan'}
             if kind == 'get_settings': body = {'effective': {'permissions': {'defaultMode': 'acceptEdits'}}, 'applied': {'model': 'm', 'effort': None}}
             if kind == 'set_permission_mode':
                 if request['mode'] == 'bypassPermissions' and not bypass:
@@ -293,11 +293,17 @@ import XCTest
         try await client.connect()
         let created = try await client.request("session.create", params: ["cwd": directory.path, "project_trusted": true])
         let id = try XCTUnwrap(created["session_id"] as? String)
+        XCTAssertEqual((created["info"] as? [String: Any])?["profile_permission_mode"] as? String, "plan", "Default first names the mode the process opened in")
+        var restored: [String] = []
+        client.onEvent = { name, payload in
+            if name == "session.info", let mode = payload["profile_permission_mode"] as? String { restored.append(mode) }
+        }
         for mode in [nil, "plan", nil, nil, "fullAccess", "fullAccess"] as [String?] {
             var params: [String: Any] = ["session_id": id]
             if let mode { params["mode"] = mode }
             _ = try await client.request("session.permission.set", params: params)
         }
+        XCTAssertEqual(restored, ["autoEdit"], "Returning to Default names the configured mode it restored, not the opening one")
         let wire = try String(contentsOf: directory.appendingPathComponent("wire.jsonl"), encoding: .utf8).split(separator: "\n")
             .map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any] }
             .map { row -> String in

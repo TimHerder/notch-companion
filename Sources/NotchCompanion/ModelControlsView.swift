@@ -29,7 +29,10 @@ struct ModelControlsView: View {
             // What the next send applies: the conversation's choice, else the profile's own.
             let ultracode = shownOption?.offersUltracode == true && (session.modelOverride?.ultracode ?? session.runtimeInfo?.profileUltracode) == true
             let ultracodeTag = Text("· Ultracode").foregroundStyle(CompanionStyle.ultracode).lineLimit(1)
-            let permissionTitle = session.permissionMode?.title ?? "Default permissions"
+            // Default names the harness's own mode when known, e.g. Full access from Claude Code's settings.
+            let permissionTitle = session.permissionMode?.title
+                ?? session.runtimeInfo?.profilePermissionTitle.map { "Default · \($0)" } ?? "Default permissions"
+            let fullAccess = session.effectivePermissionMode == .fullAccess
             let context = session.runtimeInfo?.context
             // Unclamped, so an over-limit report reads as more than 100 %.
             let percentage = context?.ratio == nil ? nil : UsageView.contextHeadline(context)
@@ -51,7 +54,7 @@ struct ModelControlsView: View {
                         choosingModel = false; showingContext = false
                     } label: {
                         // In a tight row the mode keeps its glyph; its name stays in help and VoiceOver.
-                        let glyph = Image(systemName: session.permissionMode?.symbol ?? "shield")
+                        let glyph = Image(systemName: session.effectivePermissionMode?.symbol ?? "shield")
                         Group {
                             switch theme {
                             case .refined:
@@ -62,7 +65,7 @@ struct ModelControlsView: View {
                             case .tahoe:
                                 // The glyph takes the label's color explicitly; inherited, Full access drew it white.
                                 let tinted = glyph.symbolRenderingMode(.monochrome)
-                                    .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
+                                    .foregroundStyle(fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
                                 ViewThatFits(in: .horizontal) {
                                     HStack(spacing: 5) { tinted; Text(permissionTitle).lineLimit(1) }
                                     tinted
@@ -75,7 +78,7 @@ struct ModelControlsView: View {
                                 }
                             }
                         }
-                        .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
+                        .foregroundStyle(fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
                     }
                     .sessionControlStyle()
                     .disabled(!model.canChangePermissionMode(session.id))
@@ -337,7 +340,7 @@ struct ModelControlsView: View {
                                 .foregroundStyle(mode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(mode?.title ?? "Default permissions").font(.system(size: 12, weight: .medium))
-                                Text(mode?.detail ?? "Uses \(session.runtime.title)'s own settings")
+                                Text(mode?.detail ?? session.defaultPermissionDetail)
                                     .font(CompanionStyle.caption).foregroundStyle(CompanionStyle.tertiary)
                             }
                             Spacer(minLength: 0)
@@ -372,7 +375,7 @@ struct ModelControlsView: View {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(mode?.title ?? "Default permissions").font(.system(size: 13))
                                     .foregroundStyle(mode == .fullAccess ? CompanionStyle.amber : CompanionStyle.text)
-                                Text(mode?.detail ?? "Uses \(session.runtime.title)'s own settings")
+                                Text(mode?.detail ?? session.defaultPermissionDetail)
                                     .font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
                             }
                             Spacer(minLength: 0)
@@ -408,7 +411,7 @@ struct ModelControlsView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(mode?.title ?? "Default permissions").font(.system(size: 12.5, weight: .medium))
                                     .foregroundStyle(mode == .fullAccess ? CompanionStyle.amber : CompanionStyle.text)
-                                Text(mode?.detail ?? "Uses \(session.runtime.title)'s own settings")
+                                Text(mode?.detail ?? session.defaultPermissionDetail)
                                     .font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary).lineLimit(1)
                             }
                             Spacer(minLength: 0)

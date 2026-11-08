@@ -1102,10 +1102,17 @@ for harnesses that map at least one mode, listing only those
 - The choice is saved with the conversation and applies to the next message.
   It is disabled while the session, a child or an unresolved send is busy.
   Default permissions removes the override.
-- **Full access** asks for confirmation the first time in a session. While on,
-  an amber shield sits beside the session title in the notch header and
-  full-session window, whether or not the control is shown; the control's label
-  is amber too.
+- When the harness reports its own mode (`profile_permission_mode`; Claude Code
+  only for now: the mode the process opened in, or the one Default last
+  restored), Default permissions names it: the control reads
+  **Default · Full access** with that mode's glyph, and the chooser row reads
+  “Uses Claude Code's own settings: Full access”. Otherwise it stays
+  **Default permissions**, “Uses … own settings”.
+- Selecting **Full access** asks for confirmation the first time in a session;
+  the harness's own Full access never counts as that confirmation. While on,
+  chosen or as the harness's own default, an amber shield sits beside the
+  session title in the notch header and full-session window, whether or not the
+  control is shown; the control's label is amber too.
 - Approval cards are unchanged; a mode only changes how often they appear.
 
 ## Usage
