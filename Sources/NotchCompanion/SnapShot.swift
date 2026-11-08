@@ -69,5 +69,18 @@ enum SnapShot {
         return url
     }
 
+    /// Removes this app's own Screen Recording entry, so the next request prompts for the running build.
+    static func resetPermission(bundleID: String? = Bundle.main.bundleIdentifier) -> Bool {
+        guard let bundleID else { return false }
+        let tccutil = Process()
+        tccutil.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+        tccutil.arguments = ["reset", "ScreenCapture", bundleID]
+        tccutil.standardOutput = FileHandle.nullDevice
+        tccutil.standardError = FileHandle.nullDevice
+        guard (try? tccutil.run()) != nil else { return false }
+        tccutil.waitUntilExit()
+        return tccutil.terminationStatus == 0
+    }
+
     static let privacySettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
 }

@@ -1153,7 +1153,11 @@ by itself, like a [file drop](#file-drops).
   full-session window has no button.
 - **Capture.** ScreenCaptureKit captures that window at pixel scale without the
   cursor. First use asks for Screen Recording permission; while missing, a hint
-  above the composer links to that System Settings pane. No other route.
+  above the composer asks to allow it and reopen the app, and links to that
+  System Settings pane. An ad-hoc signed grant covers only the build it was made
+  for, so after a rebuild or update System Settings can show the toggle on while
+  capture is refused. The first refused capture in a launch therefore clears the
+  app's own Screen Recording entry with `tccutil` and asks again. No other route.
 - **Staging.** The PNG, named after app and window title, goes in the private
   `SnapShots` folder beside the session registry and is staged as an ordinary
   attachment, its chip springing in like a dropped file's. Removing it before sending deletes the

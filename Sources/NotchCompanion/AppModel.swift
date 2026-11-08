@@ -107,6 +107,7 @@ final class AppModel: ObservableObject {
     /// The window that was in front when the notch last opened.
     @Published var snapShotSource: SnapShotSource?
     @Published var snapShotNeedsPermission = false
+    private var snapShotPermissionReset = false
     /// Last reported account limits per runtime, kept across launches with their report times.
     @Published private(set) var rateLimits: [String: [RuntimeRateLimit]] = [:] {
         didSet { preferences.set(try? JSONEncoder().encode(rateLimits), forKey: "usage.rateLimits") }
@@ -1271,6 +1272,13 @@ final class AppModel: ObservableObject {
         if snapShotCapture == nil, !CGPreflightScreenCaptureAccess() {
             // macOS asks only the first time; afterwards the hint links to System Settings.
             snapShotNeedsPermission = !CGRequestScreenCaptureAccess()
+            // An ad-hoc grant names one exact build, so after a rebuild or update the toggle
+            // stays on but no longer applies. Clearing it once per launch lets macOS ask again;
+            // not repeated, since a grant made during this launch only counts after reopening.
+            if snapShotNeedsPermission, !snapShotPermissionReset {
+                snapShotPermissionReset = true
+                if SnapShot.resetPermission() { snapShotNeedsPermission = !CGRequestScreenCaptureAccess() }
+            }
             guard !snapShotNeedsPermission else { return }
         }
         do {
