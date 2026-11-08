@@ -1165,6 +1165,41 @@ import XCTest
         XCTAssertFalse((frames[0]["argv"] as? [String] ?? []).contains { $0.contains("tok") }, "The token stays out of argv")
     }
 
+    func testClaudeOpensWithoutComputerUseWhenTheCLIRefusesIt() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("notch-claude-sideload-\(UUID().uuidString)")
+        folders.append(directory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let executable = directory.appendingPathComponent("claude")
+        let wire = directory.appendingPathComponent("wire.jsonl")
+        // Like disableSideloadFlags: the CLI exits at launch whenever --mcp-config is passed.
+        try Data(#"""
+        #!/usr/bin/env python3
+        import json, sys, os
+        with open(os.path.join(os.path.dirname(sys.argv[0]), 'wire.jsonl'), 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\n')
+        if '--mcp-config' in sys.argv: sys.exit(1)
+        for line in sys.stdin:
+            frame = json.loads(line)
+            if frame['type'] == 'control_request':
+                body = {'models': [{'value': 'default', 'resolvedModel': 'fixture'}], 'session_state': 'idle'} if frame['request']['subtype'] == 'initialize' else {}
+                print(json.dumps({'type': 'control_response', 'response': {'subtype': 'success', 'request_id': frame['request_id'], 'response': body}}), flush=True)
+        """#.utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let client = ClaudeClient(profileID: directory.path, executableURL: executable)
+        var events: [String] = []
+        client.onEvent = { name, _ in events.append(name) }
+        defer { client.disconnect() }
+        try await client.connect()
+        _ = try await client.request("session.create", params: ["cwd": directory.path, "project_trusted": true])
+        _ = try await client.request("session.create", params: ["cwd": directory.path, "project_trusted": true])
+        let launches = try String(contentsOf: wire, encoding: .utf8).split(separator: "\n").compactMap {
+            try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String]
+        }
+        XCTAssertEqual(launches.map { $0.contains("--mcp-config") }, [true, false, false], "One refused launch, then chat opens without computer use")
+        XCTAssertFalse(launches[1].contains { $0.contains("computer-use") })
+        XCTAssertEqual(events.filter { $0 == "runtime.notice" }.count, 1)
+        XCTAssertFalse(events.contains("session.disconnected"), "The refused launch was never a connected session")
+    }
+
     func testACPAndPiGetTheServerThroughTheirOwnLaunchOptions() throws {
         let delegation: [String: Any] = ["url": "http://127.0.0.1:9/mcp", "token": "tok", "bridge": "/Applications/Notch Companion.app/Contents/MacOS/NotchCompanion"]
         let servers = ACPRuntimeClient.mcpServers(delegation)

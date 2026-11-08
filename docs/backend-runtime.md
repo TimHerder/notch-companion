@@ -360,8 +360,10 @@ interactive sessions, so the companion's `--print` sessions would never see it.
 Each launch therefore passes `--mcp-config` with a single stdio entry named
 `computer-use` (the installed `claude` with `--computer-use-mcp`) and adds
 `mcp__computer-use__*` to `--allowedTools`, which is what the CLI's own
-interactive setup does. Claude Code 2.1.308 serves any stdio entry with that name
-in-process with its session-bound handlers, whatever the command. The CLI keeps
+interactive setup does. Claude Code 2.1.308's code serves any stdio entry with
+that name in-process with its session-bound handlers, whatever the command;
+the docs still call computer use unavailable with `-p`, and a live headless
+session has not confirmed it yet ([verification](verification.md)). The CLI keeps
 its own gates: [the project's `/mcp` switch](https://code.claude.com/docs/en/computer-use)
 (off by default, saved per project), a claude.ai Pro or Max plan, its feature
 flag, macOS, and a single computer-use session at a time. Nothing in the
@@ -369,13 +371,17 @@ profile's configuration is written; turning it on stays the user's `/mcp → Ena
 in an interactive `claude` for that project. User MCP servers stay loaded.
 
 `initialize` declares `supportedDialogKinds: ["computer_use_approval"]`. A
-`request_user_dialog` of that kind becomes an approval listing the apps to
-control, apps already allowed or not installed, the extra clipboard and system
-key requests, and how many apps will be hidden. Allow answers `{behavior:
+`request_user_dialog` of that kind becomes an approval offering **Allow this
+session** or Deny, never Allow once or a glance approval, because the grant
+lasts for the CLI session. It lists every app to control, apps already allowed
+or not installed, the extra clipboard and system key requests, and how many
+apps will be hidden; only a long reason is shortened. Allow answers `{behavior:
 "completed", result}` with the CLI's own result shape: every listed installed app
 not already granted (`bundleId`, `displayName`, `grantedAt` in ms), uninstalled
 apps as `not_installed`, and the requested flags. Deny completes with the CLI's
-empty grant (`granted: [], denied: []`, all flags false), as its own Deny does.
+empty grant (`granted: [], denied: []`, all flags false), as its own Deny does;
+so does one arriving outside a turn. Other dialog kinds are not declared and
+stay unanswered, since the CLI discards error replies and settles them itself.
 A payload with `tccState` means macOS access is missing; it completes with the
 empty grant and a notice naming the missing Accessibility or Screen Recording
 permission. The CLI runs inside Notch Companion's process tree, so macOS is
@@ -384,9 +390,12 @@ ad-hoc signed rebuild may need them granted again. Unlike the CLI's dialog, the 
 Finder or System Settings as shell, file or settings access, and it grants every
 listed app rather than a capped visible subset.
 
-An organization policy setting `disableSideloadFlags` makes the CLI refuse any
-`--mcp-config`; such Team and Enterprise plans have no computer use, but the
-launch then fails.
+Chat never depends on the optional server. When a process launched with it
+stops or fails before answering `initialize` (an organization policy setting
+`disableSideloadFlags` refuses any `--mcp-config`), the open is retried once
+without it and with no disconnect event; if that succeeds, a notice says so and
+later sessions skip the entry until the adapter reconnects. A disconnect during
+the launch does not retry.
 
 ## Codex
 
