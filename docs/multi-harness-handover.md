@@ -96,7 +96,8 @@ Missing native access is a reported test gap, not a reason to fabricate success.
 ## Distribution boundaries
 
 Agent runtimes are installed independently and are not bundled in releases.
-Review third-party source/assets, licenses and attribution before public launch.
+The repository is public: review third-party source/assets, licenses and attribution
+before adding them.
 Review current provider terms and trademarks before advertising account or
 subscription compatibility; use of a documented protocol alone is not permission
 to resell access or redistribute a runtime. Claude and Antigravity authentication
@@ -105,4 +106,4 @@ for the user without authorization.
 
 This project does not supply provider accounts or handle subscription sign-in.
 The initial release is an ad-hoc-signed Mac app; the [release guide](releasing.md)
-tracks packaging and public launch separately from adapter correctness.
+tracks packaging and release acceptance separately from adapter correctness.

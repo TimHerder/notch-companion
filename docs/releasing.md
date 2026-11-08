@@ -2,8 +2,7 @@
 
 Open a pull request, check its preview, merge. GitHub then re-checks the merged
 source, ad-hoc signs the app and publishes the ZIP as the latest release. No Apple
-developer account is needed, and the repository stays private until an explicit
-public-launch decision.
+developer account is needed.
 
 ## Everyday workflow
 
@@ -19,9 +18,12 @@ public-launch decision.
    [release](https://github.com/TimHerder/notch-companion/releases). A merge alone
    doesn't mean the release succeeded.
 
-The private plan can't enforce branch protection, so the maintainer's
-"review and green checks before merging" rule is a habit, not a GitHub setting.
-Only the owner is a collaborator; external contributions are closed
+Repository rulesets require a pull request to change `main` (no approvals, so the
+maintainer merges their own PRs) and block force-pushes and deletion of `main`.
+Release tags `v*` can be created but never moved or deleted. Green checks can't be
+required, because the check's name includes the runner it lands on, so "review and
+green checks before merging" stays a habit. Only the owner is a collaborator, PR
+creation is limited to collaborators, and external contributions are closed
 ([policy](../CONTRIBUTING.md)).
 
 ## Which merges release
@@ -117,18 +119,17 @@ lives in the private `notch-companion-private` and `notch-companion-prerelease`
 archives, including their PRs, tags and releases. Never merge or push their commits,
 branches or tags here.
 
-## Before public launch
+## Public repository
 
-A release in a private repository is still private. Before changing visibility:
+The maintainer made the repository public on 2026-11-08, before the full
+[release acceptance](verification.md#release-acceptance) had passed. The accepted
+gaps are listed in the [verification record](verification.md). At the switch, all
+pushed branches and tags were pattern-scanned for credentials and author emails,
+private vulnerability reporting was turned on, PR creation stayed limited to
+collaborators, and the rulesets above were added.
 
-- Review the source, secrets and third-party rights. Pattern scans alone aren't enough.
-- Confirm hosted checks and a release passed for the intended source. Verify its
-  ZIP, checksum, metadata and license.
-- Pass the app [acceptance checklist](verification.md#public-release-acceptance)
-  using that exact download.
-- Enable private vulnerability reporting. Check [SECURITY.md](../SECURITY.md),
-  the issue templates and links. Keep PR creation limited to collaborators.
-- Check that the [verification record](verification.md) states each adapter's evidence.
+Releases, Actions logs and artifacts are public too. Keep credentials, personal
+paths and private session content out of them.
 
 Developer ID signing and notarization, universal binaries and an in-app updater
 are future options. No workflow changes repository visibility.
