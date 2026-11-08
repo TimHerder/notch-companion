@@ -24,24 +24,27 @@ appears in its visible sidebar, or that live handoff works in general.
 
 **Release pipeline**
 
-- On 2026-10-29 this repository was recreated from a single snapshot. It has no
-  releases yet. The earlier beta `2026.10.28-r2` and the runs below belong to the
+- On 2026-10-29 this repository was recreated from a single snapshot. Releases
+  `v2026.10.29-r1` to `v2026.11.8-r6` have been published from it since. The earlier beta `2026.10.28-r2` and the runs below belong to the
   private `notch-companion-prerelease` archive.
 - Archived evidence: native ARM CI passed (run `40799805580`): 570 Swift tests
   (18 live tests skipped), 30 Python backend tests (22 native-Hermes tests
   skipped) and 31 release/recovery tests. An ARM runner allocation failure
   happened once (run `40722456527`, no runner and no steps). Automatic Intel
   recovery is unit-tested but hasn't yet recovered a real outage.
-- No release has been published from native ARM CI yet. Releases are now full
-  GitHub releases marked Latest, with no Beta title or pre-release flag.
-- Repository settings were read back on 2026-10-29: private, issues on, PR
-  creation limited to collaborators, workflow token read-only, and only the owner
-  as collaborator. Branch protection isn't available on the current plan.
+- Releases are full GitHub releases marked Latest, with no Beta title or pre-release flag.
+- Repository settings were read back on 2026-11-08: public, private
+  vulnerability reporting on, issues on, PR creation limited to collaborators,
+  workflow token read-only, and only the owner as collaborator. Rulesets: `main`
+  requires a PR and blocks force-pushes and deletion; `v*` tags can't be moved or
+  deleted. Required status checks aren't set (the check name varies by runner).
 
 **Adapters**
 
 No adapter carries an experimental label any more (maintainer decision,
-2026-11-07); the gaps below still need live acceptance before a public release.
+2026-11-07). The repository went public with the gaps below known and accepted
+(maintainer decision, 2026-11-08); Cursor, DeepSeek and OpenClaw don't need live
+acceptance before they're advertised.
 Every harness now hosts cross-agent delegation. Live acceptance from earlier
 private development hasn't been re-run against this source snapshot. Known limits:
 
@@ -71,6 +74,15 @@ private development hasn't been re-run against this source snapshot. Known limit
   covered by offline fixtures only, not live OpenCode.
 - Pi: no terminal-rendered extension UI and no built-in tool approvals.
 
+- Claude computer use: the launch entry, dialog declaration, session-scoped
+  approval, grant/deny/missing-permission/idle replies, undeclared kinds and the
+  retry without the entry after a refused launch are covered by protocol
+  fixtures shaped from Claude Code 2.1.308's own dialog code. Checked live against 2.1.308 with
+  no prompt: a session opens with the entry and the declaration, and in a project
+  where `/mcp` has not enabled `computer-use` the server is not added. Not yet
+  checked live: a project with `computer-use` enabled, a real `request_access`
+  payload, a granted screenshot or click, and which app macOS lists for the
+  permissions.
 - Claude Code Ultracode: the `apply_flag_settings`/`get_settings` shapes were
   checked live against Claude Code 2.1.308 with no prompt (throwaway
   `--no-session-persistence` frontend), including keeping an `--effort ultracode`
@@ -125,16 +137,19 @@ private development hasn't been re-run against this source snapshot. Known limit
 **Not yet done**
 
 - A downloaded release hasn't been installed through Gatekeeper on another Mac.
-- No third-party rights or full secret review has been done. Pattern scans found
-  nothing, but they aren't a certification.
-- The bundled third-party agent marks haven't had a rights review; vendors'
-  published rules vary (see [third-party marks](third-party-marks.md)).
+- No full manual secret review has been done. Before the switch to public, a
+  pattern scan of every pushed branch and tag found only test fixtures, and every
+  author address is the GitHub noreply address. A scan isn't a certification.
+- The bundled agent marks haven't had a formal rights review. The maintainer kept
+  them following t3code's practice; see [third-party marks](third-party-marks.md)
+  for what that comparison covers.
 - No physical UI acceptance of a release build has been done.
 
-## Public release acceptance
+## Release acceptance
 
-Before the first public release, in addition to the repository steps in
-[releasing](releasing.md#before-public-launch):
+The repository went public before these checks passed (see
+[releasing](releasing.md#public-repository)). They remain the bar for calling a
+release accepted:
 
 - Test the exact downloaded ZIP on another Mac or clean account: extract, move to
   Applications, Gatekeeper approval, launch and agent setup.
@@ -145,8 +160,6 @@ Before the first public release, in addition to the repository steps in
   drag/drop, readable text, Reduce Motion and ordinary macOS permission prompts.
 - Replace the app with an update only after all parent and child work is idle,
   then check that drafts, history, native IDs and read receipts survived.
-- Run live acceptance, including a delegating prompt, for Cursor, DeepSeek and
-  OpenClaw before advertising them in a public release.
 
 When recording results, include the tested OS, architecture, runtime version,
 scenario and outcome. Leave out account names, profile contents, raw transcripts

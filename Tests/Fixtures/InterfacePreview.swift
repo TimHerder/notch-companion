@@ -945,6 +945,18 @@ import ImageIO
         model.sessions[0].permissionMode = .fullAccess
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-full-access", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-full-access", output: output)
+        // Default permissions naming Claude Code's own mode, here bypassPermissions from its settings.
+        let fixtureInfo = model.sessions[0].runtimeInfo
+        model.sessions[0].runtime = .claude
+        model.sessions[0].permissionMode = nil
+        model.sessions[0].runtimeInfo = RuntimeSessionInfo(profilePermission: PermissionMode.fullAccess.rawValue)
+        try render(ModelControlsView(model: model, choosingPermissions: true).padding(20)
+            .frame(width: 560, height: 300, alignment: .bottomTrailing).background(CompanionStyle.background)
+            .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
+            size: NSSize(width: 560, height: 300), name: "permission-modes-profile", output: output)
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-profile-full-access", output: output)
+        model.sessions[0].runtimeInfo = fixtureInfo
+        model.sessions[0].runtime = .codex
         // A tight composer bar: the model label truncates first, then the folder; the gauge and Send stay.
         let fixtureFolder = model.sessions[0].workspacePath
         model.sessions[0].permissionMode = .autoEdit

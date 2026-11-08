@@ -35,6 +35,14 @@ import XCTest
         XCTAssertNil(SnapShot.source(appPID: recorded, appName: "Safari", windows: [window(own, id: 2)], ownPID: own))
     }
 
+    func testPermissionResetNeedsAKnownBundle() async {
+        // Unbundled test runs and unknown identifiers report failure, so no second prompt is attempted.
+        let nilBundle = await SnapShot.resetPermission(bundleID: nil)
+        let unknown = await SnapShot.resetPermission(bundleID: "invalid.notch-companion.\(UUID().uuidString)")
+        XCTAssertFalse(nilBundle)
+        XCTAssertFalse(unknown)
+    }
+
     func testStagingAttachesThePictureWithoutSendingAndRemovalDeletesIt() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let suite = "notch-snapshot-tests-\(UUID().uuidString)"

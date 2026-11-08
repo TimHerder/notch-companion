@@ -39,8 +39,11 @@ Cursor and Hermes Agent and their logos are trademarks of their respective
 owners. Notch Companion is not affiliated with or endorsed by them. The app
 shows the same line at the bottom of Settings.
 
-The marks haven't had a rights review; each vendor publishes its own rules
-(see [verification](verification.md)). To add an agent's
+The marks haven't had a formal rights review. On 2026-11-08 the maintainer chose
+to ship them, as the public MIT project [t3code](https://github.com/pingdotgg/t3code)
+does with the Claude, OpenAI, Cursor, Antigravity and OpenCode marks. That
+comparison doesn't cover DeepSeek, Hermes, OpenClaw or Pi, and each vendor
+publishes its own rules (see [verification](verification.md)). To add an agent's
 mark, record it here with its source, add the unmodified file under its runtime
 identifier (a PNG rasterized from the official SVG only when AppKit cannot draw
 the SVG), and keep the `RuntimeChoiceTests` logo checks passing.

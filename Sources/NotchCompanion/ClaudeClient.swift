@@ -8,6 +8,10 @@ final class ClaudeClient: RuntimeTransport {
     private var executable: URL?
     private let executableOverride: URL?
     private var sessions: [String: Session] = [:]
+    /// Set once this CLI opened a session only without its computer-use server.
+    private var computerUseRefused = false
+    /// Changes on disconnect, so a retry never reopens a session the user disconnected.
+    private var connection = 0
 
     @MainActor private final class Session {
         let process = NativeJSONProcess()
@@ -21,6 +25,8 @@ final class ClaudeClient: RuntimeTransport {
         /// Launched with bypass allowed, and whether native history exists to resume.
         var allowsBypass = false
         var resumable = false
+        /// Launched with computer use and not yet initialized: a failure retries without it.
+        var computerUseLaunch = false
         /// The profile's own mode, read before the first override; nil while none is applied.
         var inheritedMode: String?
         var appliedMode: String?
@@ -56,15 +62,29 @@ final class ClaudeClient: RuntimeTransport {
     static let capabilities: [String: Bool] = ["resume": true, "attachments": true, "images": true,
         "approvals": true, "questions": true, "modelSelection": true, "contextUsage": true, "delegation": true]
 
-    static func arguments(id: String, resume: Bool, allowBypass: Bool = false, delegation: [String: Any]? = nil) throws -> [String] {
+    static func arguments(id: String, resume: Bool, allowBypass: Bool = false, delegation: [String: Any]? = nil, computerUse executable: String? = nil) throws -> [String] {
         guard UUID(uuidString: id) != nil else { throw AppError("Claude Code requires a valid saved native session UUID.") }
+        let allowed = (delegation.map { [allowedDelegationTools($0)] } ?? []) + (executable == nil ? [] : [computerUseTools])
         // Only a session the user gave Full access may switch into bypass; the
         // flag alone leaves the native mode unchanged.
         return ["--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                 "--include-partial-messages", "--replay-user-messages", "--permission-prompt-tool", "stdio",
                 "--forward-subagent-text", resume ? "--resume=\(id)" : "--session-id=\(id)"]
             + (allowBypass ? ["--allow-dangerously-skip-permissions"] : [])
-            + (delegation.map { ["--allowedTools", allowedDelegationTools($0)] } ?? [])
+            + (executable.map { ["--mcp-config", computerUseConfig($0)] } ?? [])
+            + (allowed.isEmpty ? [] : ["--allowedTools", allowed.joined(separator: ",")])
+    }
+
+    /// Pre-allowed as the CLI's own setup does; the per-app grant is the approval.
+    static let computerUseTools = "mcp__computer-use__*"
+
+    /// Claude's built-in computer-use server, which the CLI adds itself only to
+    /// interactive sessions. The CLI still runs it in-process and applies its own
+    /// gates: the project's /mcp switch, the plan and the per-app grant.
+    static func computerUseConfig(_ executable: String) -> String {
+        let config = ["mcpServers": ["computer-use": ["type": "stdio", "command": executable, "args": ["--computer-use-mcp"]]]]
+        let data = try! JSONSerialization.data(withJSONObject: config, options: [.sortedKeys, .withoutEscapingSlashes])
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// Pre-approves the companion's tools, as T3 Code does; a Plan session only the read-only ones.
@@ -83,6 +103,13 @@ final class ClaudeClient: RuntimeTransport {
 
     static let nativePermissionModes: [PermissionMode: String] = [.ask: "default", .autoEdit: "acceptEdits", .plan: "plan", .fullAccess: "bypassPermissions"]
 
+    /// The mode a process opened in, as a `PermissionMode` raw value or, for modes the companion does not offer, a title.
+    static func profilePermission(_ native: String?) -> String? {
+        guard let native else { return nil }
+        let mapped = native == "manual" ? "default" : native
+        return nativePermissionModes.first { $0.value == mapped }?.key.rawValue ?? ["auto": "Auto", "dontAsk": "Don't ask"][native] ?? native
+    }
+
     static func trustedDirectory(_ params: [String: Any]) throws -> URL {
         guard params["project_trusted"] as? Bool == true else { throw AppError("Trust this project in Notch Companion before launching native project hooks and tools.") }
         guard let path = params["cwd"] as? String, path.hasPrefix("/") else { throw AppError("Choose this conversation's existing project folder before starting the native agent.") }
@@ -93,6 +120,7 @@ final class ClaudeClient: RuntimeTransport {
 
     func connect() async throws {
         executable = try executableOverride ?? RuntimeInstallation.executable(for: .claude)
+        computerUseRefused = false
         guard (try? URL(fileURLWithPath: profileID).resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else {
             executable = nil; throw AppError("Choose the existing Claude Code configuration folder and sign in with the native claude CLI first.")
         }
@@ -185,6 +213,11 @@ final class ClaudeClient: RuntimeTransport {
                 throw AppError("Claude Code did not apply the selected permission mode. Your message was not sent.")
             }
             target.appliedMode = mode
+            if mode == nil {
+                // Default restored the configured mode, which can differ from the one the process opened in.
+                target.info["profile_permission_mode"] = Self.profilePermission(native)
+                emit(target.state.event("session.info", ["profile_permission_mode": target.info["profile_permission_mode"] ?? native]))
+            }
             return ["mode": native]
         case "file.attach", "image.attach":
             let url = try Self.attachment(params)
@@ -299,10 +332,12 @@ final class ClaudeClient: RuntimeTransport {
         return session
     }
 
-    private func open(id: String, cwd: URL, resume: Bool, allowBypass: Bool = false, delegation: [String: Any]? = nil) async throws -> Session {
-        let arguments = try Self.arguments(id: id, resume: resume, allowBypass: allowBypass, delegation: delegation)
+    private func open(id: String, cwd: URL, resume: Bool, allowBypass: Bool = false, delegation: [String: Any]? = nil, computerUse: Bool? = nil) async throws -> Session {
+        let computerUse = computerUse ?? !computerUseRefused
+        let arguments = try Self.arguments(id: id, resume: resume, allowBypass: allowBypass, delegation: delegation, computerUse: computerUse ? executable?.path : nil)
         let session = Session(id: id, cwd: cwd)
         session.allowsBypass = allowBypass
+        let launchConnection = connection
         session.delegation = delegation
         session.resumable = resume
         sessions[id] = session
@@ -320,16 +355,22 @@ final class ClaudeClient: RuntimeTransport {
             guard sessions[id] === session, let executable else {
                 throw AppError("Claude Code connection changed before the session opened. No message was sent.")
             }
+            session.computerUseLaunch = computerUse
             try session.process.start(executable: executable, arguments: arguments, environment: environment, cwd: cwd)
-            var initialize: [String: Any] = ["subtype": "initialize", "forwardSubagentText": true]
+            var initialize: [String: Any] = ["subtype": "initialize", "forwardSubagentText": true,
+                                             "supportedDialogKinds": [ClaudeProtocolState.computerUseDialog]]
             // Appended to Claude's own system prompt; the profile's instructions stay.
             if let instructions = delegation?["instructions"] as? String { initialize["appendSystemPrompt"] = instructions }
             let initialized = try await control(session, initialize)
+            session.computerUseLaunch = false
             guard let models = initialized["models"] as? [[String: Any]] else { throw AppError("This Claude Code version does not provide the required structured initialization. Update it through its native installer.") }
             // Older CLIs return an initial state but do not stream subsequent
             // state changes. Only an observed state event enables that gate.
             if initialized["session_state"] as? String == "running" { session.state.active = true }
             session.catalog = Self.catalog(models)
+            // What Default permissions means here: the profile's own mode, e.g. bypassPermissions from its settings.
+            // An older CLI reports none: null clears a saved mode rather than leaving it stale.
+            session.info["profile_permission_mode"] = Self.profilePermission(initialized["current_permission_mode"] as? String) ?? NSNull()
             let settings = try? await control(session, ["subtype": "get_settings"])
             // A rejected read is tolerated; a process that stopped during it is not.
             guard sessions[id] === session else { throw AppError("Claude Code stopped while opening this session. No message was sent.") }
@@ -345,7 +386,17 @@ final class ClaudeClient: RuntimeTransport {
                 }
             }
             return session
-        } catch { failed(session, error); throw error }
+        } catch {
+            let retry = session.computerUseLaunch
+            failed(session, error)
+            // A policy such as disableSideloadFlags refuses any --mcp-config before
+            // initialize; chat must not depend on the optional server.
+            guard retry, connection == launchConnection, executable != nil, sessions[id] == nil else { throw error }
+            let reopened = try await open(id: id, cwd: cwd, resume: resume, allowBypass: allowBypass, delegation: delegation, computerUse: false)
+            computerUseRefused = true
+            emit(reopened.state.event("runtime.notice", ["message": "Claude Code would not start with its computer-use server, so this session opened without computer use."]))
+            return reopened
+        }
     }
 
     static let probeArguments = ["--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
@@ -478,10 +529,11 @@ final class ClaudeClient: RuntimeTransport {
     private func failed(_ session: Session, _ error: Error) {
         guard sessions[session.state.sessionID] === session else { return }
         sessions.removeValue(forKey: session.state.sessionID); session.close(error)
-        emit(session.state.event("session.disconnected", ["message": error.localizedDescription]))
+        // A launch that is retried without computer use was never connected.
+        if !session.computerUseLaunch { emit(session.state.event("session.disconnected", ["message": error.localizedDescription])) }
     }
     func disconnect() {
-        let owned = sessions.values; sessions.removeAll(); executable = nil
+        let owned = sessions.values; sessions.removeAll(); executable = nil; connection += 1
         for session in owned { session.close(AppError("Claude Code disconnected. Resume its native session before sending again.")) }
         onConnectionChange?(false, nil)
     }

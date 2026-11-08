@@ -306,6 +306,12 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var planReadyDismissedTurnID: String? = nil
     /// The latest turn sent in Plan, whose plan choosing Plan again keeps.
     var planTurnID: String? = nil
+    /// The mode the next send runs in: the chosen one, else the harness's own when it maps to one.
+    var effectivePermissionMode: PermissionMode? { permissionMode ?? runtimeInfo?.profilePermissionMode }
+    /// Default permissions, naming the harness's own mode when it reported one.
+    var defaultPermissionDetail: String {
+        "Uses \(runtime.title)'s own settings" + (runtimeInfo?.profilePermissionTitle.map { ": \($0)" } ?? "")
+    }
     var latestResponse: String { messages.last(where: { $0.role == "assistant" })?.text ?? "" }
     var isBusy: Bool { nativeActivityUnverified != nil || state == .working || state == .waiting || agents.contains { $0.state == .working || $0.state == .waiting } }
     /// Its own turn or native children are working; app-owned children are not counted.

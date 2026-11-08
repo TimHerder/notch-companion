@@ -1367,6 +1367,16 @@ final class AppModel: ObservableObject {
         } catch { errorMessage = "Could not capture \(source.name). \(error.localizedDescription)" }
     }
 
+    /// An ad-hoc grant names one exact build, so after a rebuild or update the toggle stays on
+    /// but no longer applies. Only the user can tell that from a refusal, so this runs on request.
+    func resetSnapShotPermission() async {
+        guard await SnapShot.resetPermission() else {
+            errorMessage = "Could not reset Screen Recording for Notch Companion. Remove it in System Settings, then allow it again."
+            return
+        }
+        _ = CGRequestScreenCaptureAccess()
+    }
+
     func send(queue: Bool = false) async {
         guard let session = current else { return }
         if session.pendingSubmission != nil {

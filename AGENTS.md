@@ -64,8 +64,8 @@ disagree, establish which one is intended before treating the discrepancy as cor
    confirm the remote branch matches `HEAD`. Open a PR against `main`, attach it
    to the current task, and report its checks and Preview download.
 5. Merge only when the user authorizes merging this task, after reviewing the
-   final diff and seeing the relevant checks pass. GitHub can't enforce this on
-   the current plan. An authorized merge of an app change also authorizes the
+   final diff and seeing the relevant checks pass. GitHub requires a PR for
+   `main` but can't require the checks, so confirm them yourself. An authorized merge of an app change also authorizes the
    automatic release publication.
 6. Report the change, checks, commit, branch and PR, plus release status after
    a merge. After a rebuild, tell the user an idle Quit/reopen is needed unless
@@ -82,8 +82,10 @@ work local overrides this. Read-only reviews and planning need no commit or PR.
 - CI stays credential-free on GitHub-hosted runners, never the maintainer's
   authenticated Mac.
 - Release versions come from tags, as described in the release guide. Release
-  tags are permanent, versions never come from bot commits, and Preview builds
+  tags are permanent (a ruleset blocks moving or deleting them), versions never
+  come from bot commits, and Preview builds
   never become releases.
-- External code and documentation contributions are closed. The repository stays
-  private, even with published releases, until the maintainer explicitly instructs
-  a public launch.
+- External code and documentation contributions are closed, and PR creation is
+  limited to collaborators. The repository is public (since 2026-11-08): everything
+  pushed, including Actions logs and artifacts, is visible to anyone. Only the
+  maintainer changes repository visibility, rulesets or security settings.
