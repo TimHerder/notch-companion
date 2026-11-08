@@ -64,10 +64,12 @@ import XCTest
                     XCTAssertEqual(content.textWidth, mascot ? 276 : 406)
                     XCTAssertEqual(content.choiceRows.count, mascot ? 2 : 1)
                     XCTAssertTrue(content.acceptsText)
-                    XCTAssertEqual(reopened.stageAnswerRows, content.choiceRows.count + 1)
+                    XCTAssertEqual(content.answerRows, content.choiceRows.count + 1)
+                    XCTAssertEqual(reopened.stageBodyHeight, content.bodyHeight(mascot: mascot))
+                    if mascot { XCTAssertGreaterThanOrEqual(reopened.stageBodyHeight, NotchGeometry.mascotStageBodyHeight) }
                 } else {
                     XCTAssertNil(reopened.stageContent)
-                    XCTAssertEqual(reopened.stageAnswerRows, 0)
+                    XCTAssertEqual(reopened.stageBodyHeight, NotchGeometry.mascotStageBodyHeight)
                 }
             }
         }

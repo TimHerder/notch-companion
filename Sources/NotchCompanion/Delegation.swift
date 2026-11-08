@@ -3,9 +3,10 @@ import CryptoKit
 
 extension RuntimeKind {
     /// Harnesses that take the companion's delegation server through a supported
-    /// per-run option. OpenCode's only one is per folder, so one session's token
-    /// would serve all of them; Hermes, OpenClaw and Antigravity have none.
-    var hostsDelegation: Bool { [.claude, .codex, .deepseek, .pi].contains(self) }
+    /// per-run or per-session option. OpenCode does from 2.0 (`AppModel.hostsDelegation(_:)`);
+    /// Antigravity takes it over ACP; Hermes gets native tools from the companion's
+    /// own frontend launcher and OpenClaw from its node link (`OpenClawNodeLink`).
+    var hostsDelegation: Bool { [.claude, .codex, .opencode, .deepseek, .pi, .cursor, .antigravity, .hermes, .openclaw].contains(self) }
     /// Harnesses that accept input into a running turn.
     var steersTurns: Bool { self == .codex }
 }
@@ -28,6 +29,8 @@ enum Delegation {
     static let maxTaskCharacters = 120_000
     static let defaultWait: TimeInterval = 10 * 60
     static let maxWait: TimeInterval = 60 * 60
+    /// OpenClaw cuts a node tool call off at 120 s (`NODE_MCP_TOOL_CALL_TIMEOUT_MS`).
+    static let openClawMaxWait: TimeInterval = 110
     static let roles = ["implementation", "research", "review", "design", "test", "general"]
     /// Pre-approved for a Plan session (T3's read-only set); the rest still
     /// ask. `task_status` and `notch_session_read` acknowledge results, so they are not.
@@ -231,6 +234,10 @@ extension AppModel {
         delegationServer.instructions = Delegation.instructions
         delegationServer.tools = { _ in Delegation.tools } // Children get every tool, including delegate_task.
         delegationServer.isActive = { [weak self] id in self?.sessions.first { $0.id == id }?.isBusy == true }
+        delegationServer.ownsNative = { [weak self] caller, native in
+            guard let session = self?.sessions.first(where: { $0.id == caller.sessionID }) else { return false }
+            return session.storedID == native || session.agents.contains { $0.nativeID == native }
+        }
         delegationServer.call = { [weak self] caller, name, arguments in
             guard let self else { throw DelegationFailure("orchestration_error", "Notch Companion is closing.") }
             return try await self.handleDelegationTool(caller, name: name, arguments: arguments)
@@ -246,10 +253,13 @@ extension AppModel {
         syncDelegatedChildren()
     }
 
+    /// A hosting harness, unless its connected installation reported it cannot host.
+    func hostsDelegation(_ route: RuntimeRoute) -> Bool { route.runtime.hostsDelegation && delegationHosting[route] != false }
+
     /// The server, a fresh token and the instructions for a hosting session's launch.
     /// A session whose process still holds a live token keeps it.
     func delegationLaunch(for session: CompanionSession) async -> [String: Any]? {
-        guard delegationEnabled, session.runtime.hostsDelegation, !session.isLegacyPrivate,
+        guard delegationEnabled, hostsDelegation(session.route), !session.isLegacyPrivate,
               !delegationServer.hasGrant(sessionID: session.id) else { return nil }
         guard let url = try? await delegationServer.start() else { return nil }
         let token = delegationServer.issueToken(for: DelegationCaller(sessionID: session.id, runtime: session.runtime,
@@ -364,7 +374,7 @@ extension AppModel {
             let modeAllowed = (try? Delegation.childMode(parent: parent.permissionMode, requested: nil, supported: modes)) != nil
                 || parent.permissionMode == nil || parent.permissionMode == .fullAccess
             if !modeAllowed { constraints.append("It has no permission mode within yours, so it cannot run your child tasks.") }
-            if !runtime.hostsDelegation { constraints.append("Its children cannot delegate further.") }
+            if !hostsDelegation(delegationCatalogKey(runtime, parent: parent).route) { constraints.append("Its children cannot delegate further.") }
             return ["runtime": runtime.rawValue, "displayName": runtime.title,
                     "defaultModel": catalog?.defaultModel?.model as Any? ?? NSNull(),
                     "models": models.prefix(limit).map { option -> [String: Any] in
@@ -379,7 +389,7 @@ extension AppModel {
                     "canRunChildTask": modeAllowed && trustsProject(runtime, path: parent.workspacePath),
                     "canRunCrossProviderChildTask": true, "constraints": constraints]
         }
-        return ["parentSessionId": parent.id, "inheritedRuntime": parent.runtime.rawValue,
+        var result: [String: Any] = ["parentSessionId": parent.id, "inheritedRuntime": parent.runtime.rawValue,
                 "inheritedModel": parent.runtimeInfo?.model ?? parent.modelOverride?.model as Any? ?? NSNull(),
                 "runtimeMode": parent.permissionMode?.runtimeModeName ?? "inherit",
                 "interactionMode": parent.permissionMode == .plan ? "plan" : "default",
@@ -387,6 +397,9 @@ extension AppModel {
                 "features": ["appOwnedSubagents": true, "asyncPolling": true, "cancellation": true,
                              "batchThreadCreation": true, "threadManagement": true, "incrementalThreadRead": true,
                              "scheduledTasks": false, "maxBatchThreads": Delegation.maxBatchSessions]]
+        // OpenClaw node tools carry no server instructions, so they arrive with this first call.
+        if caller.runtime == .openclaw { result["instructions"] = Delegation.instructions }
+        return result
     }
 
     func delegateTask(_ caller: DelegationCaller, _ arguments: [String: Any]) async throws -> [String: Any] {
@@ -402,12 +415,13 @@ extension AppModel {
         }
         let role = arguments["role"] as? String
         guard role.map(Delegation.roles.contains) ?? true else { throw DelegationFailure("invalid_request", "role must be one of \(Delegation.roles.joined(separator: ", ")).") }
-        let timeout = Self.waitTimeout(arguments)
+        // One budget for creation and the wait, so an OpenClaw call answers inside the Gateway's deadline.
+        let deadline = Date().addingTimeInterval(Self.waitTimeout(arguments, runtime: caller.runtime))
         let taskID = Delegation.derivedID(caller: caller.sessionID, operation: "delegate_task", clientRequestID: clientRequestID)
         // A retry reaches the same task; never a second child.
         if let creating = delegationCreations[taskID] { _ = try await creating.task.value }
         if let existing = sessions.first(where: { $0.delegation?.taskID == taskID && $0.parentSessionID == caller.sessionID }) {
-            return mode == "wait" ? try await waitForDelegatedTask(existing.id, timeout: timeout) : taskResult(existing.id)
+            return mode == "wait" ? try await waitForDelegatedTask(existing.id, timeout: max(0, deadline.timeIntervalSinceNow)) : taskResult(existing.id)
         }
         guard let parent = sessions.first(where: { $0.id == caller.sessionID }) else { throw DelegationFailure("thread_not_found", "The calling session no longer exists.") }
         guard !parent.parentTurnComplete else {
@@ -421,7 +435,7 @@ extension AppModel {
             scheduleDeferredOperationIfIdle()
         }
         let childID = try await creation.value
-        return mode == "wait" ? try await waitForDelegatedTask(childID, timeout: timeout) : taskResult(childID)
+        return mode == "wait" ? try await waitForDelegatedTask(childID, timeout: max(0, deadline.timeIntervalSinceNow)) : taskResult(childID)
     }
 
     /// A new session for an agent: its harness, model and mode within the
@@ -532,9 +546,11 @@ extension AppModel {
         }
     }
 
-    static func waitTimeout(_ arguments: [String: Any]) -> TimeInterval {
-        guard let milliseconds = (arguments["timeoutMs"] as? NSNumber)?.doubleValue, milliseconds.isFinite else { return Delegation.defaultWait }
-        return min(Delegation.maxWait, max(0, milliseconds / 1000))
+    /// A wait ends inside the caller's own tool deadline, so its timeout returns `next` instead of being cut off.
+    static func waitTimeout(_ arguments: [String: Any], runtime: RuntimeKind? = nil) -> TimeInterval {
+        let limit = runtime == .openclaw ? Delegation.openClawMaxWait : Delegation.maxWait
+        guard let milliseconds = (arguments["timeoutMs"] as? NSNumber)?.doubleValue, milliseconds.isFinite else { return min(limit, Delegation.defaultWait) }
+        return min(limit, max(0, milliseconds / 1000))
     }
 
     /// Blocks until the child settles, or returns early on its question,
@@ -717,8 +733,7 @@ extension AppModel {
                             parent.completionID = UUID().uuidString
                             if parent.parentSessionID == nil {
                                 lastCompletion[parent.id] = Date()
-                                play(.complete)
-                                announce(.finished, sessionID: parent.id)
+                                announceCompletion(parent.id)
                             }
                         } else if !parent.hasUnreadFailure { parent.completionID = UUID().uuidString }
                     }
@@ -771,7 +786,7 @@ extension AppModel {
             let asker = sessions.first { $0.id == next.questionSessionID }?.runtimeID
             return !requests.contains { ($0.requestID ?? $0.id) == request && $0.sessionID == asker }
         } ?? false
-        if answered || session.messages.contains(where: { $0.id == next.id }) {
+        if answered || session.wasDelivered(next.id) {
             update(id) { $0.queuedSends.removeAll { $0.id == next.id } }
             save()
             processDelegationWakes()
@@ -1019,13 +1034,13 @@ extension AppModel {
     func waitForSession(_ caller: DelegationCaller, _ arguments: [String: Any]) async throws -> [String: Any] {
         let target = try targetSession(caller, arguments, control: false)
         if target.parentSessionID == caller.sessionID, target.delegation != nil {
-            let result = try await waitForDelegatedTask(target.id, timeout: Self.waitTimeout(arguments), returnsOnQuestion: false)
+            let result = try await waitForDelegatedTask(target.id, timeout: Self.waitTimeout(arguments, runtime: caller.runtime), returnsOnQuestion: false)
             var row: [String: Any] = ["sessionId": target.id, "status": sessionStatus(sessions.first { $0.id == target.id } ?? target),
                                       "timedOut": result["waitTimedOut"] as? Bool ?? false]
             if let next = result["next"] { row["next"] = next }
             return row
         }
-        let deadline = Date().addingTimeInterval(Self.waitTimeout(arguments))
+        let deadline = Date().addingTimeInterval(Self.waitTimeout(arguments, runtime: caller.runtime))
         delegationWaits[caller.sessionID, default: 0] += 1
         defer {
             delegationWaits[caller.sessionID, default: 1] -= 1

@@ -130,6 +130,307 @@ final class ACPIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testAnsweredCursorPlanLeavesNoPlanReadyBanner() async throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else { throw XCTSkip("Offline Cursor peer needs system Python 3.") }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("notch-cursor-plan-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Fixtures/cursor_acp.py")
+        let executable = root.appendingPathComponent("cursor-agent")
+        try FileManager.default.copyItem(at: source, to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let suite = "cursor-plan-" + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let storage = root.appendingPathComponent("sessions.json")
+        let model = AppModel(storageURL: storage, playsSounds: false,
+                             client: ACPRuntimeClient(runtime: .cursor, profileID: root.path, executableOverride: executable), preferences: preferences)
+        defer { model.shutdown() }
+        await model.connect()
+        await model.newSession(showPanel: false, runtime: .cursor, workspace: root.path)
+        let id = try XCTUnwrap(model.currentID)
+        model.update(id) { $0.trustedProjectPath = root.standardizedFileURL.resolvingSymlinksInPath().path }
+        model.setPermissionMode(.plan, for: id)
+
+        for choice in ["once", "deny"] {
+            model.draft = "plan"
+            let send = Task { await model.send() }
+            try await eventually { model.requests.contains { $0.isPlan } }
+            await model.answer(try XCTUnwrap(model.requests.first { $0.isPlan }), choice: choice)
+            await send.value
+            try await eventually { model.current?.displayState == .finished }
+            XCTAssertEqual(model.current?.permissionMode, .plan)
+            XCTAssertNil(model.current?.planReadyTurnID, "An answered native plan (\(choice)) needs no Plan ready banner")
+        }
+        let saved = try JSONDecoder().decode([CompanionSession].self, from: Data(contentsOf: storage)).first { $0.id == id }
+        XCTAssertEqual(saved?.planReadyDismissedTurnID, model.current?.messages.last { $0.role == "user" }?.id)
+    }
+
+    @MainActor
+    func testAntigravityHostsDelegationAnswersNativeQuestionsAndResumesOnlyListedConversations() async throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else { throw XCTSkip("Offline agy peer needs system Python 3.") }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("notch-agy-fixture-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Fixtures/antigravity_acp.py")
+        let executable = root.appendingPathComponent("agy")
+        try FileManager.default.copyItem(at: source, to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let profile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gemini/antigravity-cli").path
+        do {
+            try await ACPRuntimeClient(runtime: .antigravity, profileID: root.path, executableOverride: executable).connect()
+            XCTFail("Only the native profile")
+        } catch {}
+        let client = ACPRuntimeClient(runtime: .antigravity, profileID: profile, executableOverride: executable)
+        defer { client.disconnect() }
+        var events: [(String, [String: Any])] = []
+        client.onEvent = { events.append(($0, $1)) }
+        try await client.connect()
+        let trusted: [String: Any] = ["cwd": root.path, "project_trusted": true]
+        let models = try await client.request("runtime.models", params: trusted)
+        let discovered = try XCTUnwrap(models["catalog"] as? RuntimeModelCatalog)
+        XCTAssertEqual(discovered.defaultModel?.model, "gemini-3.8-flash-high")
+        do {
+            _ = try await client.request("session.create", params: ["cwd": root.path])
+            XCTFail("Native tools start only in a trusted project")
+        } catch {}
+
+        let delegation: [String: Any] = ["url": "http://127.0.0.1:9/mcp", "token": "tok", "bridge": "/bin/bridge", "instructions": Delegation.instructions]
+        let session = try await client.request("session.create", params: trusted.merging(["delegation": delegation]) { $1 })
+        let sid = try XCTUnwrap(session["session_id"] as? String)
+        let reloaded = try await client.request("session.resume", params: trusted.merging(["session_id": sid, "native_submission_attempted": true]) { $1 })
+        XCTAssertEqual(reloaded["stored_session_id"] as? String, sid, "A live reload (Check last send) needs no native list entry")
+        let capabilities = try XCTUnwrap((session["info"] as? [String: Any])?["capabilities"] as? [String: Any])
+        XCTAssertEqual(capabilities["questions"] as? Bool, true)
+        XCTAssertEqual(capabilities["permissionModes"] as? [String], [PermissionMode.autoEdit.rawValue, PermissionMode.plan.rawValue],
+                       "`default` follows native settings, so it is Inherit, not Ask")
+        let catalog = try XCTUnwrap(session["catalog"] as? RuntimeModelCatalog)
+        XCTAssertEqual(catalog.models.map(\.choice.model), discovered.models.map(\.choice.model),
+                       "A model picked before the first send stays valid once the session opens")
+        do {
+            _ = try await client.request("session.model.set", params: ["session_id": sid, "model": "gemini-3.8-flash"])
+            XCTFail("A config family is not one of the session's exact models")
+        } catch {}
+        _ = try await client.request("session.model.set", params: ["session_id": sid, "model": "claude-sonnet-4-6"])
+
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "ordinary"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["text"] as? String, "reply:claude-sonnet-4-6")
+        let tool = try XCTUnwrap(events.first { $0.0 == "tool.start" }?.1["name"] as? String)
+        XCTAssertEqual(ToolActivity.delegationTool(tool), "delegate_task", "Labelled as the companion's tool")
+
+        events.removeAll()
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "question"])
+        try await eventually { events.contains { $0.0 == "clarify.request" } }
+        let question = try XCTUnwrap((events.first { $0.0 == "clarify.request" }?.1["questions"] as? [[String: Any]])?.first)
+        XCTAssertEqual(question["choices"] as? [String], ["Sage", "Ink"])
+        XCTAssertEqual(question["allows_free_text"] as? Bool, false)
+        do {
+            _ = try await client.request("approval.respond", params: ["session_id": sid, "request_id": "s:ask-1", "choice": "once"])
+            XCTFail("A native question's options are answers, never an approval")
+        } catch {}
+        _ = try await client.request("clarify.respond", params: ["session_id": sid, "request_id": "s:ask-1", "question_id": "interaction_1", "answer": "Ink"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["text"] as? String, "opt-ink")
+
+        events.removeAll()
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "permission"])
+        try await eventually { events.contains { $0.0 == "approval.request" } }
+        XCTAssertEqual(events.first { $0.0 == "approval.request" }?.1["choices"] as? [String], ["once", "deny"])
+        _ = try await client.request("approval.respond", params: ["session_id": sid, "request_id": "s:perm-1", "choice": "deny"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["text"] as? String, "reject")
+        client.disconnect()
+
+        let resumed = ACPRuntimeClient(runtime: .antigravity, profileID: profile, executableOverride: executable)
+        defer { resumed.disconnect() }
+        try await resumed.connect()
+        let reopened = try await resumed.request("session.resume", params: trusted.merging(["session_id": sid, "delegation": delegation,
+                                                                                            "native_submission_attempted": true]) { $1 })
+        XCTAssertEqual(reopened["stored_session_id"] as? String, sid)
+        XCTAssertEqual(reopened["history_complete"] as? Bool, false)
+        XCTAssertEqual((reopened["info"] as? [String: Any])?["model"] as? String, "gemini-3.8-flash-high", "A cold resume reports the native default")
+        let missing = UUID().uuidString.lowercased()
+        do {
+            _ = try await resumed.request("session.resume", params: trusted.merging(["session_id": missing, "native_submission_attempted": true]) { $1 })
+            XCTFail("An ID agy does not list would silently become an empty conversation")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("no longer lists")) }
+        let neverPrompted = try await resumed.request("session.resume", params: trusted.merging(["session_id": missing, "native_submission_attempted": false]) { $1 })
+        XCTAssertEqual(neverPrompted["stored_session_id"] as? String, missing, "Nothing was sent there, so its empty conversation keeps the ID")
+
+        let wire = try String(contentsOf: root.appendingPathComponent("wire.jsonl"), encoding: .utf8).split(separator: "\n").compactMap {
+            try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+        }
+        let opens = wire.filter { ["session/new", "session/resume"].contains($0["method"] as? String) }.compactMap { $0["params"] as? [String: Any] }
+        XCTAssertEqual(opens.count, 4, "The unlisted resume was refused before reaching agy")
+        for open in opens.prefix(3) {
+            XCTAssertEqual((open["mcpServers"] as? [[String: Any]])?.first?["name"] as? String, "notch", "A reload keeps its bridge")
+            let meta = ((open["_meta"] as? [String: Any])?["antigravity"] as? [String: Any])?["systemPrompt"] as? [String: Any]
+            XCTAssertEqual(meta?["append"] as? String, Delegation.instructions, "Appended on every open: agy keeps it only per process")
+        }
+        XCTAssertNil(opens[3]["_meta"], "No delegation, no appended instructions")
+        XCTAssertTrue(wire.contains { $0["method"] as? String == "session/list" && ($0["params"] as? [String: Any])?["cursor"] != nil },
+                      "The native list is followed across pages")
+    }
+
+    @MainActor
+    func testAntigravityStopAnswersItsOpenQuestionSoTheTurnEnds() async throws {
+        let (root, client) = try antigravityFixture()
+        defer { client.disconnect(); try? FileManager.default.removeItem(at: root) }
+        var events: [(String, [String: Any])] = []
+        client.onEvent = { events.append(($0, $1)) }
+        try await client.connect()
+        let session = try await client.request("session.create", params: ["cwd": root.path, "project_trusted": true])
+        let sid = try XCTUnwrap(session["session_id"] as? String)
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "question"])
+        try await eventually { events.contains { $0.0 == "clarify.request" } }
+        _ = try await client.request("session.interrupt", params: ["session_id": sid])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "interrupted")
+        let wire = try wireLog(root)
+        let cancel = try XCTUnwrap(wire.firstIndex { $0["method"] as? String == "session/cancel" })
+        let answer = try XCTUnwrap(wire.firstIndex { $0["id"] as? String == "ask-1" })
+        XCTAssertLessThan(cancel, answer)
+        XCTAssertEqual(((wire[answer]["result"] as? [String: Any])?["outcome"] as? [String: Any])?["outcome"] as? String, "cancelled")
+        do {
+            _ = try await client.request("clarify.respond", params: ["session_id": sid, "request_id": "s:ask-1", "question_id": "interaction_1", "answer": "Ink"])
+            XCTFail("A cancelled question cannot be answered again")
+        } catch {}
+    }
+
+    @MainActor
+    func testAntigravityPromptDeadlineSettlesOnlyThatTurnAndWaitsWhileTheUserIsAsked() async throws {
+        let (root, client) = try antigravityFixture()
+        defer { client.disconnect(); try? FileManager.default.removeItem(at: root) }
+        client.promptTimeout = 0.3
+        var events: [(String, [String: Any])] = []
+        var disconnected = false
+        client.onEvent = { events.append(($0, $1)) }
+        client.onConnectionChange = { connected, _ in if !connected { disconnected = true } }
+        try await client.connect()
+        let session = try await client.request("session.create", params: ["cwd": root.path, "project_trusted": true])
+        let sid = try XCTUnwrap(session["session_id"] as? String)
+
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "question"])
+        try await eventually { events.contains { $0.0 == "clarify.request" } }
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertFalse(events.contains { $0.0 == "message.complete" }, "Time spent waiting on the user does not end the turn")
+        _ = try await client.request("clarify.respond", params: ["session_id": sid, "request_id": "s:ask-1", "question_id": "interaction_1", "answer": "Ink"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "complete")
+
+        events.removeAll()
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "slow"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "error")
+        let asked = try XCTUnwrap(events.firstIndex { ($0.1["message"] as? String)?.contains("asked to stop") == true }, "Expiry tells the user before agy confirms")
+        XCTAssertLessThan(asked, try XCTUnwrap(events.firstIndex { $0.0 == "message.complete" }))
+        XCTAssertTrue((events.last { $0.0 == "runtime.notice" }?.1["message"] as? String)?.contains("did not finish this turn") == true)
+        XCTAssertTrue(try wireLog(root).contains { $0["method"] as? String == "session/cancel" }, "The overdue turn is cancelled natively")
+        XCTAssertFalse(disconnected, "The shared agy process keeps serving every session")
+        events.removeAll()
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "ordinary"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "complete")
+    }
+
+    @MainActor
+    func testAntigravityAnswerRestartsTheTurnDeadline() async throws {
+        let (root, client) = try antigravityFixture()
+        defer { client.disconnect(); try? FileManager.default.removeItem(at: root) }
+        client.promptTimeout = 2
+        var events: [(String, [String: Any])] = []
+        client.onEvent = { events.append(($0, $1)) }
+        try await client.connect()
+        let session = try await client.request("session.create", params: ["cwd": root.path, "project_trusted": true])
+        let sid = try XCTUnwrap(session["session_id"] as? String)
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "ask then work"])
+        try await eventually { events.contains { $0.0 == "clarify.request" } }
+        // Answered 0.4 s before the re-armed deadline (t0+4); agy then works 0.7 s, so without
+        // the restart the cancel at t0+4 catches it, and with it the next deadline is t0+5.6.
+        try await Task.sleep(for: .seconds(3.6))
+        _ = try await client.request("clarify.respond", params: ["session_id": sid, "request_id": "s:ask-1", "question_id": "interaction_1", "answer": "Ink"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "complete", "The user's wait never counts against agy's working time")
+        XCTAssertFalse(try wireLog(root).contains { $0["method"] as? String == "session/cancel" })
+    }
+
+    @MainActor
+    func testAntigravityOverdueSilentTurnKeepsItsReceiptAndStaysBusyUntilConfirmed() async throws {
+        let (root, client) = try antigravityFixture()
+        defer { client.disconnect(); try? FileManager.default.removeItem(at: root) }
+        client.promptTimeout = 0.3
+        client.promptGrace = 3
+        var events: [(String, [String: Any])] = []
+        var disconnected = false
+        client.onEvent = { events.append(($0, $1)) }
+        client.onConnectionChange = { connected, _ in if !connected { disconnected = true } }
+        try await client.connect()
+        let session = try await client.request("session.create", params: ["cwd": root.path, "project_trusted": true])
+        let sid = try XCTUnwrap(session["session_id"] as? String)
+
+        // agy confirms the cancellation: its answer is the receipt, and the turn settles as failed.
+        let accepted = try await client.request("prompt.submit", params: ["session_id": sid, "text": "silent"])
+        XCTAssertEqual(accepted["accepted"] as? Bool, true, "A silent overdue turn is never a definitive rejection")
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "error")
+        XCTAssertFalse(disconnected)
+        events.removeAll()
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "ordinary"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "complete")
+
+        // agy answers the cancellation with an error: the turn was held all along, so still no definitive rejection.
+        do {
+            _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "cancel errors"])
+            XCTFail("An overdue turn that ends in an error cannot report success")
+        } catch {
+            if case ACPClientError.rpc = error { XCTFail("The send stays unconfirmed, not rejected: \(error)") }
+            XCTAssertTrue(error.localizedDescription.contains("Check the native conversation"))
+        }
+        XCTAssertFalse(disconnected)
+        events.removeAll()
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "ordinary"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["status"] as? String, "complete")
+
+        // agy never confirms: busy holds through the grace period, then only a restart proves the turn stopped.
+        events.removeAll()
+        client.promptGrace = 0.3
+        let started = ContinuousClock.now
+        do {
+            _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "stuck"])
+            XCTFail("An unconfirmed overdue turn cannot report success")
+        } catch {
+            if case ACPClientError.rpc = error { XCTFail("The send stays unconfirmed, not rejected: \(error)") }
+            XCTAssertTrue(error.localizedDescription.contains("Check the native conversation"))
+        }
+        XCTAssertGreaterThanOrEqual(ContinuousClock.now - started, .seconds(client.promptTimeout + client.promptGrace))
+        XCTAssertTrue(events.contains { ($0.1["message"] as? String)?.contains("asked to stop") == true })
+        XCTAssertFalse(events.contains { $0.0 == "message.complete" })
+        XCTAssertTrue(disconnected)
+    }
+
+    @MainActor
+    private func antigravityFixture() throws -> (URL, ACPRuntimeClient) {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else { throw XCTSkip("Offline agy peer needs system Python 3.") }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("notch-agy-fixture-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Fixtures/antigravity_acp.py")
+        let executable = root.appendingPathComponent("agy")
+        try FileManager.default.copyItem(at: source, to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let profile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gemini/antigravity-cli").path
+        return (root, ACPRuntimeClient(runtime: .antigravity, profileID: profile, executableOverride: executable))
+    }
+
+    private func wireLog(_ root: URL) throws -> [[String: Any]] {
+        try String(contentsOf: root.appendingPathComponent("wire.jsonl"), encoding: .utf8).split(separator: "\n").compactMap {
+            try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+        }
+    }
+
+    @MainActor
     private func eventually(_ predicate: () -> Bool) async throws {
         for _ in 0..<100 {
             if predicate() { return }

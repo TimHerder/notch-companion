@@ -127,11 +127,208 @@ def install_surface_hint():
         hints.setdefault(COMPANION_SOURCE, COMPANION_SURFACE_HINT)
 
 
-def watch_parent(cleanup=None):
-    """A crashed/quitting parent cannot leave an orphaned owned frontend."""
+NOTCH_TOOLSET = "notch"
+# The companion's longest delegation wait is 60 minutes; every harness gets 65.
+NOTCH_TOOL_TIMEOUT = 65 * 60
+NOTCH_UNAVAILABLE = ("This Hermes version does not offer the tool interfaces Notch Companion delegation needs, "
+                     "so this session cannot delegate. It works as usual otherwise.")
+
+
+def notch_tool_error(code, message):
+    return json.dumps({"error": message, "code": code})
+
+
+def post_json(url, token, payload, interrupted=lambda: False, timeout=NOTCH_TOOL_TIMEOUT):
+    """POST one JSON-RPC request; a Hermes Stop closes the connection, which
+    cancels the call in the companion (an abandoned wait never acknowledges)."""
+    import http.client
+    import socket
+    target = urlparse(url)
+    connection = http.client.HTTPConnection(target.hostname, target.port, timeout=timeout)
+    body = json.dumps(payload).encode()
+    outcome = {}
+
+    def run():
+        try:
+            connection.request("POST", target.path, body, {
+                "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+                "Authorization": "Bearer " + token})
+            response = connection.getresponse()
+            outcome["reply"] = (response.status, response.read())
+        except Exception as error:
+            outcome["error"] = error
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    stopped = False
+    while worker.is_alive():
+        worker.join(0.25)
+        if worker.is_alive() and interrupted():
+            stopped = True
+            if connection.sock is not None:
+                try:
+                    connection.sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+    connection.close()
+    if stopped:
+        raise InterruptedError
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["reply"]
+
+
+class NotchDelegation:
+    """The companion's delegation tools as native tools of this frontend.
+
+    The parent sends one tools line, then a bind line per session it opens, on
+    the ownership pipe; tokens live only in this process's memory. A call
+    resolves its calling session and uses that session's own token.
+    """
+
+    def __init__(self, report=None):
+        self.lock = threading.Lock()
+        self.bindings = {}  # live session id -> (url, token)
+        self.server = None
+        self.ready = False
+        self.report = report or (lambda payload: print("NOTCH_DELEGATION " + json.dumps(payload), file=sys.__stderr__, flush=True))
+
+    def receive(self, line):
+        try:
+            message = json.loads(line)
+        except ValueError:
+            return
+        if not isinstance(message, dict):
+            return
+        if isinstance(message.get("tools"), list):
+            try:
+                self.install(message["tools"], message.get("instructions") or "")
+                self.report({"ready": True})
+            except LookupError as error:
+                self.report({"ready": False, "message": str(error)})
+            except Exception:
+                self.report({"ready": False, "message": NOTCH_UNAVAILABLE})
+            return
+        sid, url, token = message.get("bind"), message.get("url"), message.get("token")
+        target = urlparse(url) if isinstance(url, str) else None
+        # Only the companion's loopback server ever receives a session's token.
+        if (self.ready and isinstance(sid, str) and isinstance(token, str) and token and target
+                and target.scheme == "http" and target.hostname == "127.0.0.1"):
+            with self.lock:
+                self.bindings[sid] = (url, token)
+
+    def install(self, tools, instructions):
+        """Register once; fail closed when Hermes's internals do not match."""
+        server = sys.modules.get("tui_gateway.server")
+        from tools.registry import registry
+        from agent import prompt_builder
+        import inspect
+        hints = getattr(prompt_builder, "PLATFORM_HINTS", None)
+        if (server is None or not isinstance(getattr(server, "_sessions", None), dict)
+                or not hasattr(server, "_sessions_lock") or not callable(getattr(server, "_load_enabled_toolsets", None))
+                or not isinstance(hints, dict) or not callable(getattr(registry, "get_entry", None))
+                or "execution_timeout" not in inspect.signature(registry.register).parameters):
+            raise LookupError(NOTCH_UNAVAILABLE)
+        tools = [tool for tool in tools if isinstance(tool, dict) and isinstance(tool.get("name"), str) and tool["name"]]
+        names = ["mcp__notch__" + tool["name"] for tool in tools]
+        for name in names:
+            existing = registry.get_entry(name)
+            if existing is not None and existing.toolset != NOTCH_TOOLSET:
+                raise LookupError("Hermes already has a tool named " + name + ", so Notch Companion did not add its "
+                                  "delegation tools. Rename the Hermes MCP server called notch to delegate from Hermes.")
+        for name, tool in zip(names, tools):
+            handler = self.handler(tool["name"])
+            schema = tool.get("inputSchema") if isinstance(tool.get("inputSchema"), dict) else {"type": "object", "properties": {}}
+            registry.register(name, NOTCH_TOOLSET, {"name": name, "description": tool.get("description") or name,
+                                                    "parameters": schema}, handler, execution_timeout=NOTCH_TOOL_TIMEOUT)
+            if getattr(registry.get_entry(name), "handler", None) is not handler:
+                raise LookupError(NOTCH_UNAVAILABLE)
+        if self.ready:
+            return
+        original = server._load_enabled_toolsets
+
+        def enabled_toolsets(*args, **kwargs):
+            selected = original(*args, **kwargs)
+            # None already means every toolset; [] is the profile's explicit zero-tool choice.
+            if isinstance(selected, list) and selected and NOTCH_TOOLSET not in selected:
+                return [*selected, NOTCH_TOOLSET]
+            return selected
+
+        # Split modules are rebound onto tui_gateway.server's globals, so its
+        # binding is the one every agent build reads.
+        server._load_enabled_toolsets = enabled_toolsets
+        if instructions:
+            hints[COMPANION_SOURCE] = hints.get(COMPANION_SOURCE, COMPANION_SURFACE_HINT) + "\n\n" + instructions
+        self.server = server
+        self.ready = True
+
+    def handler(self, tool):
+        def call(args, session_id=None):
+            return self.call(tool, args, session_id)
+        return call
+
+    def binding(self, session_id):
+        """The calling session by its stored key; compression rotates that key
+        on the agent before the live session record follows."""
+        server = self.server
+        if not session_id or server is None:
+            return None
+        with server._sessions_lock:
+            sids = [sid for sid, session in server._sessions.items()
+                    if session_id in (session.get("session_key"), getattr(session.get("agent"), "session_id", None))]
+        with self.lock:
+            return next(((sid, self.bindings[sid]) for sid in sids if sid in self.bindings), None)
+
+    def call(self, tool, arguments, session_id=None):
+        found = self.binding(session_id)
+        if found is None:
+            return notch_tool_error("capability_denied", "Notch Companion has not enabled delegation for this Hermes session.")
+        sid, (url, token) = found
+        try:
+            from tools.interrupt import is_interrupted
+        except ImportError:
+            is_interrupted = lambda: False  # noqa: E731
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                   "params": {"name": tool, "arguments": arguments if isinstance(arguments, dict) else {}}}
+        try:
+            status, body = post_json(url, token, request, is_interrupted)
+        except InterruptedError:
+            return notch_tool_error("interrupted", "Stopped before Notch Companion answered.")
+        except Exception:
+            return notch_tool_error("orchestration_error", "Notch Companion could not be reached.")
+        if status == 401:
+            # Revoked in the companion: forget it unless a newer bind replaced it.
+            with self.lock:
+                if self.bindings.get(sid) == (url, token):
+                    del self.bindings[sid]
+            return notch_tool_error("capability_denied", "Notch Companion ended this session's delegation access.")
+        try:
+            reply = json.loads(body)
+            if isinstance(reply.get("error"), dict):
+                return notch_tool_error("orchestration_error", str(reply["error"].get("message") or "Notch Companion refused the call."))
+            result = reply["result"]
+            text = "\n".join(item.get("text", "") for item in result.get("content", []) if item.get("type") == "text")
+        except (ValueError, KeyError, TypeError, AttributeError):
+            return notch_tool_error("orchestration_error", "Notch Companion returned an unreadable answer.")
+        if not result.get("isError"):
+            return text
+        try:
+            failure = json.loads(text)
+            return notch_tool_error(str(failure["code"]), str(failure["message"]))
+        except (ValueError, KeyError, TypeError):
+            return notch_tool_error("orchestration_error", text)
+
+
+def watch_parent(cleanup=None, receive=None):
+    """A crashed/quitting parent cannot leave an orphaned owned frontend. Lines
+    on the same pipe carry the companion's delegation tools and bindings."""
     try:
-        while sys.stdin.buffer.read(1):
-            pass
+        for line in sys.stdin.buffer:
+            if receive is not None:
+                try:
+                    receive(line)
+                except Exception:
+                    pass
     finally:
         if cleanup is not None:
             cleanup()
@@ -196,7 +393,7 @@ def main():
                 cleanup_computer_use = install_optional_launch_relay(relay_directory)
             except (ComputerUseRelayError, OSError):
                 raise FrontendConfigurationError("The companion's computer-use launcher is incompatible or unavailable. Rebuild the app before reconnecting.") from None
-        threading.Thread(target=watch_parent, args=(cleanup_computer_use,), daemon=True).start()
+        threading.Thread(target=watch_parent, args=(cleanup_computer_use, NotchDelegation().receive), daemon=True).start()
         sys.argv = arguments
         # Import under its real module name, like Hermes's console script.
         # runpy(__main__) lets native helpers import it a second time after

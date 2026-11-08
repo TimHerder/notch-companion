@@ -28,55 +28,20 @@ struct ModelControlsView: View {
             let effort = shownOption?.reasoningEfforts.isEmpty == false ? shown?.reasoningEffort ?? shownOption?.defaultReasoningEffort : nil
             let permissionTitle = session.permissionMode?.title ?? "Default permissions"
             let context = session.runtimeInfo?.context
-            let percentage = context?.fraction.map { "\(context?.estimated == true ? "≈" : "")\(Int(($0 * 100).rounded()))%" }
+            // Unclamped, so an over-limit report reads as more than 100 %.
+            let percentage = context?.ratio == nil ? nil : UsageView.contextHeadline(context)
             let contextCounts = context.map { "\($0.estimated ? "≈" : "")\($0.used?.formatted() ?? "—") / \($0.limit?.formatted() ?? "—")" }
-            let contextTokens = context.map {
-                "\($0.estimated ? "≈" : "")\($0.used.map(RuntimeContextUsage.tokens) ?? "—")/\($0.limit.map(RuntimeContextUsage.tokens) ?? "—") tokens used"
-            }
             let contextDetail = context.map { usage in
                 [percentage, usage.detail].compactMap { $0 }.joined(separator: " · ")
             } ?? "The runtime has not reported context usage yet. Send a message to receive a report."
             let modes = session.capabilities.supportedPermissionModes
             let theme = PanelTheme.current
+            // The label never collapses to "…": Runtime default and a name of a dozen characters or fewer
+            // stay whole; a longer name truncates first but keeps about a dozen before the folder gives way.
+            let modelLabel = modelTitle ?? "Runtime default"
+            let shortModel = modelTitle == nil || modelLabel.count <= 12
+            // Model, permissions, context: the trailing group of the composer's bar.
             HStack(spacing: 4) {
-                if model.showPermissionModes && !modes.isEmpty {
-                    Button {
-                        choosingPermissions.toggle()
-                        choosingModel = false; showingContext = false
-                    } label: {
-                        Group {
-                            switch theme {
-                            case .refined:
-                                HStack(spacing: 5) {
-                                    Image(systemName: session.permissionMode?.symbol ?? "shield")
-                                    Text(permissionTitle).lineLimit(1)
-                                }
-                            case .tahoe:
-                                HStack(spacing: 5) {
-                                    // The glyph takes the label's color explicitly; inherited, Full access drew it white.
-                                    Image(systemName: session.permissionMode?.symbol ?? "shield").symbolRenderingMode(.monochrome)
-                                        .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
-                                    Text(permissionTitle).lineLimit(1)
-                                }
-                            case .instrument:
-                                HStack(spacing: 6) {
-                                    Image(systemName: session.permissionMode?.symbol ?? "shield").font(.system(size: 10))
-                                    Text(permissionTitle).microLabel(10, tracking: 0.6).lineLimit(1)
-                                }
-                            }
-                        }
-                        .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
-                    }
-                    .sessionControlStyle()
-                    .disabled(!model.canChangePermissionMode(session.id))
-                    .help(model.canChangePermissionMode(session.id)
-                          ? "Permissions for your next message: \(permissionTitle)"
-                          : "Wait for this session and its delegated work to finish.")
-                    .accessibilityLabel("Permission mode")
-                    .accessibilityValue(permissionTitle)
-                    .background(PopupDismissalRegion(monitor: popupDismissal))
-                }
-                Spacer(minLength: 8)
                 if model.showModelPicker {
                     Button {
                         choosingModel.toggle()
@@ -84,21 +49,30 @@ struct ModelControlsView: View {
                     } label: {
                         switch theme {
                         case .refined:
-                            HStack(spacing: 5) {
-                                Text(modelTitle ?? "Runtime default")
-                                    .lineLimit(1).truncationMode(.middle)
-                                if let effort {
-                                    Text(RuntimeModelOption.effortTitle(effort)).foregroundStyle(CompanionStyle.tertiary)
-                                        .lineLimit(1).fixedSize()
+                            // In a tight bar the effort goes first, then the name truncates.
+                            let name = Text(modelLabel).lineLimit(1).truncationMode(.middle)
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 5) {
+                                    name
+                                    if let effort {
+                                        Text(RuntimeModelOption.effortTitle(effort)).foregroundStyle(CompanionStyle.tertiary).lineLimit(1)
+                                    }
                                 }
+                                if shortModel { name.fixedSize() } else { name.frame(minWidth: 84) }
                             }
                         case .tahoe, .instrument:
-                            HStack(spacing: theme == .instrument ? 7 : 5) {
-                                Text(modelTitle ?? "Runtime default").foregroundStyle(CompanionStyle.text)
-                                    .lineLimit(1).truncationMode(.middle)
-                                if let effort { Text(RuntimeModelOption.effortTitle(effort)).lineLimit(1).fixedSize() }
+                            // The name is one step brighter than its effort, so the two never read as one name.
+                            let name = Text(modelLabel).foregroundStyle(CompanionStyle.text).lineLimit(1).truncationMode(.middle)
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: theme == .instrument ? 6 : 5) {
+                                    name
+                                    if let effort {
+                                        // Not faint: that fails AA contrast on the Glass and Smoked bodies.
+                                        Text(RuntimeModelOption.effortTitle(effort)).lineLimit(1).foregroundStyle(CompanionStyle.secondary)
+                                    }
+                                }
+                                if shortModel { name.fixedSize() } else { name.frame(minWidth: 84) }
                             }
-                            .modifier(InstrumentMicroLabel(active: theme == .instrument))
                         }
                     }
                     .sessionControlStyle()
@@ -109,6 +83,51 @@ struct ModelControlsView: View {
                     .help(session.isLegacyPrivate ? "Model selection is unavailable for Legacy Hermes."
                           : session.isBusy ? "Wait for this session and its delegated work to finish."
                           : "Choose the model for your next message in this conversation")
+                    // The first to truncate when the bar is tight.
+                    .layoutPriority(-1)
+                }
+                if model.showPermissionModes && !modes.isEmpty {
+                    Button {
+                        choosingPermissions.toggle()
+                        choosingModel = false; showingContext = false
+                    } label: {
+                        // In a tight bar the mode keeps its glyph; its name stays in help and VoiceOver.
+                        let glyph = Image(systemName: session.permissionMode?.symbol ?? "shield")
+                        Group {
+                            switch theme {
+                            case .refined:
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 5) { glyph; Text(permissionTitle).lineLimit(1) }
+                                    glyph
+                                }
+                            case .tahoe:
+                                // The glyph takes the label's color explicitly; inherited, Full access drew it white.
+                                let tinted = glyph.symbolRenderingMode(.monochrome)
+                                    .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 5) { tinted; Text(permissionTitle).lineLimit(1) }
+                                    tinted
+                                }
+                            case .instrument:
+                                let small = glyph.font(.system(size: 10))
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 6) { small; Text(permissionTitle).lineLimit(1) }
+                                    small
+                                }
+                            }
+                        }
+                        .foregroundStyle(session.permissionMode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
+                    }
+                    .sessionControlStyle()
+                    // Gives way with the model, after the folder; the gauge and Send never do.
+                    .layoutPriority(-1)
+                    .disabled(!model.canChangePermissionMode(session.id))
+                    .help(model.canChangePermissionMode(session.id)
+                          ? "Permissions for your next message: \(permissionTitle)"
+                          : "Wait for this session and its delegated work to finish.")
+                    .accessibilityLabel("Permission mode")
+                    .accessibilityValue(permissionTitle)
+                    .background(PopupDismissalRegion(monitor: popupDismissal))
                 }
                 if model.showContextUsage {
                     let toggle = {
@@ -118,7 +137,7 @@ struct ModelControlsView: View {
                     Group {
                         if theme == .instrument {
                             Button(action: toggle) {
-                                // A level meter: ten segments, the signal near the limit.
+                                // A level meter: ten segments, amber near the limit.
                                 HStack(spacing: 6) {
                                     SegmentMeter(fraction: context?.fraction)
                                     Text(percentage ?? "—%").font(CompanionStyle.mono(10).monospacedDigit())
@@ -145,6 +164,8 @@ struct ModelControlsView: View {
                             .buttonStyle(NotchIconButtonStyle(size: 22))
                         }
                     }
+                    // The gauge never gives way in a tight bar.
+                    .fixedSize()
                     .help(contextCounts.map { [$0, percentage].compactMap { $0 }.joined(separator: " · ") } ?? contextDetail)
                     .accessibilityLabel("Context usage")
                     .accessibilityValue(contextDetail)
@@ -152,27 +173,36 @@ struct ModelControlsView: View {
                     .background(PopupDismissalRegion(monitor: popupDismissal))
                 }
             }
-            .font(PanelTheme.pick(CompanionStyle.caption, .system(size: 11.5), CompanionStyle.mono(10.5))).foregroundStyle(CompanionStyle.secondary)
+            .font(PanelTheme.pick(CompanionStyle.caption, .system(size: 11.5), .system(size: 11.5))).foregroundStyle(CompanionStyle.secondary)
             .frame(height: 22)
             .overlay(alignment: .bottomTrailing) {
                 if showingContext && model.showContextUsage {
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 8) {
-                            Text(percentage ?? "Usage unavailable")
-                                .font(theme == .instrument ? CompanionStyle.mono(14, .semibold) : .system(size: 13, weight: .semibold)).monospacedDigit()
-                                .foregroundStyle(CompanionStyle.text)
-                            if theme == .instrument {
-                                SegmentMeter(fraction: context?.fraction, segments: 16, segmentWidth: 3, height: 10)
+                    VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            sectionHeader("Context") {
+                                QuietIconButton(symbol: "xmark", label: "Close context details", size: 18) {
+                                    showingContext = false
+                                }
                             }
-                            Spacer(minLength: 0)
-                            QuietIconButton(symbol: "xmark", label: "Close context details", size: 18) {
-                                showingContext = false
+                            VStack(alignment: .leading, spacing: 6) {
+                                // A report without a window heads with what it knows and has no bar to fill.
+                                let partial = context != nil && percentage == nil
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text(UsageView.contextHeadline(context))
+                                        .font(theme == .instrument ? CompanionStyle.mono(14, .semibold) : .system(size: 15, weight: .semibold))
+                                        .monospacedDigit().foregroundStyle(CompanionStyle.text)
+                                    Spacer(minLength: 0)
+                                    if !partial, let context {
+                                        Text(context.label).monospacedDigit().lineLimit(1)
+                                            .fontDesign(theme == .instrument ? .monospaced : nil)
+                                    }
+                                }
+                                if !partial { UsageBar(fraction: context?.fraction) }
+                                Text(context.map { UsageView.contextCaption($0) } ?? "No report yet")
+                                    .font(UsageLimitRow.captionFont).foregroundStyle(UsageLimitRow.captionColor)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
-                        }
-                        if theme == .instrument {
-                            Text(contextTokens ?? "No token report yet").font(CompanionStyle.mono(10.5)).monospacedDigit()
-                        } else {
-                            Text(contextTokens ?? "No token report yet").monospacedDigit()
+                            .accessibilityElement(children: .combine)
                         }
                         if model.showUsage && session.runtime.capabilities.rateLimits == true {
                             accountLimits(session.runtime)
@@ -180,7 +210,9 @@ struct ModelControlsView: View {
                     }
                     .font(PanelTheme.pick(CompanionStyle.caption, .system(size: 11.5), .system(size: 11)))
                     .foregroundStyle(CompanionStyle.secondary).padding(PanelTheme.pick(12, 12, 10))
-                    .fixedSize(horizontal: true, vertical: true)
+                    // A fixed width, so the bubble never jumps between states.
+                    .frame(width: 264)
+                    .fixedSize(horizontal: false, vertical: true)
                     .popupSurface(cornerRadius: 12)
                     .background(PopupDismissalRegion(monitor: popupDismissal))
                     // Eight points above the 22-point control row.
@@ -197,7 +229,8 @@ struct ModelControlsView: View {
                         .offset(y: -30)
                 }
             }
-            .overlay(alignment: .bottomLeading) {
+            // Anchored at the trailing edge like the others, so it stays inside the panel.
+            .overlay(alignment: .bottomTrailing) {
                 if choosingPermissions && model.showPermissionModes {
                     permissionChoices(session: session, modes: modes)
                         .frame(width: PanelTheme.pick(320, 320, 364))
@@ -229,62 +262,53 @@ struct ModelControlsView: View {
 
     /// The Usage page's account limits for this session's harness, asked again on open.
     private func accountLimits(_ runtime: RuntimeKind) -> some View {
-        let limits = model.rateLimits[runtime.rawValue] ?? []
-        let theme = PanelTheme.current
-        return VStack(alignment: .leading, spacing: 5) {
-            if theme == .tahoe {
-                Rectangle().fill(CompanionStyle.separator).frame(height: 0.5).padding(.vertical, 3)
-            } else {
-                Divider().padding(.vertical, 2)
+        let limits = RuntimeRateLimit.sorted(model.rateLimits[runtime.rawValue] ?? [])
+        let rows = VStack(alignment: .leading, spacing: 10) { ForEach(limits) { UsageLimitRow(limit: $0) } }
+        return VStack(alignment: .leading, spacing: 8) {
+            if PanelTheme.current != .instrument {
+                Rectangle().fill(PanelTheme.pick(CompanionStyle.hairline, CompanionStyle.separator, .clear)).frame(height: 0.5)
+                    .padding(.bottom, 2)
             }
-            HStack(spacing: 6) {
-                switch theme {
-                case .refined:
-                    Text("\(runtime.title) limits").font(.system(size: 11, weight: .medium)).foregroundStyle(CompanionStyle.text)
-                case .tahoe:
-                    Text("\(runtime.title) limits").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(CompanionStyle.text)
-                case .instrument:
-                    Text("\(runtime.title) limits").microLabel(9.5, weight: .semibold).foregroundStyle(CompanionStyle.text)
-                }
+            sectionHeader("\(runtime.title) usage") {
                 if let reported = limits.map(\.reportedAt).max() {
-                    if theme == .instrument {
-                        Text("· reported " + reported.formatted(date: .omitted, time: .shortened)).font(CompanionStyle.mono(10)).foregroundStyle(CompanionStyle.faint)
-                    } else {
-                        Text("· reported " + reported.formatted(date: .omitted, time: .shortened))
+                    // Instrument's rule label leaves room for the bare timestamp only.
+                    Text(PanelTheme.current == .instrument ? UsageView.reportedTime(reported) : UsageView.reportedText(reported))
+                        .font(UsageLimitRow.captionFont).foregroundStyle(UsageLimitRow.captionColor).lineLimit(1).fixedSize()
+                        .accessibilityLabel(UsageView.reportedText(reported))
+                }
+                if model.refreshingRateLimits { ProgressView().controlSize(.mini).frame(width: 18, height: 18) }
+                else {
+                    QuietIconButton(symbol: "arrow.clockwise", label: "Refresh \(runtime.title) usage", size: 18) {
+                        Task { await model.refreshRateLimits(runtime) }
                     }
                 }
-                if model.refreshingRateLimits { ProgressView().controlSize(.mini) }
             }
             if let error = model.rateLimitErrors[runtime.rawValue] {
-                Text(error).foregroundStyle(CompanionStyle.amber).frame(width: 240, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                Text(error).foregroundStyle(CompanionStyle.amber).fixedSize(horizontal: false, vertical: true)
             } else if limits.isEmpty {
                 Text(runtime == .claude ? "Claude Code reports its limits during a turn." : "Not reported yet.")
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            if theme == .instrument {
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-                    ForEach(limits) { limit in
-                        GridRow {
-                            Text(limit.name)
-                            SegmentMeter(fraction: limit.reached ? 1 : limit.usedPercent.map { min(1, max(0, $0 / 100)) }, height: 8)
-                            Text(UsageView.describe(limit)).monospacedDigit()
-                                .foregroundStyle(limit.reached ? CompanionStyle.amber : CompanionStyle.secondary)
-                        }
-                    }
-                }
-                .font(CompanionStyle.mono(10.5))
-            } else {
-                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
-                    ForEach(limits) { limit in
-                        GridRow {
-                            Text(limit.name)
-                            Text(UsageView.describe(limit)).monospacedDigit()
-                                .foregroundStyle(limit.reached ? CompanionStyle.amber : CompanionStyle.secondary)
-                        }
-                    }
-                }
-            }
+            // Claude can report six windows; past four the list scrolls inside the bubble.
+            if limits.count > 4 { ScrollView { rows }.frame(height: 200) } else { rows }
         }
         .task { await model.refreshRateLimits(runtime) }
+    }
+
+    /// A bubble section's label with trailing controls: Instrument's rule label,
+    /// a quiet secondary label elsewhere (like the picker's Reasoning effort).
+    @ViewBuilder
+    private func sectionHeader<Trailing: View>(_ title: String, @ViewBuilder trailing: () -> Trailing) -> some View {
+        if PanelTheme.current == .instrument {
+            RuleLabel(title: title, trailing: trailing).accessibilityAddTraits(.isHeader)
+        } else {
+            HStack(spacing: 6) {
+                Text(title).font(.system(size: PanelTheme.pick(11, 12, 11), weight: .semibold)).foregroundStyle(CompanionStyle.secondary)
+                    .lineLimit(1).layoutPriority(1).accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 0)
+                trailing()
+            }
+        }
     }
 
     @ViewBuilder
@@ -368,14 +392,13 @@ struct ModelControlsView: View {
                     QuietIconButton(symbol: "xmark", label: "Close permission modes", size: 22) { choosingPermissions = false }
                 }
                 .padding(.bottom, 4)
-                ForEach(Array(options.enumerated()), id: \.element) { index, mode in
+                ForEach(options, id: \.self) { mode in
                     let chosen = session.permissionMode == mode
                     Button {
                         model.setPermissionMode(mode, for: session.id)
                         choosingPermissions = false
                     } label: {
                         HStack(spacing: 10) {
-                            Text(String(format: "%02d", index + 1)).font(CompanionStyle.mono(10)).foregroundStyle(CompanionStyle.faint)
                             Image(systemName: mode?.symbol ?? "shield").frame(width: 14)
                                 .foregroundStyle(mode == .fullAccess ? CompanionStyle.amber : CompanionStyle.secondary)
                             VStack(alignment: .leading, spacing: 2) {
@@ -417,15 +440,15 @@ struct ModelControlsView: View {
                 LazyVStack(alignment: .leading, spacing: PanelTheme.pick(2, 0, 2)) {
                     let listsDefault = catalog?.defaultModel != nil && search.isEmpty
                     if let defaultModel = catalog?.defaultModel, listsDefault {
-                        choiceRow(index: 1, title: "Use runtime default", detail: catalog?.title(for: defaultModel),
+                        choiceRow(title: "Use runtime default", detail: catalog?.title(for: defaultModel),
                                   selected: session.modelOverride == nil && session.runtimeInfo?.model == nil) {
                             model.setModel(session.storedID == nil ? nil : defaultModel, for: session.id)
                             choosingModel = false
                         }
                     }
                     let options = catalog?.matchingModels(search) ?? []
-                    ForEach(Array(options.enumerated()), id: \.element.id) { offset, option in
-                        choiceRow(index: offset + (listsDefault ? 2 : 1), title: option.title, detail: option.choice.provider,
+                    ForEach(options) { option in
+                        choiceRow(title: option.title, detail: option.choice.provider,
                                   selected: session.modelOverride?.id == option.choice.id || (session.modelOverride == nil && session.runtimeInfo?.model == option.choice.model)) {
                             var choice = option.choice
                             if let effort = session.modelOverride?.reasoningEffort, option.reasoningEfforts.contains(effort) {
@@ -529,8 +552,7 @@ struct ModelControlsView: View {
         }
     }
 
-    /// `index` numbers the row in Instrument's chooser.
-    private func choiceRow(index: Int, title: String, detail: String?, selected: Bool, action: @escaping () -> Void) -> some View {
+    private func choiceRow(title: String, detail: String?, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Group {
                 switch PanelTheme.current {
@@ -552,8 +574,6 @@ struct ModelControlsView: View {
                     .padding(.horizontal, 9).frame(height: 30)
                 case .instrument:
                     HStack(spacing: 9) {
-                        Text(String(format: "%02d", index)).font(CompanionStyle.mono(10)).foregroundStyle(CompanionStyle.faint)
-                            .accessibilityHidden(true)
                         Text(title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(CompanionStyle.text)
                             .lineLimit(1).truncationMode(.middle).layoutPriority(1)
                         if let detail { Text(detail).font(CompanionStyle.mono(10)).foregroundStyle(CompanionStyle.secondary).lineLimit(1).truncationMode(.middle) }
@@ -584,7 +604,7 @@ struct RuntimeDefaultModelView: View {
                     switch PanelTheme.current {
                     case .refined: Text("Default model").font(CompanionStyle.caption).foregroundStyle(CompanionStyle.tertiary)
                     case .tahoe: Text("Default model").font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
-                    case .instrument: Text("Default model").microLabel(9.5).foregroundStyle(CompanionStyle.faint)
+                    case .instrument: Text("Default model").font(.system(size: 11)).foregroundStyle(CompanionStyle.faint)
                     }
                     let value = Text(catalog.flatMap { $0.defaultModel.map($0.title(for:)) } ?? (model.loadingModelCatalogs.contains(key) ? "Loading…" : "Not reported"))
                         .font(.system(size: 12, weight: .medium))
@@ -615,16 +635,8 @@ struct RuntimeDefaultModelView: View {
     }
 }
 
-/// Instrument's model label: tracked SF Mono capitals.
-private struct InstrumentMicroLabel: ViewModifier {
-    let active: Bool
-    func body(content: Content) -> some View {
-        if active { content.microLabel(10, tracking: 0.6) } else { content }
-    }
-}
-
 private extension View {
-    /// Refined's quiet toolbar control under the field; a text button elsewhere.
+    /// Refined's quiet toolbar control in the field's bar; a text button elsewhere.
     @ViewBuilder func sessionControlStyle() -> some View {
         if PanelTheme.current == .refined { buttonStyle(NotchToolbarButtonStyle(height: 22, weight: .regular)) }
         else { buttonStyle(NotchTextButtonStyle()) }

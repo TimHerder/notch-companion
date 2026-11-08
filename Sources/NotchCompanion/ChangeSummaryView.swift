@@ -6,7 +6,13 @@ struct ChangeSummaryView: View {
     var open: (URL) -> Void
     var chooseEditor: (URL) -> Void
     var onInspect: () -> Void
-    @State var showsFiles = false
+    /// The user's choice for this turn, else open for the latest finished turn.
+    var showsFiles: Bool
+    var toggle: () -> Void
+    /// An open card lists this many files, then "N more files". The notch passes
+    /// fewer, so an open card leaves its header and the answer above it in view.
+    var fileLimit = 6
+    @State var showsAllFiles = false
     @State var selectedPath: String?
 
     private var project: URL { URL(fileURLWithPath: summary.workspace, isDirectory: true) }
@@ -25,8 +31,8 @@ struct ChangeSummaryView: View {
         let added = all.compactMap(\.additions).reduce(0, +), removed = all.compactMap(\.deletions).reduce(0, +)
         VStack(alignment: .leading, spacing: 10) {
             Button {
-                showsFiles.toggle()
-                if showsFiles { onInspect() }
+                if !showsFiles { onInspect() }
+                toggle()
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "chevron.right").rotationEffect(.degrees(showsFiles ? 90 : 0))
@@ -42,12 +48,7 @@ struct ChangeSummaryView: View {
                         Text(title).fontWeight(PanelTheme.pick(.medium, .semibold, .medium))
                     }
                     if !all.isEmpty {
-                        if theme == .instrument {
-                            Text(String(format: "%02d", all.count) + (all.count == 1 ? " file" : " files")).microLabel(10, weight: .regular, tracking: 0.6)
-                                .foregroundStyle(CompanionStyle.secondary)
-                        } else {
-                            Text("\(all.count) \(all.count == 1 ? "file" : "files")").foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.secondary))
-                        }
+                        Text("\(all.count) \(all.count == 1 ? "file" : "files")").foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.secondary))
                         Spacer(minLength: 4)
                         counts(added, removed)
                         if theme == .instrument { DiffStat(added: added, removed: removed) }
@@ -58,18 +59,21 @@ struct ChangeSummaryView: View {
                 }.frame(minHeight: theme == .refined ? 22 : nil).contentShape(Rectangle())
             }
             .buttonStyle(.plain).pressableCursor()
+            .help(showsFiles ? "Hide the changed files" : "Show the changed files")
             .accessibilityLabel("\(showsFiles ? "Collapse" : "Expand") \(title.lowercased()), \(all.count) files, \(added) lines added, \(removed) lines removed")
 
             if showsFiles {
+                let shown = Self.shownCounts([summary.ownFiles.count] + groups.map(\.files.count), limit: fileLimit, showsAll: showsAllFiles)
+                let hidden = all.count - shown.compactMap { $0 }.reduce(0, +)
                 if let notice = summary.notice { Text(notice).foregroundStyle(CompanionStyle.secondary).fixedSize(horizontal: false, vertical: true) }
-                fileRows(summary.ownFiles, workspace: summary.workspace, key: "")
-                ForEach(groups) { group in
+                fileRows(Array(summary.ownFiles.prefix(shown[0] ?? 0)), workspace: summary.workspace, key: "")
+                ForEach(zip(groups, shown.dropFirst()).compactMap { group, count in count.map { (group, $0) } }, id: \.0.id) { group, count in
                     HStack(spacing: PanelTheme.pick(8, 7, 7)) {
                         let label = Label(group.label ?? "Delegated", systemImage: "arrow.triangle.branch").lineLimit(1).truncationMode(.tail)
                         switch theme {
                         case .refined: label.foregroundStyle(CompanionStyle.secondary).fontWeight(.medium)
                         case .tahoe: label.foregroundStyle(CompanionStyle.secondary).fontWeight(.semibold)
-                        case .instrument: label.microLabel(10, weight: .semibold).foregroundStyle(CompanionStyle.text)
+                        case .instrument: label.foregroundStyle(CompanionStyle.secondary).fontWeight(.semibold)
                         }
                         Spacer(minLength: 4)
                         if !group.files.isEmpty { counts(group.additions, group.deletions) }
@@ -78,7 +82,25 @@ struct ChangeSummaryView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Delegated to \(group.label ?? "a child"), \(group.files.count) files")
                     if let notice = group.notice { Text(notice).foregroundStyle(CompanionStyle.secondary).fixedSize(horizontal: false, vertical: true) }
-                    fileRows(group.files, workspace: group.workspace, key: group.id + "\u{0}")
+                    fileRows(Array(group.files.prefix(count)), workspace: group.workspace, key: group.id + "\u{0}")
+                }
+                if hidden > 0 {
+                    Button {
+                        showsAllFiles = true
+                        onInspect()
+                    } label: {
+                        // Laid out like a file row: the chevron in the icons' column, the label under the paths.
+                        HStack(spacing: 8) {
+                            Image(systemName: "chevron.right").font(.system(size: PanelTheme.pick(10, 10, 8), weight: .bold))
+                                .frame(width: PanelTheme.pick(16, 15, 14))
+                            Text("\(hidden) more \(hidden == 1 ? "file" : "files")")
+                        }
+                        .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.secondary))
+                        .frame(minHeight: 20).padding(.horizontal, PanelTheme.pick(0, 7, 7)).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain).pressableCursor()
+                    .help("Show all \(all.count) files")
+                    .accessibilityLabel("Show \(hidden) more \(hidden == 1 ? "file" : "files")")
                 }
                 if hasOwnSnapshot {
                     if summary.source == .workspace {
@@ -105,6 +127,48 @@ struct ChangeSummaryView: View {
         .onChange(of: rowKeys) { _, keys in
             if let selectedPath, !keys.contains(selectedPath) { self.selectedPath = nil }
         }
+    }
+
+    /// Per list (own files, then each child group's): how many files show, or nil
+    /// for a group hidden past the limit. Over the limit only the first files show.
+    static func shownCounts(_ counts: [Int], limit: Int, showsAll: Bool) -> [Int?] {
+        var left = showsAll || counts.reduce(0, +) <= limit ? Int.max : limit
+        return counts.map { count in
+            guard left > 0 else { return nil }
+            let shown = min(count, left)
+            left -= shown
+            return shown
+        }
+    }
+
+    /// The change cards of the latest finished turn, which start open; older ones
+    /// start collapsed. A running turn (with its steers) and a message still
+    /// sending are not finished, so the turn before them stays the latest. Turns
+    /// the companion sent for an agent (a delegation result, a relayed message)
+    /// continue the user's turn before them, whose cards (its children's) stay open.
+    static func latestFinished(in timeline: [ConversationTimelineItem], session: CompanionSession) -> Set<String> {
+        var end = timeline.endIndex
+        var live: String?
+        for index in timeline.indices.reversed() {
+            guard case .message(let message) = timeline[index], message.role == "user" else { continue }
+            let turn = message.turnID ?? message.id
+            // Still sending, even once it shows and the session reads working.
+            if message.id == session.stagedSubmission?.message.id { end = index; live = live ?? turn; continue }
+            guard session.isBusy, live == nil || live == turn else { break }
+            live = turn
+            end = index
+        }
+        var result = Set<String>()
+        for item in timeline[..<end].reversed() {
+            switch item {
+            case .changes(let changes): result.insert(changes.id)
+            // Only a user row that starts its own turn ends this one; a steer belongs to the turn it joined.
+            case .message(let message) where message.role == "user" && message.kind == nil && (message.turnID ?? message.id) == message.id:
+                return result
+            default: continue
+            }
+        }
+        return result
     }
 
     private var cardShape: RoundedRectangle {
@@ -151,7 +215,7 @@ struct ChangeSummaryView: View {
                             kind.font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
                         case .instrument:
                             Text(file.path).font(CompanionStyle.mono(11)).lineLimit(2).truncationMode(.middle)
-                            kind.microLabel(9, weight: .regular, tracking: 0.6).foregroundStyle(CompanionStyle.faint)
+                            kind.font(.system(size: 10.5)).foregroundStyle(CompanionStyle.faint)
                         }
                     }
                     Spacer(minLength: 4)
@@ -212,11 +276,8 @@ struct ChangeSummaryView: View {
 
     private func editorButton(_ title: String, url: URL) -> some View {
         Button { open(url) } label: {
-            if theme == .instrument {
-                Label(title, systemImage: "arrow.up.right").microLabel(9.5, tracking: 0.6).foregroundStyle(CompanionStyle.secondary)
-            } else {
-                Label(title, systemImage: "arrow.up.right")
-            }
+            let label = Label(title, systemImage: "arrow.up.right")
+            if theme == .instrument { label.foregroundStyle(CompanionStyle.secondary) } else { label }
         }
             .buttonStyle(NotchTextButtonStyle())
             .contextMenu { Button("Choose editor…") { chooseEditor(url) } }

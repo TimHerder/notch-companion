@@ -4,8 +4,14 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var sessions: [CompanionSession] = [] { didSet { glanceCache = nil; liveCache = nil } }
-    @Published var currentID: String? { didSet { acknowledgeVisibleSession(); refreshConnection() } }
+    @Published var sessions: [CompanionSession] = [] { didSet { glanceCache = nil; liveCache = nil; wakeSessionsThatNeedYou(since: oldValue) } }
+    @Published var currentID: String? {
+        didSet {
+            // Leaving a session counts as seeing it, so it never archives the moment it stops being the selection.
+            if let oldValue, oldValue != currentID { update(oldValue) { $0.lastSeenAt = Date() } }
+            acknowledgeVisibleSession(); refreshConnection()
+        }
+    }
     @Published var expanded = false
     @Published var notchPresentation = NotchPresentation.restingPlaceholder
     @Published var composerFocusRequest = 0
@@ -70,6 +76,10 @@ final class AppModel: ObservableObject {
     @Published var connection = false
     @Published var connectionMessage = "Connects when you send a message."
     @Published var projectTrustSessionID: String?
+    /// Finished turns whose work the user unfolded, shared by the notch and full window.
+    @Published var expandedWork: Set<String> = []
+    /// Change cards the user opened or closed ("session:turn"), for this run; others follow the default.
+    @Published var changeDisclosure: [String: Bool] = [:]
     @Published var defaultRuntime: RuntimeKind = .hermes {
         didSet { preferences.set(defaultRuntime.rawValue, forKey: "runtime.default") }
     }
@@ -106,8 +116,15 @@ final class AppModel: ObservableObject {
     @Published var submitting = false
     @Published var sessionSearch = ""
     @Published var sessionFilter: SessionFilter = .all
+    @Published var autoArchiveAfter = SessionAutoArchive.halfDay {
+        didSet { preferences.set(autoArchiveAfter.rawValue, forKey: SessionAutoArchive.key); glanceCache = nil }
+    }
     /// The one session row whose inline actions are open.
-    @Published var sessionActionsID: String?
+    @Published var sessionActionsID: String? { didSet { snoozeChoicesShown = false } }
+    /// That row shows its snooze choices in place of its actions.
+    @Published var snoozeChoicesShown = false
+    /// Sleeps until the earliest snoozed session's wake.
+    var snoozeTimer: Task<Void, Never>?
     @Published private(set) var deferredOperation: DeferredOperation?
     @Published private(set) var answeringRequestIDs: Set<String> = []
     @Published private(set) var runtimeSettingsRevision = 0
@@ -131,9 +148,14 @@ final class AppModel: ObservableObject {
     private var persistTask: Task<Void, Never>?
     private var changeRevisions: [String: UUID] = [:]
     private var changeTasks: [String: Task<Void, Never>] = [:]
+    /// Each session's assistant message that opened its current native turn.
+    private var nativeTurnStarts: [String: String] = [:]
     private var connecting = false
     private var connectGeneration = UUID()
     var lastCompletion: [String: Date] = [:]
+    /// This turn's latest runtime notice per session: a failed turn's reason
+    /// when its terminal event carries none (Codex, ACP).
+    private var turnNotices: [String: String] = [:]
     private var notchSessionVisible = false
     private var fullSessionVisible = false
     private var fullConversationVisible = true
@@ -163,6 +185,8 @@ final class AppModel: ObservableObject {
     var steerRefused: Set<String> = []
     /// Child creations in flight by task ID, so a retry joins the first call.
     var delegationCreations: [String: (parentID: String, task: Task<String, Error>)] = [:]
+    /// What a connected installation reported about hosting delegation (OpenCode 1.x cannot).
+    var delegationHosting: [RuntimeRoute: Bool] = [:]
     var unfinishedParents: Set<String> = []
     /// Sessions whose adapter was sent a mode; Inherit then asks it to restore once.
     private var permissionOverrides: Set<String> = []
@@ -190,17 +214,30 @@ final class AppModel: ObservableObject {
     }
     var visibleSessions: [CompanionSession] {
         let query = sessionSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let now = Date()
         return topLevelSessions.filter { session in
             let matchesFilter: Bool
             switch sessionFilter {
-            case .all: matchesFilter = !session.isArchived
+            // A search covers every session, archived ones included.
+            case .all: matchesFilter = !query.isEmpty || !(session.isArchived || session.snoozedUntil != nil || isAutoArchived(session, now: now))
             case .needsYou: matchesFilter = session.displayState == .waiting || session.hasUnreadFailure
             case .unread: matchesFilter = session.hasUnreadResult && !session.isBusy
-            case .archived: matchesFilter = session.isArchived
+            case .archived: matchesFilter = session.isArchived || isAutoArchived(session, now: now)
+            case .snoozed: matchesFilter = session.snoozedUntil != nil
             }
             return matchesFilter && (query.isEmpty || session.title.localizedCaseInsensitiveContains(query)
                 || session.messages.contains(where: { $0.text.localizedCaseInsensitiveContains(query) }))
         }
+    }
+    /// Archived by hand or by the auto-archive setting: what the Archived chip lists.
+    var archivedCount: Int {
+        let now = Date()
+        return topLevelSessions.filter { $0.isArchived || isAutoArchived($0, now: now) }.count
+    }
+    /// Dormant sessions leave the default list; the selection and live work stay.
+    func isAutoArchived(_ session: CompanionSession, now: Date = Date()) -> Bool {
+        session.id != currentID && !isSubmitting(session.id) && !unfinishedParents.contains(session.id)
+            && (unfinishedChildren[session.id]?.isEmpty ?? true) && session.isDormant(after: autoArchiveAfter.interval, now: now)
     }
     /// A session's project is its working folder; drafts without one use the default.
     func projectPath(of session: CompanionSession) -> String {
@@ -223,16 +260,17 @@ final class AppModel: ObservableObject {
     /// App-owned children appear only inside their parent, never as rows or indicators of their own.
     var topLevelSessions: [CompanionSession] { sessions.filter { $0.parentSessionID == nil } }
     var activeCount: Int { topLevelSessions.filter(\.isBusy).count }
-    var collapsedStatus: CollapsedStatus { CollapsedStatus.resolve(sessions: topLevelSessions) }
-    var sessionIndicators: [SessionIndicator] { SessionIndicator.resolve(sessions: topLevelSessions) }
-    var unreadResultCount: Int { topLevelSessions.filter { $0.hasUnreadResult && !$0.isBusy }.count }
+    var collapsedStatus: CollapsedStatus { CollapsedStatus.resolve(sessions: noticedSessions) }
+    var sessionIndicators: [SessionIndicator] { SessionIndicator.resolve(sessions: noticedSessions) }
+    var unreadResultCount: Int { noticedSessions.filter { $0.hasUnreadResult && !$0.isBusy }.count }
     var glanceEntries: [GlanceEntry] {
         if let glanceCache { return glanceCache }
-        let entries = SessionDigest.entries(sessions: topLevelSessions, requests: requests)
+        // shortcut: cached until sessions change, so a session turning dormant meanwhile stays until then.
+        let entries = SessionDigest.entries(sessions: noticedSessions.filter { !isAutoArchived($0) }, requests: requests)
         glanceCache = entries
         return entries
     }
-    var glanceSummary: GlanceSummary { GlanceSummary(sessions: topLevelSessions) }
+    var glanceSummary: GlanceSummary { GlanceSummary(sessions: noticedSessions) }
     /// The working and waiting sessions' glyphs, when the setting allows it.
     var liveActivity: LiveActivity? {
         guard liveActivityEnabled else { return nil }
@@ -260,6 +298,7 @@ final class AppModel: ObservableObject {
         self.preferences = preferences
         let savedUpdateStyle = preferences.string(forKey: NotchUpdateStyle.key)
         updateStyle = NotchUpdateStyle(rawValue: savedUpdateStyle ?? "") ?? (savedUpdateStyle == "shoulder" ? .compact : .popup)
+        autoArchiveAfter = SessionAutoArchive(rawValue: preferences.string(forKey: SessionAutoArchive.key) ?? "") ?? .halfDay
         companionAppearance = CompanionAppearance(rawValue: preferences.string(forKey: CompanionAppearance.key) ?? "")
             ?? (updateStyle == .compact ? .eyes : .mascot)
         mascotCharacter = MascotCharacter(rawValue: preferences.string(forKey: MascotCharacter.key) ?? "") ?? .mote
@@ -289,6 +328,13 @@ final class AppModel: ObservableObject {
                     if copy.queuedSends.contains(where: { $0.id == copy.stagedSubmission?.message.id }) { copy.stagedSubmission = nil }
                     else { copy.restoreStagedSubmission() }
                 }
+                // Delivered before the quit, or an unconfirmed send whose staged copy holds its text for Check last send.
+                // Without staged text (an agent's message, a notice, an older registry's entry) it waits for Check last send.
+                copy.queuedSends.removeAll { queued in
+                    session.pendingSubmission?.id == queued.id
+                        ? session.stagedSubmission?.message.id == queued.id && session.stagedSubmission?.draft != nil
+                        : session.messages.contains { $0.id == queued.id }
+                }
                 if copy.runtime == .opencode, !["opencode-http-v1", "opencode-http-v2"].contains(copy.runtimeInfo?.nativeInterface ?? ""),
                    copy.isBusy, copy.nativeActivityUnverified == nil {
                     copy.nativeActivityUnverified = "OpenCode was active when this frontend ended. Its ACP interface cannot verify background child completion. Continue the exact session in native OpenCode."
@@ -297,8 +343,12 @@ final class AppModel: ObservableObject {
                 if copy.isBusy { copy.state = .interrupted }
                 for index in copy.tools.indices where [.working, .waiting].contains(copy.tools[index].state) { copy.tools[index].state = .interrupted }
                 for index in copy.agents.indices where [.working, .waiting].contains(copy.agents[index].state) { copy.agents[index].state = .interrupted }
+                // A turn the quit cut short, or an older save's last one, keeps how it ended.
+                copy.recordUnreportedOutcome()
                 return copy
             }
+            // Restoring can turn a busy snoozed session into an unconfirmed send or unverified work.
+            wakeSessionsThatNeedYou(since: saved)
         }
         if FileManager.default.fileExists(atPath: storageURL.path), sessions.isEmpty,
            (try? JSONDecoder().decode([CompanionSession].self, from: Data(contentsOf: storageURL))) == nil {
@@ -316,7 +366,8 @@ final class AppModel: ObservableObject {
             }
             preferences.set(configuredRuntimeProfiles, forKey: "runtime.configuredProfiles")
         }
-        currentID = sessions.first(where: { !$0.isArchived && $0.parentSessionID == nil })?.id ?? topLevelSessions.first?.id ?? sessions.first?.id
+        wakeDueSessions()
+        currentID = sessions.first(where: { !$0.isArchived && $0.snoozedUntil == nil && $0.parentSessionID == nil })?.id ?? topLevelSessions.first?.id ?? sessions.first?.id
         if sessions.isEmpty { var session = CompanionSession(); session.runtime = newDraftRuntime; session.profileID = RuntimeRoute.defaultProfile(session.runtime, defaults: preferences); applyNativeWorkspace(to: &session); sessions = [session]; currentID = session.id }
         delegationEnabled = preferences.object(forKey: "delegation.enabled") as? Bool ?? true
         configureDelegation()
@@ -335,7 +386,7 @@ final class AppModel: ObservableObject {
                 for session in self.sessions { self.delegationServer.revoke(sessionID: session.id) }
                 for index in self.sessions.indices {
                     self.sessions[index].runtimeID = nil
-                    if self.sessions[index].isBusy { self.sessions[index].state = .interrupted }
+                    if self.sessions[index].isBusy { self.sessions[index].state = .interrupted; self.sessions[index].recordUnreportedOutcome() }
                     for child in self.sessions[index].agents.indices where [.working, .waiting].contains(self.sessions[index].agents[child].state) { self.sessions[index].agents[child].state = .interrupted }
                     for tool in self.sessions[index].tools.indices where [.working, .waiting].contains(self.sessions[index].tools[tool].state) { self.sessions[index].tools[tool].state = .interrupted }
                 }
@@ -446,6 +497,7 @@ final class AppModel: ObservableObject {
             guard connectGeneration == generation else { return }
             guard let catalog = result["catalog"] as? RuntimeModelCatalog else { throw AppError("This runtime did not report its models.") }
             modelCatalogs[key] = catalog
+            if let hosts = result["hosts_delegation"] as? Bool { delegationHosting[key.route] = hosts }
         } catch {
             if connectGeneration == generation { modelCatalogErrors[key] = "Models unavailable. \(error.localizedDescription)" }
         }
@@ -486,9 +538,15 @@ final class AppModel: ObservableObject {
             }
             guard confirmed else { return }
         }
-        update(id) {
-            $0.permissionMode = mode
-            if mode == .fullAccess { $0.fullAccessConfirmed = true }
+        update(id) { target in
+            if mode == .plan, target.permissionMode != .plan {
+                target.prePlanPermissionMode = target.permissionMode
+                // The turn before Plan was chosen made no plan to implement, unless it ran in Plan itself.
+                let latest = target.messages.last { $0.role == "user" && SessionHistory.isVisibleConversation($0) }
+                if latest.map({ ($0.turnID ?? $0.id) != target.planTurnID }) ?? true { target.planReadyDismissedTurnID = latest?.id }
+            }
+            target.permissionMode = mode
+            if mode == .fullAccess { target.fullAccessConfirmed = true }
         }
         save()
     }
@@ -657,7 +715,7 @@ final class AppModel: ObservableObject {
         cancelDelegationPreparations()
         connectGeneration = UUID(); connecting = false; cancelDeferredOperation()
         changeTasks.values.forEach { $0.cancel() }; changeTasks.removeAll()
-        persistTask?.cancel(); save(); client.disconnect(); delegationServer.stop()
+        persistTask?.cancel(); snoozeTimer?.cancel(); save(); client.disconnect(); delegationServer.stop()
     }
 
     /// `workspace` starts the draft in a project's folder instead of the default.
@@ -684,6 +742,9 @@ final class AppModel: ObservableObject {
     }
 
     func selectSession(_ id: String) {
+        // Opening a session restarts its auto-archive clock; the selection itself never auto-archives.
+        update(id) { $0.lastSeenAt = Date() }
+        scheduleSave()
         currentID = id; page = .session; errorMessage = nil
         projectTrustSessionID = nil
         refreshConnection()
@@ -701,7 +762,7 @@ final class AppModel: ObservableObject {
     /// draft is reused, so repeated hovers cannot pile up empty sessions.
     func startSessionFromNotch() {
         if let draft = sessions.first(where: { $0.messages.isEmpty && $0.storedID == nil && $0.runtimeID == nil && !$0.isArchived
-            && $0.draft.isEmpty && $0.attachments.isEmpty && $0.pendingSubmission == nil && canChangeRuntime($0.id) }) {
+            && $0.snoozedUntil == nil && $0.draft.isEmpty && $0.attachments.isEmpty && $0.pendingSubmission == nil && canChangeRuntime($0.id) }) {
             selectSession(draft.id)
             sessionActionsID = nil
         } else {
@@ -742,7 +803,8 @@ final class AppModel: ObservableObject {
     func previewStatusEffect(_ kind: NotchAnnouncement.Kind = .finished, title: String = "Status effects preview") {
         guard statusEffects else { return }
         dismissPanel?()
-        announcement = NotchAnnouncement(kind: kind, sessionID: Self.previewAnnouncementID, title: title)
+        announcement = NotchAnnouncement(kind: kind, sessionID: Self.previewAnnouncementID, title: title,
+                                         detail: "Finished sessions, questions and failures appear here.")
     }
     static let previewAnnouncementID = "notch.preview"
     static let helloAnnouncementID = "notch.hello"
@@ -771,15 +833,26 @@ final class AppModel: ObservableObject {
         page = .session
         dismissPanel?()
         guard statusEffects else { return }
-        announcement = NotchAnnouncement(kind: .hello, sessionID: Self.helloAnnouncementID, title: "Hover here to begin")
+        announcement = Self.helloAnnouncement
+    }
+    static var helloAnnouncement: NotchAnnouncement {
+        NotchAnnouncement(kind: .hello, sessionID: helloAnnouncementID, title: "Hi!", detail: "Hover here to begin")
     }
 
     /// Offscreen fixtures show a specific announcement without runtime events.
     func setAnnouncementForPreview(_ value: NotchAnnouncement?) { announcement = value }
 
-    func announce(_ kind: NotchAnnouncement.Kind, sessionID: String) {
+    /// Snapshots the message with the moment, so the band and stage keep
+    /// saying what happened even if the session moves on during the hold.
+    func announce(_ kind: NotchAnnouncement.Kind, sessionID: String, failure: String = "") {
         guard statusEffects, let session = sessions.first(where: { $0.id == sessionID }) else { return }
-        announcement = NotchAnnouncement(kind: kind, sessionID: sessionID, title: session.title)
+        // The same request the detail snapshots: an approval's detail is its command.
+        let request = requests.first { $0.sessionID == session.runtimeID }
+        announcement = NotchAnnouncement(kind: kind, sessionID: sessionID, title: session.title,
+                                         detail: SessionDigest.announcementDetail(kind, session: session, requests: requests, failure: failure),
+                                         worked: SessionDigest.turnStart(session).map { Date().timeIntervalSince($0) },
+                                         isApproval: kind == .needsInput && session.nativeActivityUnverified == nil
+                                            && request?.kind == .approval && !SessionDigest.oneLine(request?.detail ?? "").isEmpty)
     }
 
     func canChangeRuntime(_ id: String) -> Bool {
@@ -842,15 +915,16 @@ final class AppModel: ObservableObject {
 
     func archiveSession(_ id: String) {
         guard canArchiveSession(id) else { return }
-        update(id) { $0.isArchived = true }
+        update(id) { $0.isArchived = true; $0.snoozedUntil = nil }
         if currentID == id {
             page = .sessions
         }
         save()
     }
 
+    /// Also brings back an auto-archived session by restarting its clock.
     func restoreSession(_ id: String) {
-        update(id) { $0.isArchived = false }
+        update(id) { $0.isArchived = false; $0.lastSeenAt = Date() }
         save()
     }
 
@@ -881,7 +955,7 @@ final class AppModel: ObservableObject {
         acknowledgeVisibleSession()
     }
 
-    private func acknowledgeVisibleSession() {
+    func acknowledgeVisibleSession() {
         guard (notchSessionVisible && page == .session && fileDropChoice == nil)
                 || (fullSessionVisible && fullConversationVisible && !page.isRuntimeSetup),
               let currentID, let index = sessions.firstIndex(where: { $0.id == currentID }),
@@ -1189,9 +1263,13 @@ final class AppModel: ObservableObject {
         let text = session.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         let queued = QueuedSend(id: UUID().uuidString, text: text, attachments: session.attachments)
-        update(session.id) { $0.queuedSends.append(queued); $0.draft = ""; $0.attachments = [] }
+        // Sending from its composer ends a snooze, so the reply is not hidden.
+        update(session.id) { $0.queuedSends.append(queued); $0.draft = ""; $0.attachments = []; $0.snoozedUntil = nil }
         guard save() else {
-            update(session.id) { $0.queuedSends.removeAll { $0.id == queued.id }; $0.draft = session.draft; $0.attachments = session.attachments }
+            update(session.id) {
+                $0.queuedSends.removeAll { $0.id == queued.id }; $0.draft = session.draft; $0.attachments = session.attachments
+                $0.snoozedUntil = session.snoozedUntil
+            }
             return
         }
         play(.send)
@@ -1205,6 +1283,23 @@ final class AppModel: ObservableObject {
         processDelegationWakes()
         scheduleDeferredOperationIfIdle()
     }
+
+    /// Moves a queued message back into an empty composer, saved before the queue drops it.
+    @discardableResult
+    func editQueuedSend(_ id: String) -> Bool {
+        guard let session = current, !isSubmitting(session.id), session.attachments.isEmpty,
+              session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !session.wasDelivered(id),
+              let send = session.queuedSends.first(where: { $0.id == id && $0.isUserMessage }) else { return false }
+        update(session.id) { $0.queuedSends.removeAll { $0.id == id }; $0.draft = send.text; $0.attachments = send.attachments ?? [] }
+        guard save() else { update(session.id) { $0.queuedSends = session.queuedSends; $0.draft = session.draft; $0.attachments = [] }; return false }
+        composerFocusRequest += 1
+        processDelegationWakes()
+        scheduleDeferredOperationIfIdle()
+        return true
+    }
+
+    /// Steer now: a queued message goes into the running turn through the steering path.
+    func steerQueuedSend(_ id: String) async { await steerDraft(queuedID: id) }
 
     func resumeQueuedSends() {
         guard let session = current, !isSubmitting(session.id) else { return }
@@ -1222,54 +1317,66 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func steerDraft() async {
+    /// Steers the draft, or with `queuedID` that queued message, which a
+    /// refusal returns to its place in the queue instead of the composer.
+    private func steerDraft(queuedID: String? = nil) async {
         guard let session = current, !isSubmitting(session.id), !submitting else { return }
-        guard session.canSteer, let sid = session.runtimeID else {
+        let queuedIndex = queuedID.flatMap { id in session.queuedSends.firstIndex { $0.id == id && $0.isUserMessage } }
+        let queued = queuedIndex.map { session.queuedSends[$0] }
+        guard queuedID.map({ queued != nil && !session.wasDelivered($0) }) ?? true else { return }
+        let (draft, files) = queued.map { ($0.text, $0.attachments ?? []) } ?? (session.draft, session.attachments)
+        guard session.canSteer(files), let sid = session.runtimeID else {
             errorMessage = "This session cannot accept steering now. Use Command–Return to queue your message."
             return
         }
         guard !persistenceBlocked else { return }
-        let text = session.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        let id = UUID().uuidString
-        let message = ChatMessage(id: id, role: "user", text: text + (session.attachments.isEmpty ? "" : "\n\nAttached: " + session.attachments.map(\.name).joined(separator: ", ")),
+        let id = queued?.id ?? UUID().uuidString
+        let message = ChatMessage(id: id, role: "user", text: text + (files.isEmpty ? "" : "\n\nAttached: " + files.map(\.name).joined(separator: ", ")),
                                   turnID: session.latestUserTurnID ?? id)
+        let giveBack: (inout CompanionSession) -> Void = { target in
+            guard let queued, let queuedIndex else { target.restoreStagedSubmission(); return }
+            target.stagedSubmission = nil
+            target.queuedSends.insert(queued, at: min(queuedIndex, target.queuedSends.count))
+        }
         submitting = true
         submittingSessionID = session.id
         defer { submitting = false; submittingSessionID = nil; processDelegationWakes(); scheduleDeferredOperationIfIdle() }
         update(session.id) {
-            $0.stagedSubmission = StagedSubmission(message: message, draft: session.draft, attachments: session.attachments)
-            $0.draft = ""; $0.attachments = []
+            $0.stagedSubmission = StagedSubmission(message: message, draft: draft, attachments: files)
+            if queued != nil { $0.queuedSends.removeAll { $0.id == id } } else { $0.draft = ""; $0.attachments = [] }
+            $0.snoozedUntil = nil
         }
-        guard save() else { update(session.id) { $0.restoreStagedSubmission() }; return }
+        guard save() else { update(session.id, giveBack); return }
         var requested = false
         do {
             var references: [String] = []
-            for file in session.attachments where !file.isImage {
+            for file in files where !file.isImage {
                 let result = try await client.request("file.attach", params: ["session_id": sid, "path": file.url.path])
                 guard let reference = result["ref_text"] as? String else { throw BusyInputRejection(message: "The attachment could not be prepared.") }
                 references.append(reference)
             }
-            guard sessions.first(where: { $0.id == session.id })?.canSteer == true else {
-                throw BusyInputRejection(message: "The turn finished before steering. Your message is back in the composer.")
+            guard sessions.first(where: { $0.id == session.id })?.canSteer(files) == true else {
+                throw BusyInputRejection(message: "The turn finished before steering. Your message is back in the \(queued == nil ? "composer" : "queue").")
             }
             update(session.id) {
                 $0.messages.append(message)
-                $0.pendingSubmission = PendingSubmission(id: id, draft: session.draft,
+                $0.pendingSubmission = PendingSubmission(id: id, draft: draft,
                     userTurnCount: $0.messages.filter { $0.role == "user" && SessionHistory.isVisibleConversation($0) }.count,
-                    attachmentIDs: session.attachments.map(\.id), isSteering: true)
+                    attachmentIDs: files.map(\.id), isSteering: true)
             }
             guard save() else { throw BusyInputRejection(message: "The send could not be saved. No steering was sent.") }
             requested = true
             _ = try await client.request("prompt.steer", params: ["session_id": sid, "turn_id": id,
-                "text": ([text] + references).joined(separator: "\n\n"), "images": session.attachments.filter(\.isImage).map { $0.url.path }])
+                "text": ([text] + references).joined(separator: "\n\n"), "images": files.filter(\.isImage).map { $0.url.path }])
             confirmSubmission(session.id, includingSteering: true)
             errorMessage = nil
             play(.send)
         } catch {
             if !requested || Self.definitiveRejection(error) {
                 update(session.id) {
-                    $0.messages.removeAll { $0.id == id }; $0.pendingSubmission = nil; $0.restoreStagedSubmission()
+                    $0.messages.removeAll { $0.id == id }; $0.pendingSubmission = nil; giveBack(&$0)
                 }
                 errorMessage = error.localizedDescription
             } else {
@@ -1410,11 +1517,13 @@ final class AppModel: ObservableObject {
             // Mark working before the RPC response: streaming events may arrive first.
             update(localID) { target in
                 target.isArchived = false
+                if !background { target.snoozedUntil = nil }
                 target.state = .working
                 target.parentTurnComplete = false
                 target.completionID = nil
                 appendedTurnID = turnID
                 target.messages.append(message)
+                if target.permissionMode == .plan { target.planTurnID = turnID }
                 target.changes.append(changes)
                 if target.title == "New session" { target.title = String(text.prefix(64)) }
                 target.updatedAt = Date()
@@ -1509,6 +1618,8 @@ final class AppModel: ObservableObject {
             update(localID) {
                 $0.state = .interrupted
                 $0.parentTurnComplete = true
+                // The runtime may never confirm a Stop; a later message.complete still overrides this.
+                if session.isBusy { $0.recordUnreportedOutcome() }
                 for child in $0.agents.indices where [.working, .waiting].contains($0.agents[child].state) { $0.agents[child].state = .interrupted }
                 for tool in $0.tools.indices where [.working, .waiting].contains($0.tools[tool].state) { $0.tools[tool].state = .interrupted }
             }
@@ -1531,6 +1642,11 @@ final class AppModel: ObservableObject {
             _ = try await client.request(method, params: params)
             play(.send)
             requests.removeAll { $0.id == request.id }
+            // An answered native plan approval leaves no Plan ready banner for its turn.
+            if request.isPlan, let index = sessions.firstIndex(where: { $0.runtimeID == request.sessionID }) {
+                sessions[index].planReadyDismissedTurnID = sessions[index].messages.last { $0.role == "user" && SessionHistory.isVisibleConversation($0) }?.id
+                save()
+            }
             if !requests.contains(where: { $0.sessionID == request.sessionID }),
                let index = sessions.firstIndex(where: { $0.runtimeID == request.sessionID }), sessions[index].state == .waiting {
                 sessions[index].state = .working
@@ -1581,7 +1697,8 @@ final class AppModel: ObservableObject {
         var params: [String: Any] = ["companion_id": localID, "runtime": session.runtime.rawValue,
                                      "profile_id": session.route.profileID, "legacy_private": session.isLegacyPrivate,
                                      "cwd": requestedCwd, "project_trusted": isProjectTrusted(session),
-                                     "activity_unverified": session.nativeActivityUnverified != nil]
+                                     "activity_unverified": session.nativeActivityUnverified != nil,
+                                     "native_submission_attempted": session.nativeSubmissionAttempted]
         if let pending = session.pendingSubmission { params["pending_turn_id"] = pending.id }
         if let mode = session.permissionMode { params["permission_mode"] = mode.rawValue }
         let delegation = await delegationLaunch(for: session)
@@ -1597,6 +1714,8 @@ final class AppModel: ObservableObject {
                        !session.isLegacyPrivate, !session.nativeSubmissionAttempted, session.pendingSubmission == nil,
                        session.messages.isEmpty {
                         update(localID) { $0.storedID = nil; $0.runtimeID = nil }
+                        // The replacement session gets the tools again with a fresh token.
+                        if delegation != nil { delegationServer.revoke(sessionID: localID) }
                         return try await ensureRuntime(localID)
                     }
                     throw error
@@ -1613,6 +1732,11 @@ final class AppModel: ObservableObject {
             throw error
         }
         guard let sid = result["session_id"] as? String else { throw AppError("The runtime returned an invalid session response.") }
+        if let hosts = result["hosts_delegation"] as? Bool {
+            delegationHosting[session.route] = hosts
+            // An installation that cannot host never uses the token.
+            if !hosts, delegation != nil { delegationServer.revoke(sessionID: localID) }
+        }
         let nativeCwd = result["cwd"] as? String ?? requestedCwd
         guard URL(fileURLWithPath: nativeCwd).standardizedFileURL.resolvingSymlinksInPath()
             == URL(fileURLWithPath: requestedCwd).standardizedFileURL.resolvingSymlinksInPath() else {
@@ -1711,6 +1835,7 @@ final class AppModel: ObservableObject {
                 target.state = terminal == "complete" ? (target.failedCurrentAgents.isEmpty ? .finished : .failed)
                     : (terminal == "interrupted" ? .interrupted : .failed)
                 if [.finished, .failed].contains(target.state) { target.completionID = UUID().uuidString }
+                target.recordReportedOutcome()
             }
         }
         if nativeBusy {
@@ -1780,7 +1905,7 @@ final class AppModel: ObservableObject {
                     pauseQueuedSends(id)
                     let sid = sessions[index].runtimeID
                     sessions[index].runtimeID = nil
-                    if sessions[index].isBusy { sessions[index].state = .interrupted }
+                    if sessions[index].isBusy { sessions[index].state = .interrupted; endTurn(index) }
                     for child in sessions[index].agents.indices where [.working, .waiting].contains(sessions[index].agents[child].state) { sessions[index].agents[child].state = .interrupted }
                     for tool in sessions[index].tools.indices where [.working, .waiting].contains(sessions[index].tools[tool].state) { sessions[index].tools[tool].state = .interrupted }
                     unfinishedParents.remove(id)
@@ -1803,6 +1928,7 @@ final class AppModel: ObservableObject {
         let turnID = sessions[index].latestUserTurnID
         let wasFailed = sessions[index].state == .failed
         let wasDisplayedFailed = sessions[index].displayState == .failed
+        var failure = ""
         sessions[index].updatedAt = Date()
         switch name {
         case "turn.changes":
@@ -1819,7 +1945,7 @@ final class AppModel: ObservableObject {
         case "session.disconnected":
             pauseQueuedSends(localID)
             sessions[index].runtimeID = nil
-            if sessions[index].isBusy { sessions[index].state = .interrupted }
+            if sessions[index].isBusy { sessions[index].state = .interrupted; endTurn(index) }
             for child in sessions[index].agents.indices where [.working, .waiting].contains(sessions[index].agents[child].state) { sessions[index].agents[child].state = .interrupted }
             for tool in sessions[index].tools.indices where [.working, .waiting].contains(sessions[index].tools[tool].state) { sessions[index].tools[tool].state = .interrupted }
             unfinishedParents.remove(localID); unfinishedChildren.removeValue(forKey: localID)
@@ -1834,7 +1960,9 @@ final class AppModel: ObservableObject {
             if let tokens = payload["turn_tokens"] as? Int, tokens >= 0, let turnID { sessions[index].turnTokens[turnID] = tokens }
         case "runtime.notice":
             errorMessage = EventValue.string(payload["message"])
+            turnNotices[localID] = errorMessage
         case "message.start":
+            turnNotices[localID] = nil
             confirmSubmission(localID)
             unfinishedParents.insert(localID)
             sessions[index].parentTurnComplete = false
@@ -1844,18 +1972,21 @@ final class AppModel: ObservableObject {
             if role == "assistant", !(sessions[index].messages.last?.role == "assistant" && sessions[index].messages.last?.text.isEmpty == true) {
                 sessions[index].messages.append(ChatMessage(role: "assistant", text: "", turnID: turnID))
             }
+            if role == "assistant" { nativeTurnStarts[localID] = sessions[index].messages.last?.id }
         case "message.delta":
-            let text = EventValue.string(payload["text"] ?? payload["delta"])
-            if sessions[index].messages.last?.role != "assistant" { sessions[index].messages.append(ChatMessage(role: "assistant", text: "", turnID: turnID)) }
-            if let last = sessions[index].messages.indices.last { sessions[index].messages[last].text += text }
+            let segment = assistantSegment(index, turnID: turnID)
+            var text = EventValue.string(payload["text"] ?? payload["delta"])
+            // A new segment drops the blank line that separated it from the previous one.
+            if sessions[index].messages[segment].text.isEmpty { text = String(text.drop(while: \.isNewline)) }
+            guard !text.isEmpty else { break }
+            if sessions[index].messages[segment].text.isEmpty, sessions[index].messages[segment].questions == nil {
+                sessions[index].messages[segment].createdAt = Date()
+            }
+            sessions[index].messages[segment].text += text
         case "message.interim":
             // An assistant message can end before retries, queued input or
             // compaction settle. Preserve its authoritative text, stay busy.
-            let text = EventValue.string(payload["text"])
-            guard !text.isEmpty else { break }
-            if sessions[index].messages.last?.role == "assistant", let last = sessions[index].messages.indices.last {
-                sessions[index].messages[last].text = text
-            } else { sessions[index].messages.append(ChatMessage(role: "assistant", text: text, turnID: turnID)) }
+            reconcileAssistantText(EventValue.string(payload["text"]), index: index, turnID: turnID)
         case "message.complete":
             var info = sessions[index].runtimeInfo ?? RuntimeSessionInfo()
             info.merge(["usage": payload["usage"] ?? [:]], runtime: sessions[index].runtime)
@@ -1863,16 +1994,15 @@ final class AppModel: ObservableObject {
             confirmSubmission(localID)
             unfinishedParents.remove(localID)
             let wasFinished = sessions[index].state == .finished && sessions[index].parentTurnComplete && !sessions[index].isBusy
-            let text = EventValue.string(payload["text"])
-            if sessions[index].messages.last?.role == "assistant", let last = sessions[index].messages.indices.last {
-                if !text.isEmpty { sessions[index].messages[last].text = text }
-            } else if !text.isEmpty { sessions[index].messages.append(ChatMessage(role: "assistant", text: text, turnID: turnID)) }
+            reconcileAssistantText(EventValue.string(payload["text"]), index: index, turnID: turnID)
             sessions[index].messages.removeAll { $0.role == "assistant" && $0.questions == nil && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             let status = payload["status"] as? String ?? "complete"
             if status == "error" || status == "interrupted" { pauseQueuedSends(localID) }
             sessions[index].parentTurnComplete = true
             if status == "error" {
                 sessions[index].state = .failed
+                failure = EventValue.string(payload["error"])
+                if failure.isEmpty { failure = turnNotices[localID] ?? "" }
             } else if status == "interrupted" {
                 sessions[index].state = .interrupted
                 for child in sessions[index].agents.indices where [.working, .waiting].contains(sessions[index].agents[child].state) { sessions[index].agents[child].state = .interrupted }
@@ -1886,23 +2016,25 @@ final class AppModel: ObservableObject {
                 sessions[index].state = .finished
                 if !wasFinished { sessions[index].completionID = UUID().uuidString }
             }
+            endTurn(index)
             for tool in sessions[index].tools.indices where sessions[index].tools[tool].state == .working {
                 sessions[index].tools[tool].state = status == "interrupted" ? .interrupted : (status == "error" ? .failed : .finished)
+                sessions[index].tools[tool].finishedAt = Date()
             }
             if sessions[index].nativeActivityUnverified == nil { requests.removeAll { $0.sessionID == sid } }
             // A child's result reaches its parent as a wake, not as its own announcement.
             if status == "complete", sessions[index].state == .finished, sessions[index].parentSessionID == nil,
                Date().timeIntervalSince(lastCompletion[localID] ?? .distantPast) > 1 {
-                lastCompletion[localID] = Date(); play(.complete)
-                announce(.finished, sessionID: localID)
+                lastCompletion[localID] = Date(); announceCompletion(localID)
             }
         case "message.questions":
             // Non-blocking questions belong to this turn's answer; the turn goes on.
             guard let questions = AsyncQuestion.decode(payload["questions"]) else { break }
-            if sessions[index].messages.last?.role != "assistant" { sessions[index].messages.append(ChatMessage(role: "assistant", text: "", turnID: turnID)) }
-            if let last = sessions[index].messages.indices.last {
-                sessions[index].messages[last].questions = (sessions[index].messages[last].questions ?? []) + questions
+            let segment = assistantSegment(index, turnID: turnID)
+            if sessions[index].messages[segment].text.isEmpty, sessions[index].messages[segment].questions == nil {
+                sessions[index].messages[segment].createdAt = Date()
             }
+            sessions[index].messages[segment].questions = (sessions[index].messages[segment].questions ?? []) + questions
         case "tool.start", "tool.complete":
             let id = EventValue.string(payload["tool_id"] ?? payload["tool_call_id"] ?? payload["id"])
             let key = id.isEmpty ? UUID().uuidString : id
@@ -1932,7 +2064,7 @@ final class AppModel: ObservableObject {
             } else {
                 let detail = EventValue.string(payload[isApproval ? "command" : "question"])
                 let choices = payload["choices"] as? [String] ?? (isApproval ? ["once", "deny"] : [])
-                requests.append(PendingRequest(id: id, kind: isApproval ? .approval : .clarification, title: isApproval ? "\(sessions[index].runtime.title) needs permission" : "\(sessions[index].runtime.title) has a question", detail: detail, choices: choices, sessionID: sid, multiSelect: payload["multi_select"] as? Bool ?? false, allowsFreeText: payload["allows_free_text"] as? Bool ?? true))
+                requests.append(PendingRequest(id: id, kind: isApproval ? .approval : .clarification, title: isApproval ? "\(sessions[index].runtime.title) needs permission" : "\(sessions[index].runtime.title) has a question", detail: detail, choices: choices, sessionID: sid, multiSelect: payload["multi_select"] as? Bool ?? false, allowsFreeText: payload["allows_free_text"] as? Bool ?? true, isPlan: payload["plan"] as? Bool == true))
             }
             sessions[index].state = .waiting
             play(.attention)
@@ -1947,13 +2079,15 @@ final class AppModel: ObservableObject {
         case "error", "session.error":
             pauseQueuedSends(localID)
             sessions[index].state = .failed
+            endTurn(index)
             errorMessage = EventValue.string(payload["message"] ?? payload["error"])
+            failure = errorMessage ?? ""
         default: break
         }
         // One cue per transition, whichever event (error, failed turn, failed child) caused it.
         if !wasFailed, sessions[index].state == .failed, sessions[index].parentSessionID == nil {
             play(.failure)
-            announce(.failed, sessionID: sessions[index].id)
+            announce(.failed, sessionID: sessions[index].id, failure: failure)
         }
         if !wasDisplayedFailed, sessions[index].displayState == .failed {
             sessions[index].completionID = UUID().uuidString
@@ -1964,6 +2098,46 @@ final class AppModel: ObservableObject {
            let turnID { captureWorkspaceChanges(sessionID: localID, turnID: turnID) }
         syncDelegatedChildren()
         scheduleDeferredOperationIfIdle()
+    }
+
+    /// The assistant message new content belongs in. A tool that started after the
+    /// current one had text or questions closes it, so text keeps its place between tool calls.
+    private func assistantSegment(_ index: Int, turnID: String?) -> Int {
+        if let last = sessions[index].messages.last, last.role == "assistant",
+           last.text.allSatisfy(\.isWhitespace) && last.questions == nil
+            || !(sessions[index].tools.last.map { $0.startedAt >= last.createdAt } ?? false) {
+            return sessions[index].messages.count - 1
+        }
+        sessions[index].messages.append(ChatMessage(role: "assistant", text: "", turnID: turnID))
+        return sessions[index].messages.count - 1
+    }
+
+    /// A runtime's authoritative text for its native turn. Text that turn's segments
+    /// already hold (all of them joined, or the last ones, as Claude reports only its
+    /// final message) keeps them; other text replaces the current segment's.
+    private func reconcileAssistantText(_ text: String, index: Int, turnID: String?) {
+        let squash = { (text: String) in text.filter { !$0.isWhitespace } }
+        let wanted = squash(text)
+        guard !wanted.isEmpty else { return }
+        // A steer stays in its native turn; a wake starts another, so an earlier answer never stands in for its own.
+        let messages = sessions[index].messages
+        let start = nativeTurnStarts[sessions[index].id].flatMap { id in messages.firstIndex { $0.id == id } }
+        let streamed = (start.map { Array(messages[$0...]) } ?? messages.filter { $0.turnID == turnID })
+            .filter { $0.role == "assistant" }.map(\.text).joined()
+        guard !squash(streamed).hasSuffix(wanted) else { return }
+        let segment = assistantSegment(index, turnID: turnID)
+        if sessions[index].messages[segment].text.isEmpty, sessions[index].messages[segment].questions == nil {
+            sessions[index].messages[segment].createdAt = Date()
+        }
+        sessions[index].messages[segment].text = text
+    }
+
+    /// Ends the latest block's work clock and keeps the turn's own outcome from the
+    /// state just set; its visible user row keys both.
+    private func endTurn(_ index: Int) {
+        guard let boundary = sessions[index].messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) }) else { return }
+        sessions[index].turnEndedAt[boundary.id] = Date()
+        sessions[index].recordReportedOutcome()
     }
 
     private func receiveChanges(_ diff: String, sessionID: String, turnID: String) {
@@ -2069,8 +2243,7 @@ final class AppModel: ObservableObject {
                     if sessions[index].state == .finished {
                         sessions[index].completionID = UUID().uuidString
                         lastCompletion[sessions[index].id] = Date()
-                        play(.complete)
-                        announce(.finished, sessionID: sessions[index].id)
+                        announceCompletion(sessions[index].id)
                     }
                 }
             }

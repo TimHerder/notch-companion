@@ -2,6 +2,47 @@ import XCTest
 @testable import NotchCompanion
 
 final class OpenCodeV2Tests: XCTestCase {
+    func testDelegationServerRulesAndRegistrationStayPerSession() throws {
+        let name = OpenCodeClient.delegationServerName("ses_e4c2624e2ffeYv6WLpCFFfisAQ")
+        XCTAssertEqual(name, OpenCodeClient.delegationServerName("ses_e4c2624e2ffeYv6WLpCFFfisAQ"), "Stable across reconnects")
+        XCTAssertNotEqual(name, OpenCodeClient.delegationServerName("ses_other"))
+        XCTAssertNotNil(name.wholeMatch(of: #/notch-[0-9a-f]{16}/#))
+        let longest = try XCTUnwrap(Delegation.tools.compactMap { $0["name"] as? String }.max { $0.count < $1.count })
+        XCTAssertLessThanOrEqual((name + "_" + longest).count, 64, "OpenCode hides tools with longer names")
+
+        let saved: [[String: Any]] = [["action": "bash", "resource": "rm *", "effect": "ask"],
+                                      ["action": "notch-*", "resource": "*", "effect": "deny"],
+                                      ["action": "notch-????????????????_*", "resource": "*", "effect": "deny"],
+                                      ["action": OpenCodeClient.delegationServerName("ses_old") + "_*", "resource": "*", "effect": "allow"],
+                                      ["action": "notch-docs_*", "resource": "*", "effect": "allow"]]
+        let rules = OpenCodeClient.delegationRules(saved, server: name)
+        let deny = "notch-????????????????_*"
+        XCTAssertEqual(rules.compactMap { $0["action"] as? String }, ["bash", "notch-docs_*", deny, name + "_*"],
+                       "The session's other rules stay; the companion's, old `notch-*` included, are replaced and come last, so they win")
+        XCTAssertEqual(rules.suffix(2).compactMap { $0["effect"] as? String }, ["deny", "allow"])
+        XCTAssertEqual(OpenCodeClient.delegationRules([], server: nil).compactMap { $0["action"] as? String }, [deny],
+                       "A session without the tools still cannot use another session's")
+        // OpenCode's wildcard: `*` any run, `?` one character, whole action `<server>_<tool>`.
+        let matches = { (action: String) in
+            action.range(of: "^" + NSRegularExpression.escapedPattern(for: deny).replacingOccurrences(of: "\\*", with: ".*").replacingOccurrences(of: "\\?", with: ".") + "$", options: .regularExpression) != nil
+        }
+        XCTAssertTrue(matches(OpenCodeClient.delegationServerName("ses_other") + "_delegate_task"), "Another session's companion tools stay denied")
+        XCTAssertFalse(matches("notch-docs_search"), "A user's own `notch-…` server stays usable")
+
+        let launch: [String: Any] = ["url": "http://127.0.0.1:9/mcp", "token": "secret-token", "instructions": "Rules."]
+        let request = try XCTUnwrap(OpenCodeClient.delegationRegistration(launch, server: name, location: "/Users/me/My Project"))
+        XCTAssertEqual(request.path, "/api/experimental/mcp/\(name)?location%5Bdirectory%5D=%2FUsers%2Fme%2FMy%20Project")
+        let config = try XCTUnwrap(request.body["config"] as? [String: Any])
+        XCTAssertEqual(config["type"] as? String, "remote")
+        XCTAssertEqual(config["url"] as? String, "http://127.0.0.1:9/mcp")
+        XCTAssertEqual(config["oauth"] as? Bool, false, "No OAuth discovery against the companion")
+        XCTAssertEqual(config["headers"] as? [String: String], ["Authorization": "Bearer secret-token"])
+        let body = String(decoding: try JSONSerialization.data(withJSONObject: request.body), as: UTF8.self)
+        XCTAssertEqual(body.components(separatedBy: "secret-token").count, 2, "The token appears once, in the header")
+        XCTAssertFalse(request.path.contains("secret-token"))
+        XCTAssertNil(OpenCodeClient.delegationRegistration([:], server: name, location: "/x"))
+    }
+
     func testVersionCatalogAndNativeWorkspace() {
         XCTAssertTrue(OpenCodeClient.supportsVersion("2.0.30"))
         XCTAssertFalse(OpenCodeClient.supportsVersion("2.1.0"))

@@ -21,16 +21,22 @@ struct ACPProtocolState {
         var picked: [String: [String]] = [:]
         var childID: String? = nil
     }
+    /// Antigravity's dialect: "Running <tool>" titles and questions sent as `interaction_` permission requests.
+    var antigravity = false
     var owned = Set<String>()
     var active = Set<String>()
     var started = Set<String>()
     var loading = Set<String>()
     var history: [String: [[String: Any]]] = [:]
     var historyWithoutMessageIDs = Set<String>()
+    /// Sessions whose replayed reply was interrupted by a tool call.
+    var historyBreaks = Set<String>()
     var text: [String: String] = [:]
     var requests: [String: Interaction] = [:]
     var tools = Set<String>()
     var config: [String: [[String: Any]]] = [:]
+    /// The session `models` state where the adapter uses it (Antigravity): its IDs match `agy models`.
+    var models: [String: [String: Any]] = [:]
     var children: [String: Set<String>] = [:]
     var parentEnded = Set<String>()
 
@@ -50,7 +56,8 @@ struct ACPProtocolState {
         if kind == "config_option_update" {
             guard metadata == nil else { return [] }
             config[sid] = update["configOptions"] as? [[String: Any]] ?? []
-            if let model = Self.catalog(config[sid] ?? []).defaultModel?.model {
+            // A model state names the exact model; its config option holds only the family.
+            if models[sid] == nil, let model = Self.catalog(config[sid] ?? []).defaultModel?.model {
                 return [event("session.info", sid, ["model": model])]
             }
             return []
@@ -58,16 +65,21 @@ struct ACPProtocolState {
         // Native load replay is authoritative history, never new live activity.
         if loading.contains(sid) {
             if metadata != nil { return [] }
+            // Replies split where they streamed: at tool calls, not at message IDs.
+            if kind == "tool_call" { historyBreaks.insert(sid) }
             if ["user_message_chunk", "agent_message_chunk"].contains(kind), let chunk = content["text"] as? String {
                 let role = kind == "user_message_chunk" ? "user" : "assistant"
                 let messageID = update["messageId"] as? String
                 if messageID == nil { historyWithoutMessageIDs.insert(sid) }
+                let toolBetween = historyBreaks.remove(sid) != nil
                 if let last = history[sid]?.indices.last, history[sid]?[last]["role"] as? String == role,
-                   messageID == nil || history[sid]?[last]["row_id"] as? String == messageID {
+                   role == "assistant" ? !toolBetween : messageID == nil || history[sid]?[last]["row_id"] as? String == messageID {
                     let previous = history[sid]?[last]["text"] as? String ?? ""
                     history[sid]?[last]["text"] = previous + chunk
                 } else {
-                    let rowID = messageID ?? "acp-\(history[sid]?.count ?? 0)"
+                    let count = history[sid]?.count ?? 0
+                    let reused = messageID.map { id in history[sid]?.contains { $0["row_id"] as? String == id } == true } ?? false
+                    let rowID = messageID.map { reused ? "\($0)-\(count)" : $0 } ?? "acp-\(count)"
                     history[sid, default: []].append(["role": role, "text": chunk, "row_id": rowID])
                 }
             }
@@ -101,7 +113,10 @@ struct ACPProtocolState {
             let key = sid + "\u{0}" + id
             let detail = Self.describe(update["rawInput"] ?? update["locations"] ?? update["content"])
             if tools.insert(key).inserted {
-                events.append(event("tool.start", sid, ["tool_id": id, "name": update["title"] as? String ?? update["kind"] as? String ?? "Tool", "context": detail]))
+                var name = update["title"] as? String ?? update["kind"] as? String ?? "Tool"
+                // Antigravity titles every call, MCP tools included, "Running <bare tool name>".
+                if antigravity, name.hasPrefix("Running ") { name.removeFirst(8) }
+                events.append(event("tool.start", sid, ["tool_id": id, "name": name, "context": detail]))
             }
             let status = update["status"] as? String ?? "pending"
             if status == "completed" || status == "failed" {
@@ -145,6 +160,16 @@ struct ACPProtocolState {
             childID = registered.id; childEvents = registered.events
             if let childID { childEvents.append(event("subagent.thinking", sid, ["subagent_id": childID, "status": "waiting"])) }
         }
+        if method == "session/request_permission", antigravity, let tool = params["toolCall"] as? [String: Any],
+           (tool["toolCallId"] as? String)?.hasPrefix("interaction_") == true {
+            // Antigravity's own questions: the options are answers, never approvals.
+            guard let question = Self.antigravityQuestion(tool, params["options"]) else {
+                let message = "Antigravity asked a question the companion cannot show, so it was cancelled. Ask it to write the question in its message."
+                return (childEvents + [event("runtime.notice", sid, ["message": message])], Self.reply(id, ["outcome": ["outcome": "cancelled"]]))
+            }
+            requests[key] = Interaction(id: id, session: sid, method: "antigravity/question", questions: [question], childID: childID)
+            return (childEvents + [event("clarify.request", sid, ["request_id": key, "questions": [question]])], nil)
+        }
         if method == "session/request_permission" {
             var choices: [String: String] = [:]
             for option in params["options"] as? [[String: Any]] ?? [] {
@@ -186,7 +211,7 @@ struct ACPProtocolState {
             requests[key] = Interaction(id: id, session: sid, method: method, options: ["once": "accepted"], childID: childID)
             let detail = ["Start with this plan?", params["name"] as? String, params["overview"] as? String, plan]
                 .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
-            return (childEvents + [event("approval.request", sid, ["request_id": key, "choices": ["once", "deny"], "command": detail])], nil)
+            return (childEvents + [event("approval.request", sid, ["request_id": key, "choices": ["once", "deny"], "command": detail, "plan": true])], nil)
         }
         let message = "The runtime requested an unsupported interaction (\(method)); it was declined. Use the native interface for this feature."
         let reply = method == "elicitation/create" ? Self.reply(id, ["action": "decline"])
@@ -206,7 +231,7 @@ struct ACPProtocolState {
             guard let option = request.options[choice] else { return Self.reply(request.id, ["outcome": ["outcome": "cancelled"]]) }
             return Self.reply(request.id, ["outcome": ["outcome": "selected", "optionId": option]])
         }
-        guard ["elicitation/create", "cursor/ask_question"].contains(request.method) else { throw ACPClientError.unavailable("This request is not a question.") }
+        guard ["elicitation/create", "cursor/ask_question", "antigravity/question"].contains(request.method) else { throw ACPClientError.unavailable("This request is not a question.") }
         let qid = params["question_id"] as? String ?? ""
         guard let question = request.questions.first(where: { $0["qid"] as? String == qid }), let value = params["answer"] as? String else { throw ACPClientError.unavailable("That question has expired.") }
         let choices = question["choices"] as? [String] ?? []
@@ -215,6 +240,10 @@ struct ACPProtocolState {
         request.values[qid] = value; request.picked[qid] = picked; requests[key] = request
         guard request.questions.allSatisfy({ request.values[$0["qid"] as? String ?? ""] != nil }) else { return nil }
         requests.removeValue(forKey: key)
+        if request.method == "antigravity/question" {
+            let option = (question["value_map"] as? [String: String])?[value]
+            return Self.reply(request.id, ["outcome": option.map { ["outcome": "selected", "optionId": $0] } ?? ["outcome": "cancelled"]])
+        }
         if request.method == "cursor/ask_question" {
             let answers = request.questions.map { question -> [String: Any] in
                 let qid = question["qid"] as? String ?? "", map = question["value_map"] as? [String: String] ?? [:]
@@ -228,6 +257,13 @@ struct ACPProtocolState {
             if let map = question["value_map"] as? [String: String], let label = values[qid], let native = map[label] { values[qid] = native }
         }
         return Self.reply(request.id, ["action": "accept", "content": values])
+    }
+
+    /// After `session/cancel` ACP requires every open request to be answered as cancelled.
+    mutating func cancelRequests(_ sid: String) -> [[String: Any]] {
+        requests.filter { $0.value.session == sid }.keys.compactMap { requests.removeValue(forKey: $0) }.map {
+            Self.reply($0.id, $0.method == "elicitation/create" ? ["action": "cancel"] : ["outcome": ["outcome": "cancelled"]])
+        }
     }
 
     static func questions(_ schema: [String: Any], message: String) -> [[String: Any]]? {
@@ -282,6 +318,36 @@ struct ACPProtocolState {
             guard let id = $0["value"] as? String, seen.insert(id).inserted else { return nil }
             return RuntimeModelOption(choice: RuntimeModelChoice(model: id), title: $0["name"] as? String ?? id)
         }, note: "Models reported by this native session; changing one does not change the global profile.")
+    }
+
+    /// The session's `models` state (exact IDs) when the adapter keeps one, else its model config option.
+    func catalog(_ sid: String) -> RuntimeModelCatalog {
+        Self.catalog(models: models[sid]) ?? Self.catalog(config[sid] ?? [])
+    }
+
+    static func catalog(models: [String: Any]?) -> RuntimeModelCatalog? {
+        var seen = Set<String>()
+        let options = (models?["availableModels"] as? [[String: Any]] ?? []).compactMap { row -> RuntimeModelOption? in
+            guard let id = row["modelId"] as? String, !id.isEmpty, seen.insert(id).inserted else { return nil }
+            return RuntimeModelOption(choice: RuntimeModelChoice(model: id), title: row["name"] as? String ?? id)
+        }
+        guard !options.isEmpty else { return nil }
+        return RuntimeModelCatalog(defaultModel: (models?["currentModelId"] as? String).map { RuntimeModelChoice(model: $0) }, models: options,
+                                   note: "Models reported by this native session; changing one does not change the global profile.")
+    }
+
+    /// One single-choice question whose answers are the request's options, labelled by their names.
+    static func antigravityQuestion(_ tool: [String: Any], _ options: Any?) -> [String: Any]? {
+        var map: [String: String] = [:], labels: [String] = []
+        for option in options as? [[String: Any]] ?? [] {
+            guard let id = option["optionId"] as? String, !id.isEmpty else { return nil }
+            let label = (option["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? id
+            guard map[label] == nil else { return nil }
+            map[label] = id; labels.append(label)
+        }
+        guard !labels.isEmpty, let qid = tool["toolCallId"] as? String else { return nil }
+        return ["qid": qid, "question": tool["title"] as? String ?? "Choose an option.", "choices": labels,
+                "allows_free_text": false, "multi_select": false, "value_map": map]
     }
 
     /// Cursor's extension requests name a tool call, not a session. Attribute one

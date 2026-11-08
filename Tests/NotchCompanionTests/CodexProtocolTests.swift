@@ -194,9 +194,9 @@ final class CodexProtocolTests: XCTestCase {
             ["type": "agentMessage", "id": "b", "text": "Answer"]
         ]]]]
         let rows = CodexProtocolState.history(thread)
-        XCTAssertEqual(rows.count, 2)
-        XCTAssertEqual(rows[0]["text"] as? String, "Hello")
-        XCTAssertEqual(rows[1]["text"] as? String, "Checking\n\nAnswer")
+        // Text before and after a tool call are separate replies, as they streamed.
+        XCTAssertEqual(rows.map { $0["text"] as? String }, ["Hello", "Checking", "Answer"])
+        XCTAssertFalse(rows.contains { ($0["text"] as? String ?? "").contains("secret") || ($0["text"] as? String ?? "").contains("private") })
         XCTAssertEqual(rows[1]["row_id"] as? String, "t")
     }
 

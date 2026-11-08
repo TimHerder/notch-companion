@@ -81,6 +81,47 @@ final class IslandTierTests: XCTestCase {
         XCTAssertEqual(geometry.expandedFrame, plain.expandedFrame)
     }
 
+    func testAnnouncementLabelPutsTheTitleFirstAndTheMessageInTheRoomLeft() {
+        let plain = NotchAnnouncement(kind: .finished, sessionID: "s", title: "Website accessibility review")
+        // Icon and color carry the verb, so every kind measures alike.
+        for kind in NotchAnnouncement.Kind.allCases {
+            XCTAssertEqual(NotchAnnouncement(kind: kind, sessionID: "s", title: plain.title).labelWidth, plain.labelWidth)
+        }
+        XCTAssertEqual(NotchAnnouncement(kind: .failed, sessionID: "s", title: "Fix").labelWidth, 120, "short labels keep a minimum")
+        // A short title leaves room, so the message follows in it and widens the band.
+        let short = NotchAnnouncement(kind: .finished, sessionID: "s", title: "Notes", detail: "Drafted the changelog")
+        XCTAssertTrue(short.bandShowsMessage)
+        XCTAssertGreaterThan(short.labelWidth, NotchAnnouncement(kind: .finished, sessionID: "s", title: "Notes").labelWidth)
+        XCTAssertLessThan(short.labelWidth, NotchAnnouncement.maxLabelWidth)
+        let told = NotchAnnouncement(kind: .needsInput, sessionID: "s", title: "Plan the release",
+                                     detail: "Which milestone should ship first: the glance or the aura?")
+        XCTAssertTrue(told.bandShowsMessage)
+        XCTAssertEqual(told.labelWidth, 230, "a long message truncates within the baseline cap")
+        // A title that leaves under ~70 points drops the message instead of showing a stub.
+        var long = plain
+        long.detail = "Ready for review"
+        XCTAssertFalse(long.bandShowsMessage)
+        XCTAssertEqual(long.labelWidth, plain.labelWidth, "the band sizes to the whole title alone")
+        XCTAssertLessThan(long.labelWidth, 230)
+        let huge = NotchAnnouncement(kind: .needsInput, sessionID: "s",
+                                     title: "Compare the implementation options for the release", detail: told.detail)
+        XCTAssertFalse(huge.bandShowsMessage)
+        XCTAssertEqual(huge.labelWidth, 230, "a long title truncates at the cap, never past it")
+        // VoiceOver keeps the verb and the message the band left out.
+        XCTAssertEqual(long.spoken, "Done: \(long.title). Ready for review")
+        XCTAssertEqual(plain.spoken, "Done: Website accessibility review")
+    }
+
+    @MainActor func testPanelToastPutsTheTitleFirstToo() {
+        let roomy = NotchAnnouncement(kind: .finished, sessionID: "s", title: "Website accessibility review",
+                                      detail: "Option B keeps one presentation clock.")
+        XCTAssertTrue(PanelToastView.showsMessage(roomy))
+        let crowded = NotchAnnouncement(kind: .finished, sessionID: "s", title: "Compare the implementation options for the release",
+                                        detail: roomy.detail)
+        XCTAssertFalse(PanelToastView.showsMessage(crowded), "too little room beside the title: no stub")
+        XCTAssertFalse(PanelToastView.showsMessage(NotchAnnouncement(kind: .finished, sessionID: "s", title: "Notes")))
+    }
+
     func testExternalAnnouncementStaysCenteredAndVisiblyGrows() {
         var geometry = external()
         let resting = geometry.collapsedFrame
@@ -319,6 +360,93 @@ final class IslandTierTests: XCTestCase {
         XCTAssertNil(model.announcement)
         // The dot and receipt behave as before regardless of effects.
         XCTAssertEqual(model.sessionIndicators.map(\.status), [.failed])
+    }
+
+    @MainActor func testAnnouncementsSnapshotTheMessageTheMomentIsAbout() {
+        let (model, file) = makeModel()
+        let original = model.statusEffects
+        defer {
+            model.statusEffects = original
+            model.shutdown()
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        }
+        model.statusEffects = true
+        func turn(_ prompt: String, startedAgo: TimeInterval = 0) {
+            model.sessions[0].messages.append(ChatMessage(role: "user", text: prompt, createdAt: Date().addingTimeInterval(-startedAgo)))
+            model.receive("message.start", payload: ["session_id": "parent"])
+        }
+        // Finished: the answer, as one plain line, with the turn's work time.
+        turn("Write the release notes.", startedAgo: 134)
+        model.receive("message.complete", payload: ["session_id": "parent", "text": "## Notes\nShipped the glance and the aura."])
+        XCTAssertEqual(model.announcement?.kind, .finished)
+        XCTAssertEqual(model.announcement?.detail, "Notes — Shipped the glance and the aura.")
+        XCTAssertEqual(model.announcement?.worked ?? 0, 134, accuracy: 5)
+        // Needs input: the question itself.
+        model.receive("clarify.request", payload: ["session_id": "parent", "request_id": "q", "question": "Which tag?\nv2 or v3"])
+        XCTAssertEqual(model.announcement?.kind, .needsInput)
+        XCTAssertEqual(model.announcement?.detail, "Which tag? v2 or v3")
+        model.receive("clarify.expire", payload: ["session_id": "parent", "request_id": "q"])
+        // Failed: the error event's reason, kept on the stage after the session moves on.
+        turn("Tag it.")
+        model.receive("session.error", payload: ["session_id": "parent", "message": "Rate limit reached.\nTry again at 14:00."])
+        XCTAssertEqual(model.announcement?.kind, .failed)
+        XCTAssertEqual(model.announcement?.detail, "Rate limit reached. Try again at 14:00.")
+        model.sessions[0].state = .working
+        XCTAssertEqual(StageContent.make(model.announcement!, sessions: model.sessions, requests: model.requests).detail,
+                       "Rate limit reached. Try again at 14:00.", "never the live Thinking…")
+        // A failed turn whose terminal event names no reason uses this turn's notice (Codex, ACP)…
+        turn("Try again.")
+        model.receive("runtime.notice", payload: ["session_id": "parent", "message": "The model is overloaded."])
+        model.receive("message.complete", payload: ["session_id": "parent", "status": "error", "text": ""])
+        XCTAssertEqual(model.announcement?.detail, "The model is overloaded.")
+        // …its own error field when it carries one (OpenClaw, Pi)…
+        turn("Once more.")
+        model.receive("message.complete", payload: ["session_id": "parent", "status": "error", "text": "", "error": "Provider unavailable"])
+        XCTAssertEqual(model.announcement?.detail, "Provider unavailable")
+        // …else this turn's last answer, never the prompt or an earlier turn's notice.
+        turn("Last try.")
+        model.receive("message.delta", payload: ["session_id": "parent", "text": "Tagged v3, pushing"])
+        model.receive("message.complete", payload: ["session_id": "parent", "status": "error", "text": "Tagged v3, pushing"])
+        XCTAssertEqual(model.announcement?.detail, "Tagged v3, pushing")
+        turn("Quiet failure.")
+        model.receive("message.complete", payload: ["session_id": "parent", "status": "error", "text": ""])
+        XCTAssertEqual(model.announcement?.detail, "Something went wrong")
+        // The first-launch hello shows where to hover.
+        XCTAssertEqual(AppModel.helloAnnouncement.title, "Hi!")
+        XCTAssertEqual(AppModel.helloAnnouncement.detail, "Hover here to begin")
+        XCTAssertEqual(AppModel.helloAnnouncement.spoken, "Hi! Hover here to begin", "its title is its verb, said once")
+    }
+
+    @MainActor func testApprovalStageShowsTheSameCommandOnceAnsweredAndSpeechStaysBounded() throws {
+        let (model, file) = makeModel()
+        let original = model.statusEffects
+        defer {
+            model.statusEffects = original
+            model.shutdown()
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        }
+        model.statusEffects = true
+        let heredoc = "cat <<'EOF' > notes.md\n" + String(repeating: "line of release notes\n", count: 300) + "EOF"
+        model.receive("approval.request", payload: ["session_id": "parent", "request_id": "r", "command": heredoc])
+        let asked = try XCTUnwrap(model.announcement)
+        XCTAssertTrue(asked.isApproval)
+        XCTAssertTrue(asked.detail.hasSuffix("line of release notes EOF"), "the snapshot keeps the whole command")
+        XCTAssertLessThanOrEqual(asked.spoken.count, "Needs you: Release notes. ".count + NotchAnnouncement.spokenLimit,
+                                 "VoiceOver hears a bounded command, like a failure's reason")
+        let open = StageContent.make(asked, sessions: model.sessions, requests: model.requests)
+        XCTAssertFalse(open.answered)
+        // Answered: the stage keeps the same field for its 'Answer sent' moment.
+        model.requests = []
+        model.sessions[0].state = .working
+        let landed = StageContent.make(asked, sessions: model.sessions, requests: model.requests)
+        XCTAssertTrue(landed.answered)
+        XCTAssertEqual(landed.detail, "Wants to run")
+        XCTAssertEqual(landed.command, open.command, "the field does not change as the answer lands")
+        XCTAssertEqual(landed.commandLines, 3)
+        XCTAssertEqual(landed.commandFieldHeight, open.commandFieldHeight)
+        // A question is not an approval.
+        model.receive("clarify.request", payload: ["session_id": "parent", "request_id": "q", "question": "Which tag?"])
+        XCTAssertEqual(model.announcement?.isApproval, false)
     }
 
     @MainActor func testSettingsPreviewClosesThePanelAndAnnouncesWithoutTouchingSessions() {

@@ -8,7 +8,7 @@ enum PanelTheme: String, CaseIterable, Identifiable {
     case refined
     /// Native Tahoe: the system accent, label opacities and grouped inset lists.
     case tahoe
-    /// Instrument: monochrome plus one orange signal, mono labels, hairlines.
+    /// Instrument: monochrome, an orange working signal, mono headers, hairlines.
     case instrument
 
     static let key = "notch.panelTheme"
@@ -79,9 +79,9 @@ enum CompanionStyle {
     static var faint: Color {
         pick(Color(red: 0.43, green: 0.45, blue: 0.42), Color.white.opacity(0.3), Color(white: 0.48))
     }
-    /// Sage, the system accent color, or the instrument's signal orange.
+    /// Sage, the system accent color, or the instrument's lit white key.
     static var accent: Color {
-        pick(Color(red: 0.73, green: 0.82, blue: 0.66), Color.accentColor, signal)
+        pick(Color(red: 0.73, green: 0.82, blue: 0.66), Color.accentColor, Color(white: 0.96))
     }
     /// Text and glyphs on the accent.
     static var onAccent: Color {
@@ -91,19 +91,20 @@ enum CompanionStyle {
     static var controlFill: Color {
         pick(Color.white.opacity(0.08), Color(red: 0.47, green: 0.47, blue: 0.5).opacity(0.26), Color.white.opacity(0.035))
     }
+    /// Needs you, warnings and limits; Instrument shares Refined's island colors.
     static var amber: Color {
-        pick(Color(red: 0.95, green: 0.76, blue: 0.43), Color(red: 1, green: 0.624, blue: 0.039), signal)
+        pick(Color(red: 0.95, green: 0.76, blue: 0.43), Color(red: 1, green: 0.624, blue: 0.039), IslandStyle.amber)
     }
     static var error: Color {
-        pick(Color(red: 1, green: 0.57, blue: 0.52), Color(red: 1, green: 0.271, blue: 0.227), signal)
+        pick(Color(red: 1, green: 0.57, blue: 0.52), Color(red: 1, green: 0.271, blue: 0.227), IslandStyle.error)
     }
     static let spring = Animation.spring(response: 0.38, dampingFraction: 0.79)
     /// Press feedback: quick in, slight overshoot out.
     static let press = Animation.spring(response: 0.22, dampingFraction: 0.6)
 
     /// Refined: one status palette matching the island's dots. Tahoe: the
-    /// system status colors. Instrument: white for activity and results, the
-    /// signal when it needs you.
+    /// system status colors. Instrument: the island's colors, with its signal
+    /// orange for live work.
     static func color(_ state: WorkState) -> Color {
         switch PanelTheme.current {
         case .refined:
@@ -117,7 +118,13 @@ enum CompanionStyle {
         case .tahoe:
             switch state { case .working, .waiting: return amber; case .finished: return green; case .failed: return error; default: return secondary }
         case .instrument:
-            switch state { case .working, .finished: return text; case .waiting, .failed: return signal; default: return secondary }
+            switch state {
+            case .working: return signal
+            case .waiting: return amber
+            case .finished: return IslandStyle.indicatorColor(.finished)
+            case .failed: return error
+            default: return secondary
+            }
         }
     }
     static func label(_ state: WorkState) -> String {
@@ -137,9 +144,9 @@ enum CompanionStyle {
             }
         case .instrument:
             switch status {
-            case .running, .finished: return text
-            case .waiting, .failed: return signal
-            case .none: return .clear
+            case .running: return signal
+            case .waiting: return amber
+            case .finished, .failed, .none: return IslandStyle.indicatorColor(status)
             }
         }
     }
@@ -195,7 +202,7 @@ enum CompanionStyle {
 
     // MARK: Instrument
 
-    /// International orange: needs you, and the one primary action in view.
+    /// International orange: live work and focus, nothing else.
     static let signal = Color(red: 1, green: 0.353, blue: 0.122)
     /// Hairline rules and outlines.
     static let rule = Color.white.opacity(0.13)
@@ -214,12 +221,15 @@ enum CompanionStyle {
 
 extension View {
     /// Refined: scrolling content softens as it passes under the header and
-    /// into the composer instead of being cut at a hard edge.
+    /// into the composer instead of being cut at a hard edge. The ramp eases in,
+    /// so a line cut by the edge dissolves rather than showing its lower half.
     func scrollEdgeFade(top: CGFloat = 8, bottom: CGFloat = 12) -> some View {
-        mask(VStack(spacing: 0) {
-            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: top)
+        let ramp: [Gradient.Stop] = [.init(color: .clear, location: 0), .init(color: .black.opacity(0.3), location: 0.5),
+                                     .init(color: .black, location: 1)]
+        return mask(VStack(spacing: 0) {
+            LinearGradient(stops: ramp, startPoint: .top, endPoint: .bottom).frame(height: top)
             Color.black
-            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: bottom)
+            LinearGradient(stops: ramp, startPoint: .bottom, endPoint: .top).frame(height: bottom)
         })
     }
 
@@ -242,12 +252,22 @@ extension View {
     }
 }
 
-/// A status lamp. Lit lamps glow faintly; `pulsing` breathes for live work.
+extension View {
+    /// Instrument: a pinned banner on an opaque panel-colored strip with a
+    /// hairline under it, so scrolled text never shows through.
+    func instrumentBanner() -> some View {
+        background(CompanionStyle.background)
+            .overlay(alignment: .bottom) { Rectangle().fill(CompanionStyle.rule).frame(height: 0.5) }
+    }
+}
+
+/// A status lamp. Lit lamps glow faintly (a flat dot without `glows`); `pulsing` breathes for live work.
 struct LED: View {
     var color: Color
     var lit = true
     var pulsing = false
     var size: CGFloat = 6
+    var glows = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -256,7 +276,7 @@ struct LED: View {
             let level = pulsing && !reduceMotion ? 0.45 + 0.55 * (0.5 + 0.5 * cos(phase * 2 * .pi)) : 1
             Group {
                 if lit {
-                    Circle().fill(color).shadow(color: color.opacity(0.7), radius: 2.5)
+                    Circle().fill(color).shadow(color: color.opacity(glows ? 0.7 : 0), radius: 2.5)
                 } else {
                     Circle().strokeBorder(color, lineWidth: 1)
                 }
@@ -268,8 +288,8 @@ struct LED: View {
     }
 }
 
-/// A segmented bar meter, as on a hardware level display. The signal takes
-/// over at the top of the scale.
+/// A segmented bar meter, as on a hardware level display. Amber takes over
+/// at the top of the scale, as on every design's usage bar.
 struct SegmentMeter: View {
     var fraction: Double?
     var segments = 10
@@ -282,10 +302,38 @@ struct SegmentMeter: View {
         HStack(spacing: 1.5) {
             ForEach(0..<segments, id: \.self) { index in
                 Rectangle()
-                    .fill(index < lit ? (hot ? CompanionStyle.signal : CompanionStyle.text) : Color.white.opacity(fraction == nil ? 0.1 : 0.18))
+                    .fill(index < lit ? (hot ? CompanionStyle.amber : CompanionStyle.text) : Color.white.opacity(fraction == nil ? 0.1 : 0.18))
                     .frame(width: segmentWidth, height: height)
             }
         }
+        .accessibilityHidden(true)
+    }
+}
+
+/// A usage bar across the available width. The fill is the share used and
+/// takes the warning color from 90 %; unknown is a dim track, never 0 %.
+/// Refined: a thin capsule. Tahoe: an accent capsule. Instrument: segments.
+struct UsageBar: View {
+    var fraction: Double?
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            if PanelTheme.current == .instrument {
+                let count = max(1, Int((width + 1.5) / 7.5))
+                SegmentMeter(fraction: fraction, segments: count, segmentWidth: (width - 1.5 * CGFloat(count - 1)) / CGFloat(count), height: 6)
+            } else {
+                Capsule().fill(PanelTheme.pick(Color.white.opacity(0.1), Color.white.opacity(0.12), .clear))
+                    .opacity(fraction == nil ? 0.5 : 1)
+                    .overlay(alignment: .leading) {
+                        if let fraction, fraction > 0 {
+                            Capsule().fill(fraction >= 0.9 ? CompanionStyle.amber : PanelTheme.pick(CompanionStyle.text.opacity(0.75), CompanionStyle.accent, .clear))
+                                .frame(width: max(proxy.size.height, width * fraction))
+                        }
+                    }
+            }
+        }
+        .frame(height: PanelTheme.pick(4, 5, 6))
         .accessibilityHidden(true)
     }
 }
@@ -310,29 +358,6 @@ extension RuleLabel where Trailing == EmptyView {
         self.title = title
         self.color = color
         self.trailing = EmptyView()
-    }
-}
-
-/// The panel's faint dot grid: the underlying measure the content sits on.
-struct InstrumentGrid: View {
-    var spacing: CGFloat = 16
-
-    var body: some View {
-        Canvas { context, size in
-            var dots = Path()
-            var y = spacing / 2
-            while y < size.height {
-                var x: CGFloat = 20
-                while x <= size.width - 20 {
-                    dots.addRect(CGRect(x: x - 0.5, y: y - 0.5, width: 1, height: 1))
-                    x += spacing
-                }
-                y += spacing
-            }
-            context.fill(dots, with: .color(.white.opacity(0.07)))
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 }
 

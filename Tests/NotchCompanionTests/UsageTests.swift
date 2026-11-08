@@ -105,6 +105,100 @@ import XCTest
         XCTAssertEqual(UsageView.describe(RuntimeRateLimit(name: "Weekly")), "— used")
     }
 
+    func testLimitBarsNeverShowUnknownAsZero() {
+        XCTAssertNil(RuntimeRateLimit(name: "Weekly").fraction, "An unreported percentage draws a bare track, not 0 %")
+        XCTAssertEqual(RuntimeRateLimit(name: "5-hour", reached: true).fraction, 1, "Reached fills the bar without a percentage")
+        XCTAssertEqual(RuntimeRateLimit(name: "Weekly", usedPercent: 140).fraction, 1)
+        XCTAssertEqual(RuntimeRateLimit(name: "Weekly", usedPercent: -5).fraction, 0)
+        XCTAssertEqual(try XCTUnwrap(RuntimeRateLimit(name: "Weekly", usedPercent: 42.4).fraction), 0.424, accuracy: 0.000_1)
+        XCTAssertEqual(UsageView.usedText(RuntimeRateLimit(name: "Weekly", usedPercent: 42.6)), "43%")
+        XCTAssertEqual(UsageView.usedText(RuntimeRateLimit(name: "Weekly", usedPercent: 0)), "0%", "A reported zero is real")
+        XCTAssertEqual(UsageView.usedText(RuntimeRateLimit(name: "Weekly")), "—")
+        XCTAssertEqual(UsageView.usedText(RuntimeRateLimit(name: "5-hour", usedPercent: 100, reached: true)), "Limit reached")
+        let context = RuntimeContextUsage(used: 220_000, limit: 200_000)
+        XCTAssertEqual(context.ratio, 1.1, "The headline reads an over-limit report as one")
+        XCTAssertEqual(context.fraction, 1, "The gauge and bar stay clamped")
+    }
+
+    func testResetAndReportTimesReadRelativeWithinADayThenDated() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_GB")
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        // Two-digit hours throughout, so a user's leading-zero time preference cannot change the text.
+        let now = Date(timeIntervalSince1970: 1_800_014_400) // Fri 15 Jan 2027 12:00 UTC
+        func reset(in seconds: TimeInterval, percent: Double? = 42, reached: Bool = false) -> RuntimeRateLimit {
+            RuntimeRateLimit(name: "5-hour", usedPercent: percent, resetsAt: now.addingTimeInterval(seconds), reached: reached)
+        }
+        func text(_ limit: RuntimeRateLimit) -> String? { UsageView.resetText(limit, now: now, calendar: calendar) }
+        XCTAssertNil(text(RuntimeRateLimit(name: "Weekly")), "No reset reported, no line")
+        XCTAssertEqual(text(reset(in: 30)), "Resets in 1 min", "Counts up, never claims an earlier reset")
+        XCTAssertEqual(text(reset(in: 45 * 60)), "Resets in 45 min")
+        XCTAssertEqual(text(reset(in: 3_600 - 5)), "Resets in 1 h")
+        XCTAssertEqual(text(reset(in: 100 * 60)), "Resets in 1 h 40 min")
+        XCTAssertEqual(text(reset(in: 2 * 86_400 + 6 * 3_600 + 20 * 60)), "Resets Sun 18:20", "Beyond a day: weekday and the same time style")
+        XCTAssertEqual(text(reset(in: 10 * 86_400)), "Resets 25 Jan 12:00", "Beyond six days the weekday would be ambiguous")
+        XCTAssertEqual(UsageView.describe(reset(in: 100 * 60), now: now, calendar: calendar), "42% used · resets in 1 h 40 min")
+        let passed = reset(in: -60, percent: 100, reached: true)
+        XCTAssertTrue(passed.isStale(now: now))
+        XCTAssertEqual(text(passed), "Reset since last report")
+        XCTAssertEqual(UsageView.usedText(passed, now: now), "—", "A window that reset since the report is unknown again")
+        XCTAssertEqual(UsageView.describe(passed, now: now, calendar: calendar), "— used · reset since last report")
+
+        XCTAssertEqual(UsageView.reportedText(now.addingTimeInterval(-2 * 3_600), now: now, calendar: calendar), "Updated 10:00")
+        XCTAssertEqual(UsageView.reportedText(now.addingTimeInterval(-26 * 3_600), now: now, calendar: calendar), "Updated 14 Jan",
+                       "An old report shows its date, never a time that looks like today")
+        func caption(_ context: RuntimeContextUsage) -> String {
+            var context = context
+            context.reportedAt = now.addingTimeInterval(-2 * 3_600)
+            return UsageView.contextCaption(context, now: now, calendar: calendar)
+        }
+        XCTAssertEqual(caption(RuntimeContextUsage(used: 42_000, limit: 200_000)), "Updated 10:00")
+        XCTAssertEqual(caption(RuntimeContextUsage(used: 42_000, limit: 200_000, estimated: true)), "Estimate · Updated 10:00")
+        XCTAssertEqual(caption(RuntimeContextUsage(used: 42_000)), "Window not reported · Updated 10:00")
+        XCTAssertEqual(caption(RuntimeContextUsage(used: 220_000, limit: 200_000)), "Over the reported window · Updated 10:00")
+    }
+
+    func testDatesReadInTheAppLanguageWithTheSystemRegionAndClock() throws {
+        let now = Date(timeIntervalSince1970: 1_800_014_400) // Fri 15 Jan 2027 12:00 UTC
+        func calendar(system: String) -> Calendar {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.locale = Locale.app(language: "en", system: Locale(identifier: system))
+            calendar.timeZone = TimeZone(identifier: "UTC")!
+            return calendar
+        }
+        let reset = RuntimeRateLimit(name: "Weekly", usedPercent: 42, resetsAt: now.addingTimeInterval(2 * 86_400))
+        XCTAssertEqual(UsageView.resetText(reset, now: now, calendar: calendar(system: "de_DE")), "Resets Sun 12:00",
+                       "An English weekday on a German system, keeping its 24-hour clock")
+        XCTAssertEqual(UsageView.day(now.addingTimeInterval(-3 * 86_400), now: now, calendar: calendar(system: "de_DE")).prefix(4), "Tue ")
+        let twelveHour = try XCTUnwrap(UsageView.resetText(reset, now: now, calendar: calendar(system: "de_DE@hours=h12")))
+        XCTAssertTrue(twelveHour.hasPrefix("Resets Sun 12:00") && twelveHour.hasSuffix("PM"), "A 12-hour preference stays: \(twelveHour)")
+        // The shared default takes the bundle's language and the system's region and clock.
+        let app = try XCTUnwrap(Calendar.app.locale)
+        XCTAssertEqual(app.language.languageCode, Locale.Language(identifier: Bundle.main.preferredLocalizations.first ?? "en").languageCode)
+        XCTAssertEqual(app.region, Locale.autoupdatingCurrent.region)
+        XCTAssertEqual(app.hourCycle, Locale.autoupdatingCurrent.hourCycle)
+    }
+
+    func testContextHeadlineShowsWhatIsKnown() {
+        XCTAssertEqual(UsageView.contextHeadline(nil), "—", "No report yet")
+        XCTAssertEqual(UsageView.contextHeadline(RuntimeContextUsage(used: 42_000)), "42k used", "No window: the tokens, never a dash")
+        XCTAssertEqual(UsageView.contextHeadline(RuntimeContextUsage(used: 42_000, estimated: true)), "≈42k used")
+        XCTAssertEqual(UsageView.contextHeadline(RuntimeContextUsage(used: 42_000, limit: 200_000, estimated: true)), "≈21%")
+        XCTAssertEqual(UsageView.contextHeadline(RuntimeContextUsage(used: 220_000, limit: 200_000)), "110%", "Unclamped over the window")
+    }
+
+    func testLimitWindowsShowShortestFirstAndExtraUsageLast() {
+        // Claude's windows arrive sorted by native key, which puts overage second.
+        let claude = RuntimeRateLimit.claude(["status": "allowed", "unifiedWindows": [
+            "five_hour": ["utilization": 0.1], "overage": ["utilization": 0.2], "seven_day": ["utilization": 0.3],
+            "seven_day_opus": ["utilization": 0.4], "seven_day_sonnet": ["utilization": 0.5]]])
+        XCTAssertEqual(RuntimeRateLimit.sorted(claude).map(\.name), ["5-hour", "Weekly", "Weekly · Opus", "Weekly · Sonnet", "Extra usage"])
+        let codex = ["Weekly", "Spark · Weekly", "Limit", "5-hour", "Spark · 5-hour", "90-minute"].map { RuntimeRateLimit(name: $0) }
+        XCTAssertEqual(RuntimeRateLimit.sorted(codex).map(\.name), ["90-minute", "5-hour", "Spark · 5-hour", "Weekly", "Spark · Weekly", "Limit"],
+                       "A plain window precedes its bucket's; an unknown duration sorts after known ones")
+        XCTAssertEqual(RuntimeRateLimit.minutes(label: RuntimeRateLimit.label(minutes: 4_320)), 4_320, "Reads back what label(minutes:) writes")
+    }
+
     func testAppModelStoresLimitsAcrossLaunchesAndRecordsTurnTokens() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let suite = "notch-usage-tests-\(UUID().uuidString)"

@@ -13,7 +13,10 @@ The bottom of Settings (compact panel and full-session window) shows the
 bundle's stamped calendar release and build, for example
 `Notch Companion 2026.10.27-r1 · Build 1`, as selectable text. A bare SwiftPM
 executable shows `Development build`. PR builds carry a preview marker and show
-`Preview pr-N-HEAD12` even when numeric bundle version fields exist.
+`Preview pr-N-HEAD12` even when numeric bundle version fields exist. Under it, a
+quiet footnote says the agents' names and logos are their owners' trademarks and
+that Notch Companion is not affiliated with or endorsed by them (the README
+carries the same line).
 
 ## Placement and expansion
 
@@ -36,11 +39,20 @@ Opening expands **one panel and one black silhouette** to 560 × 544 points
 region. The header is two rows on one grid:
 
 - **Top row** (band height + 4): the eyes, 1.7× larger, with their left edge on
-  the 20-point content margin; the live status in words 16 points after them,
-  ending 8 points before a physical camera; 24-point icon controls (Mark all as
-  read on Your sessions, New, Settings gear) at the right margin, 6 points from
-  the top.
-- **Title row** (28 points): the page title with Back and the Team chip.
+  the 20-point content margin, and 24-point icon controls (Mark all as read on
+  Your sessions, New, Settings gear) at the right margin, 6 points from the
+  top. No text, so a physical camera never splits a word.
+- **Title row** (28 points): the page title with Back and the Team chip. On a
+  session, a status dot follows the title (6.5 points in the session's status
+  colour; a lit 6-point LED in Instrument): it breathes while work runs (still
+  under Reduce Motion) and hides when nothing is live or unread. Its word
+  (“Done”, “Needs your answer”, the running tool) is its tooltip and the
+  title's spoken value; banners and the transcript explain the rest. States
+  the user must act on (**Check native work**, **Send unconfirmed**) keep the
+  word as a short amber subtitle directly under the title.
+
+Content starts directly under the title row; the transcript's own 14-point
+inset and edge fade give it air.
 
 Displays without a notch use the 32-point simulated band, so the layout is the
 same on every Mac. These are regions inside one `UnifiedNotchView`, not
@@ -76,7 +88,7 @@ mask or expansion animation.
 | Thinking | Expanded, eyes look up and drift. |
 | Answering | Expanded, eyes look toward the transcript. |
 | New tool call | Expanded, a brief glance toward the transcript. |
-| Working | Expanded, narrowed eyes scan like reading and the status names the running tool. |
+| Working | Expanded, narrowed eyes scan like reading; the title's status dot breathes and its tooltip names the running tool. |
 | Pointer leaves | A passive preview closes 300 ms after the pointer leaves the unified surface; the full panel plays the collapse cue once, the glance closes silently. Moving within it never dismisses it. |
 | File approaching | Drag entry opens the panel before the drop, widens the eyes and shows Current session / New session targets. |
 | Needs input | Wider eyes with a small periodic hop; expanded, they look toward the request. |
@@ -113,6 +125,9 @@ children contribute to their parent instead of adding dots.
 | Unchecked finished session | Green. |
 | Idle, interrupted, or read finished/failed | Hidden. |
 
+A [snoozed](#conversation-usability-and-session-management) session keeps its
+working dot but shows no unread dot until it wakes.
+
 Dots are 5 points wide at 8-point spacing. A physical notch reserves at least
 24 points on the right and grows that shoulder to keep every dot outside the
 camera; a row wraps only at the screen edge. External mode fits dots inside the
@@ -130,10 +145,10 @@ produce new dots; duplicate terminal events never resurrect a read dot.
 
 **Mark all as read** (checkmark beside Your sessions, notch and full-session
 sidebar) acknowledges every current result and saves immediately, leaving work,
-history and selection intact; it is disabled with nothing unread. Rows keep
-their outcome text after reading and show green/red dots only while unread.
-The Unread filter includes both outcomes; Needs you excludes read failures.
-Tooltips and accessibility labels distinguish read and unread.
+history and selection intact; it is disabled with nothing unread. Session rows
+show a green check or red mark only while unread; once read they keep only a
+quiet mark for a failure and dim their title. Tooltips and accessibility labels
+distinguish read and unread.
 
 ## Island tiers
 
@@ -149,9 +164,13 @@ centred like the panel, top-anchored, covering the band and camera.
   camera, a summary (“1 needs you · 2 working · 1 new”, symbol counts where
   words do not fit, or “All caught up”).
 - Below: up to three 44-point rows by priority (needs you, working, unread
-  failure, unread result, then recent; quiet archived sessions and untouched
-  drafts skipped). Each has a status glyph (spinning orange arc, pulsing amber
-  question, green check or red warning while unread, quiet marks once read),
+  failure, unread result, then recent; quiet archived,
+  [auto-archived](#conversation-usability-and-session-management) or snoozed
+  sessions and untouched drafts skipped; a snoozed session's unread result
+  counts as quiet). Each has a status glyph (spinning orange arc;
+  solid discs with a dark mark for a pulsing amber question and, while unread,
+  a green check or red warning, so the rows that need you are never the
+  dimmest; quiet marks once read),
   title, runtime, live turn timer or age, and one line of real detail (the
   question, running tool and argument, streaming tail, failed child, “Asks: …”,
   or the result's first line, e.g. “Sent report.pdf”).
@@ -168,11 +187,29 @@ centred like the panel, top-anchored, covering the band and camera.
 
 **Announcement.** When a session finishes, fails or asks for input while the
 notch is not expanded, the band keeps its height and widens on the right (the
-camera-side edge never moves) to show an icon, “Done”/“Failed”/“Needs you” and
-the title, sized to the text and bounded. It springs open, holds 4.2 / 5 / 6 s
-(done / failed / needs you), and retracts over 340 ms. The eyes take the
-result's expression and look at the label. Clicking it opens the session;
-hovering opens the glance. Dots stay to the label's right.
+camera-side edge never moves) to show the colored status icon and the session
+title, then one line of the message, sized to the text within 120–230 points.
+The icon and its color carry the verb, so no “Done”/“Failed”/“Needs you” word
+is drawn; VoiceOver still hears “Done: <title>. <message>”, the message cut at
+400 characters. The title comes first at its full width; the message follows
+in secondary color only in the width left beside it, and is left out rather
+than shown as a stub when less than 70 points remain (the stage and glance
+still show it). Both truncate at the tail. It springs open, holds 4.2 / 5 /
+6 s (done / failed / needs you), and retracts over 340 ms. The eyes take the result's expression
+and look at the label. Clicking it opens the session; hovering opens the
+glance. Dots stay to the label's right.
+
+The message is a snapshot taken when the moment is announced, so it keeps
+saying what happened even if the session moves on during the hold:
+
+- Done: this turn's answer as one plain line (Markdown removed), never the
+  prompt or an earlier turn's answer.
+- Failed: the runtime's reason from its error event, else the reason the
+  failed turn's own terminal event or notice gives, else “Send unconfirmed”,
+  the failed delegated child, this turn's last answer, or “Something went
+  wrong”.
+- Needs you: the question's text, or the command an approval wants to run.
+- The first-launch hello reads “Hi! Hover here to begin”.
 
 **Aura.** A click-through, non-activating `NotchAuraPanel` ordered directly
 **behind** the notch panel mirrors the presentation while an effect plays, then
@@ -185,9 +222,11 @@ ring. Reduced motion keeps only a soft fade. The aura owns no geometry, input
 or expansion and never plays while the full panel is open.
 
 **Toast.** In the open panel, a result from a session other than the one being
-read appears as a small capsule below the header (glyph, verb, title, “Open”),
-for the same hold, until the panel closes or that conversation opens; clicking
-it opens the session. The band, toast and aura never play for a conversation
+read appears as a small capsule below the header (status glyph, title, then
+one line of the message by the band's rule, only in the width the title
+leaves, and “Open”; no verb word, VoiceOver keeps it), at most 380
+points wide, for the same hold, until the panel closes or that conversation
+opens; clicking it opens the session. The band, toast and aura never play for a conversation
 that is on screen. VoiceOver hears each announcement.
 
 **Status effects** (`notch.statusEffects`, default on) controls announcements,
@@ -223,7 +262,7 @@ protection and send cue; the glance stays open. Hovering a running row swaps
 its runtime name for a **Stop** that interrupts without opening or selecting.
 
 **Motion language.** Panel content and announcement/live labels materialize
-from a light blur; the header status blur-replaces; timers roll digits; tool
+from a light blur; timers roll digits; tool
 glyphs morph. A faint rim along the open island's sides and bottom (starting
 below band height) defines it against dark wallpapers.
 
@@ -254,12 +293,13 @@ Each effect is brief, driven by real state, and dropped under reduced motion.
   at most 6 points, dying away over 0.5 s. Only the notch and aura windows move;
   `NotchPresentation`, geometry and hit testing stay put, and the window lands
   exactly on the announced band.
-- **Announcement icons act out their verb:** Done draws its check, Hi waves,
-  Failed wiggles, Needs you hops.
+- **Announcement icons act out their verb,** which they replace as a word in
+  the band and on the stage: Done draws its check, Hi waves, Failed wiggles,
+  Needs you hops.
 - **Writing waveform.** While an answer streams, its live glyph is three bars
   that jump as text arrives and settle within about a second of a pause.
-- **Working shimmer.** A soft highlight sweeps the header status and a glance
-  row's tool or thinking line while work runs, never a streaming answer.
+- **Working shimmer.** A soft highlight sweeps a glance row's tool or
+  thinking line while work runs, never a streaming answer.
 - **Rim comet.** While agents work, a small warm light laps the open glance or
   panel rim every 4 s, emerging below the band.
 - **Landing dots.** A dot that becomes a result or question pops and sends one
@@ -371,27 +411,51 @@ hover, clicks, swipes or drops, and the window top, flares, aura and hit regions
 are unchanged.
 
 **The stage.** With Popup, a result, question or failure (and the hello) grows
-the notch into a 440 × (band + 132) point island, top-anchored and centred like
-the glance, on the glance's spring, corners radius +14. It uses the one panel,
-silhouette and clock (`stage`), never shows while the panel is open (the toast
-stands in) or over an open glance (the edge still lights).
+the notch into a 440-point-wide island below the band, top-anchored and
+centred like the glance, on the glance's spring, corners radius +14. It uses
+the one panel, silhouette and clock (`stage`), never shows while the panel is
+open (the toast stands in) or over an open glance (the edge still lights).
 
-- With Mascot, the mascot stands at the left, about 150 points tall; beside it
-  rows materialize: verb icon and runtime, title, up to three lines of result.
-  With Eyes, the eyes stay in the band and text uses the full width with a
-  20-point inset. Wrapping and height follow the available width.
+- Rows, without a verb row:
+  - a header: the acting status icon (14 points, colored), the title (15
+    semibold, one line) and, trailing in faint monospaced digits, the runtime
+    and how long the turn worked (“Codex · 2:14”);
+  - the message (12.5 points, 78% white), up to three lines, two when answers
+    or a command follow;
+  - for a finished turn with changes, one quiet line such as “4 files +120 −8”
+    with the counts in green and red;
+  - for an approval, “Wants to run” and its command in a monospaced inset
+    field that wraps between any characters for up to three lines and only
+    then truncates at the tail, never in the middle; the body grows with it;
+  - the answers directly beneath.
+
+  Message, line, field and answers hang after the icon's column.
+- Content is kind-aware. Results and failures show the announcement's snapshot
+  (see [announcement](#island-tiers)), never live status such as “Thinking…”;
+  a question shows the live request, so one answered meanwhile shows **Answer
+  sent** (an answered approval keeps “Wants to run” and its snapshotted command
+  in the field, the same full command as before the answer; only speech is
+  cut to 400 characters).
+- The body height is measured from this content and the text width before the
+  stage opens, and re-springs if it changes (the next question, a late change
+  summary). With Eyes, the eyes stay in the band; the text starts 8 points below
+  it with a 20-point inset, and short results leave no empty space. With
+  Mascot, the mascot stands at the left, about 150 points tall, the body keeps
+  at least 132 points for it, and the text block is centred vertically beside
+  it.
 - The stage has **no buttons of its own**: clicking outside its answers opens
   the session on the panel spring, the mascot gliding into the header; hovering
   away lets it retract. The opening area shows a pointing hand; answer controls
   keep their cursors (the reply field an I-beam). VoiceOver reads it as a button
   with a Dismiss action.
 
-**Answering on the stage.** A native question or approval shows two lines of
-question with answers beneath, on the same native path and duplicate protection
-as glance and card: **Deny** / **Allow once**; a single-choice question's
-options (up to four, any length) as wrapped pills; and, when the runtime allows
-a written answer, a reply field that sends on Return (a failed send keeps the
-text). Each answer row past the first adds 30 points. Clicking the field lets
+**Answering on the stage.** A native question or approval shows up to two
+lines of question with answers directly beneath, on the same native path and
+duplicate protection as glance and card: **Deny** / **Allow once**; a
+single-choice question's options (up to four, any length) as wrapped pills; and,
+when the runtime allows a written answer, a reply field that sends on Return (a
+failed send keeps the text). Each answer row is 26 points with 4 between, and
+grows the stage. Clicking the field lets
 the non-activating panel take the keyboard without activating the app; the stage
 gives it back as it retracts. After answering it shows **Answer sent** and
 retracts 1.6 s later, unless the batch's next question takes its place.
@@ -414,14 +478,14 @@ appearance previews, and uses neutral wording without a character voice.
   marked welcomed. Settings → **Welcome · Show again** replays it.
 - **Where.** A page of the one panel (`PanelPage.welcome(step:)`). The header
   keeps only the eyes or mascot and a **Skip** button (not on the last step);
-  status, New, Settings, Back, the title row and composer are hidden. Each step
+  New, Settings, Back, the title row and composer are hidden. Each step
   centres a title, a secondary line and its choices a little above the middle;
   the footer has a page indicator, **Back** and **Continue**/**Done** as the
   primary (Return). Steps blur through each other over 0.34 s (fade under
   reduced motion). The step lives in the page, so it survives the panel closing
   for a preview.
 - **Agent** (*Choose your agent*): installed harnesses in catalog order, with
-  install location and an Experimental tag where relevant; the default agent if
+  their [logo](#agent-logos) and install location; the default agent if
   found, else the first, is preselected. Choosing sets the default agent and the
   untouched first draft's harness; **Continue** checks the connection, showing
   failures in the panel's error line. With none found: *Install an agent*, setup
@@ -443,7 +507,10 @@ appearance previews, and uses neutral wording without a character voice.
 ## Compact panel
 
 A stable structure: session heading, scrollable conversation region, composer.
-The notch is a complete place to read the conversation, not a preview.
+The notch is a complete place to read the conversation, not a preview. Your
+sessions has no composer: the list uses the whole content region and opening
+the page focuses search. Drafts, attachments and file drops are unaffected (a
+drop opens its session).
 
 - Attachment chips and the bounded multiline editor use internal space; neither
   grows the panel.
@@ -451,12 +518,48 @@ The notch is a complete place to read the conversation, not a preview.
   the full content region without the composer, its destination controls or
   attachment strip, and links to the full-session window. Returning restores
   the composer with draft and attachments. Detail views keep Back.
-- Show the full conversation. Earlier turns have expandable tool groups.
-- **Live current-turn cap:** the latest three tool calls, newest at the bottom;
-  new calls roll rows upward. Stable tool identities update rows in place. The
-  cap limits only the live summary, never history.
-- Persist turn IDs with messages and tool metadata so groups stay correct after
-  reconnect or resume.
+- The transcript fades over 14 points at both edges, under the header and above
+  the composer, in every design and both surfaces, on an eased ramp so a line
+  cut by the edge dissolves instead of reading as sliced. Its 14-point inset
+  keeps content at rest out of the fade.
+- Show the full conversation in true order: a turn's text and tool calls appear
+  in the order they began. Text the agent writes between calls is commentary,
+  one step smaller and quieter, with no header or Copy. Consecutive calls form
+  a run of single-line rows (status icon, name, middle-truncated detail; the
+  status word is spoken, not shown) with no card in Refined and Tahoe and log
+  lines in Instrument; a finished run outside a fold reads “N tool calls”. In
+  Refined and Tahoe a failed call's name takes the failure colour beside its
+  icon; Instrument marks it with a red `ERR` tag.
+- **Live current-turn cap:** only the newest run shows its latest three calls,
+  newest at the bottom, with older calls behind “N earlier tool calls”; new
+  calls roll rows upward. Stable tool identities update rows in place. The cap
+  limits only the live summary, never history. A footer under the newest
+  content reads “Working for 42s”, ticking for the whole turn while text
+  streams (“Waiting for your reply…” while the agent waits on you, beside a
+  still question mark in the needs-you colour in Refined and Tahoe and a steady
+  amber LED in Instrument; never the spinner), followed by
+  any delegated agents still working.
+- **Finished turns** read: your message, a **Worked for 2:14** fold (collapsed
+  by default), the answer, then its changes (open for the latest finished turn,
+  see [Change summaries](#change-summaries)). The answer is the last text the
+  turn wrote; it keeps the full body style and Copy on hover, and ordinary
+  replies carry no harness-name header (relayed messages keep their label). The
+  fold holds the commentary and runs in order, indented on a thin leading rule;
+  unfolding it stops transcript following. With nothing to fold, the duration
+  is a quiet line; a turn saved without its end reads “Worked · N steps”.
+  Durations read 8s, 2:14, 1:02:10.
+- A turn that ended before writing any text has no answer: its work stays open
+  under its header. A turn's own failure or stop names it, “Failed after 1:03”
+  or “Stopped after 12s”, on that header or on the fold above whatever text it
+  wrote (a failed delegated child does not, and a send that failed before it
+  became a turn never relabels the one before: a turn ended by a quit, a
+  disconnect or a Stop the runtime never confirms keeps “Stopped”). A turn
+  whose questions above its answer are still open keeps its work unfolded, so
+  the card stays in view; it folds once you reply. A steer or wake starts its own
+  block; blocks split from a running turn stay open until the turn ends, and a
+  block without its own end ends when the next one in its turn begins.
+- Persist turn IDs, end times and outcomes with messages and tool metadata so
+  blocks stay correct after reconnect or resume.
 - Long tool labels truncate with a way to see the full text.
 - Streaming updates within the existing region, never resizing the notch.
 - Input and approval requests never rotate out with ordinary activity rows.
@@ -466,12 +569,28 @@ The notch is a complete place to read the conversation, not a preview.
 
 ## Change summaries
 
-Each coding turn can show a collapsed **Changes · N files · +A −D** row after
-its answer, in the notch and full-session window. Expanding lists paths, change
-kinds and per-file line counts; clicking a file opens its selectable unified
-diff below it (green additions, red removals) in a bounded, independently
-scrolling viewport. Binary files show a Binary label, not line counts.
-Expanding or inspecting stops transcript following; the notch never grows.
+Each coding turn can show a **Changes · N files · +A −D** card directly under
+its final answer (below the turn's folded work), in the notch and full-session
+window, so a finished turn reads as its answer and its files together. Open, it
+lists paths, change kinds and per-file line counts; clicking a file opens its
+selectable unified diff below it (green additions, red removals) in a bounded,
+independently scrolling viewport. Binary files show a Binary label, not line
+counts. An open card lists the first six files (three in the notch, so the
+answer and the card's header stay in view above them) and an **N more files**
+row that reveals the rest.
+
+The latest finished turn's cards (Changes, Workspace changes, delegated
+groups) start open; older turns' start collapsed. A running turn, its steers
+and a message still sending (until the runtime confirms it, even once it shows
+as working) are not finished, so the turn before them stays the latest until
+the new one ends. Turns the companion sent for an agent (a delegation result,
+a relayed question, a message from another session) continue the user's own
+turn before them: its cards stay open beside theirs, so a delegating turn's
+child changes are open when the child's result arrives. Opening or closing a card is remembered per
+session and turn until the app quits, shared by the notch and full window; a
+turn that stops being the latest keeps that choice, or collapses if untouched.
+Opening by default keeps transcript following; the user's own expansion,
+reveal or file inspection stops it. The notch never grows; content scrolls.
 
 **Open file/project in VS Code** uses the installed editor, else Cursor, Zed or
 Xcode, else asks the user to pick an app. Right-click either action for
@@ -564,8 +683,7 @@ black and fade to glass over the next 80 points. Body controls by design:
   gray fill under Liquid Glass on Black, translucent on Glass and Smoked; its
   other fills stay translucent except the sent bubble, menus and drop tray.
 - **Instrument:** flat hairline keys and inset fields on every body, no Liquid
-  Glass; Jump to latest is a solid black key; the blur shows through the dot
-  grid.
+  Glass; Jump to latest is a solid black key.
 
 The full-session window follows the same Notch body setting immediately,
 including controls, sidebar and the area under the title bar, with a uniform
@@ -581,6 +699,12 @@ position are remembered (`FullSessionWindow`).
 
 - Every page uses one header: optional back chevron, 19-point title, optional
   one-line subtitle, trailing controls (Conversation / Activity / Team).
+  A session's subtitle never contradicts its transcript: the harness and
+  “Needs your answer”, “Working for 0:42” (ticking), **Send unconfirmed** or
+  **Check native work**; otherwise a connection problem while idle; otherwise
+  how the last turn ended (“Worked 2 min ago”, “Failed 1 h ago”, “Stopped just
+  now”). “Connects when you send a message.” is left for a session with no
+  connection that has not run a turn, and a connected one says so.
 - Header, banners, transcript, tabs and composer share one centred column at
   most 820 points wide; Settings and Usage use 620.
 - Settings opens in the main pane from a **Settings** row at the foot of the
@@ -604,28 +728,55 @@ notch, dots, live activity, announcements, aura, rim comet, glance and stage use
   6/10/14/18; `well` cards and a `raised` bubble. Status colors match the
   island dots (working orange, needs-you amber, done green, failed red); sage
   only for the primary action. A faint bloom around the open eyes. The composer
-  is one field with an inner toolbar (attach, SnapShot, harness, folder,
-  session, Send/Stop); user messages are right-aligned bubbles; approvals,
+  is one field with an inner bar (see [composer model controls](#composer-model-controls),
+  as in every design); user messages are right-aligned bubbles; approvals,
   questions and project trust are amber-rimmed cards; copy on hover or focus;
   scroll edges fade.
 - **Tahoe:** Apple-native. Dark-Aqua label opacities, gray fills,
   `Color.accentColor` for the primary action, switches and selection, system
   status colors. Lit disc header controls; capsule buttons with a lit glass
   edge; Settings, setup, projects and delegated work as grouped lists with
-  colored icon tiles; menu-style choosers.
-- **Instrument:** monochrome plus one international-orange signal (`#FF5A1F`)
-  for what needs you and the primary action. Tracked uppercase SF Mono for
-  labels, states, counts and logs; SF Pro for prose. Hairlines, 3–4-point
-  radii, a 16-point dot grid, a ruled scale under the header, viewfinder
-  brackets around the open eyes, LED lamps, numbered rows, tool calls as log
-  lines, code line numbers, segmented meters, a diffstat, square switches and
-  a fader slider.
+  colored icon tiles; menu-style choosers. The composer is a rounded field
+  (18-point radius) with its bar inside.
+- **Instrument:** monochrome with one international-orange signal (`#FF5A1F`)
+  that means live work (the working lamp, timer and log line) and focus (the
+  prompt chevron and caret), nothing else. Other statuses use the island's
+  colors: done green, needs-you amber (questions, approvals, project trust,
+  setup, **Limit reached** and full meters), failures and errors red. The
+  primary action (Send, Stop, Implement, Reply, Save) is a lit white key.
+  Tracked uppercase SF Mono only for section headers (rule labels, project
+  headers, the Changes title, a code block's language), tool log lines and
+  status lamps' labels; buttons, chips, segmented controls and metadata use
+  sentence-case SF (**Set up**, **Archived**, **Copy**, “2 files”, “Hermes ·
+  now”, “You”), and counts are never zero-padded. One decorative motif: the
+  ruled scale under the header with the viewfinder brackets around the open
+  eyes (no dot grid, crop marks or row numbers). Hairlines, 3–4-point radii,
+  LED lamps, tool calls as log lines, code line numbers, segmented meters, a
+  diffstat, square switches and a fader slider. Pinned banners (connection,
+  errors, deferred work, a delegated task needing attention) sit on an opaque
+  panel-colored strip with a hairline under it. The composer is an inset
+  readout: a prompt chevron on the first line and the bar along its bottom
+  edge.
+
+### Agent logos
+
+Where the user picks an agent (the agent chooser, including Settings' default
+agent, the welcome's agent step and a draft's harness menu) each row shows the
+agent's official mark at about 16 points (14 in Instrument's harness menu)
+just before its name. The mark keeps its own colours in every design: never
+tinted, desaturated, cropped or stretched; an optical scale offsets padding
+built into a file (Codex's Blossom, Antigravity). It never replaces the name,
+and VoiceOver reads only the name. Menus are wide enough that the longest name,
+DeepSeek Harness, shows in full beside its mark and the selection mark. A
+runtime without a bundled mark shows its name alone. Logos stay out of the island, session rows, the composer bar's
+labels, the app icon and marketing assets. Sources and owners:
+[third-party marks](third-party-marks.md).
 
 ## Controls and window behavior
 
 Use the shared controls in `NotchControls.swift`, which draw each control in
-the current design. Reserve the accent (sage, system accent, or Instrument
-orange) for the primary action (Send/Stop, Reply, Allow once, Save). Every
+the current design. Reserve the accent (sage, system accent, or Instrument's
+lit white key) for the primary action (Send/Stop, Reply, Allow once, Save). Every
 control has hover and press feedback. The gear toggles Settings directly;
 **Open full session** lives in the Settings footer. Offline state appears in the
 top banner and Settings, not in the composer.
@@ -633,13 +784,14 @@ top banner and Settings, not in the composer.
 Use inline choosers inside the fixed panel, with plain monochrome buttons and
 no native menu tracking.
 
-- The draft's agent button opens a compact names-only overlay of harnesses whose
-  current profile passed a Settings connection check. Readiness survives
-  restart; profile or installation changes and failed connections require a new
-  check. With none ready, link to Settings and keep drafts and files editable
-  with Send disabled. The detailed chooser stays in Settings for the default
-  agent. Connection timing: [runtime contract](backend-runtime.md#multi-harness-contract).
-- Session filters are toggle chips; choosing the lit chip again shows all. Row
+- The draft's agent button opens a compact overlay of harnesses (each its
+  [logo](#agent-logos) and name) whose current profile passed a Settings
+  connection check. Readiness survives restart; profile or installation
+  changes and failed connections require a new check. With none ready, link
+  to Settings and keep drafts and files editable with Send disabled. The
+  detailed chooser stays in Settings for the default agent. Connection timing:
+  [runtime contract](backend-runtime.md#multi-harness-contract).
+- The Archived chip toggles; choosing it again returns to the active list. Row
   ellipses expand actions inline; right-click keeps the native menu.
 
 `CompanionPanel` stays nonactivating and above the menu bar: set `.statusBar`
@@ -672,14 +824,42 @@ identify selection.
   on children show a queue-only hint; Return then keeps the draft and explains
   Command–Return, never silently substituting interruption or queuing.
   [Runtime compatibility](backend-runtime.md#composer-steering-and-queuing)
-  decides the hint in both surfaces and all designs.
-- **Queue.** Queued messages appear above the field in order with cancel, three
-  visible rows then scrolling; hover shows the full text and file names. Text
-  and attachments are saved before the composer clears. Queues wait for parent
+  decides the hint in both surfaces and all designs. While working, Send is
+  Stop; a typed draft turns it into the key for what Return does, by the same
+  rule as the hint: **Steer message** (↩) or **Queue message** (⌘↩ only) in its
+  symbol, help and VoiceOver label, with a quiet Stop beside it.
+- **Queue.** Queued messages appear above the field in order, three visible
+  rows then scrolling; hover shows the full text and file names. Each row
+  offers **Steer now** while the running turn can be steered (the steering path
+  and its protections; a refusal returns it to its place in the queue, never
+  over the draft), **Edit** (its text and files move back into the composer and
+  out of the queue; disabled with “Send or clear your draft first” unless the
+  draft and files are empty) and Cancel. In an empty composer Option–↑ edits
+  the newest queued message and Command–Shift–Return steers the oldest; the
+  caret lands after the restored text. Text
+  and attachments are saved before the composer clears, and before an edit
+  leaves the queue. Queues wait for parent
   and child work. Stop, a failed turn, a disconnected frontend or restart pauses
   them until **Resume queued messages**. A refused queued send keeps its one
   saved copy and pauses the rest. Unconfirmed sends keep **Check last send**
   protection. A normal idle send works while the queue is paused.
+- **Plan ready.** When a turn finishes in Plan, the composer field gains a
+  slim first row on its own surface, above a hairline: **Plan ·** and the
+  plan's name, the first heading of the turn's last answer (as plain text,
+  without a leading “Plan:” or “Plan – ”; a hyphen counts only with a space
+  after it, so “Plan-B rollout” keeps its name), or **Plan ready** when it has none; then **Keep
+  planning** as quiet text and **Implement** as its one action (Refined's
+  neutral pill, so sage stays with Send; the accent key in Tahoe; the lit
+  white key, like Send, in Instrument). It is never a separate band or tint. Implement
+  returns to the permission mode used before Plan was chosen (Default
+  permissions when there was none) and sends “Implement the plan.” through the
+  normal send path, leaving the draft alone; when nothing could start it stays
+  in Plan and the row returns. Keep planning hides it for that turn, across
+  restarts. It is not shown while busy, after a failure or Stop, for a turn
+  that ran before Plan was chosen (switching away from Plan and back keeps
+  a plan whose turn ran in Plan), or once that turn's native plan approval
+  (Claude `ExitPlanMode`, Cursor `create_plan`) was answered, allowed or
+  denied. The island tiers are unchanged.
 - **Sending.** After validation, text and files leave the composer immediately
   while setup continues. The message enters the transcript with an 8-point
   upward arrival and fade over 180 ms (immediate under Reduce Motion), with a
@@ -692,25 +872,80 @@ identify selection.
 - **Rendering.** Assistant and delegated results render headings, lists,
   quotes, rules and fenced code; code scrolls horizontally with its own Copy.
   User messages stay literal.
-- **Destination.** On secondary pages with a composer (not Settings, runtime
-  setup/chooser or Welcome), it names the selected parent session. The folder
-  beside it is that session's: a draft chooses it until its native session
-  exists (OpenClaw drafts keep their agent's workspace); a started session's
-  folder opens in Finder. Settings labels the separate default “Default folder
+- **Destination.** On secondary pages with a composer (not Settings, Your
+  sessions, runtime setup/chooser or Welcome), it names the selected parent
+  session. The folder beside it is that session's: a draft chooses it until its
+  native session exists (OpenClaw drafts keep their agent's workspace); a
+  started session's folder opens in Finder. Settings labels the separate default “Default folder
   for new sessions.”
-- **Session browsers.** Both share search across titles and conversations,
-  rename, archive/restore, and Needs you / Unread / Archived chips (none lit:
-  all active sessions). In the notch the chips sit inside the search capsule; the
-  full-session sidebar puts them below it. A row's ellipsis expands Rename,
-  Archive or Restore, and Continue in Hermes… (legacy only) inline. Order keeps
-  the stable order used by the dots. Archiving keeps history, drafts, selection
-  and receipts; active work cannot be archived; archived attention and unread
-  results still appear in their filters and dots. Sending restores an archived
-  session.
+- **Session browsers.** Both share search, rename, archive/restore and one
+  **Archived** chip inside the search capsule in every state, typing included.
+  With Archived on, the title reads **Archived** and Back (the notch header's
+  chevron; a chevron before the sidebar title) returns to the active list; the
+  Snoozed page works the same way. The Needs you and Unread filters remain in
+  the model, not the interface.
+  - The default list shows only active sessions: working, needs you, unread
+    result or failure, unconfirmed send, a draft with text or files, the
+    selection, and read idle sessions not yet auto-archived, never a snoozed
+    one. It ends with quiet **Snoozed · N** and **Archived · N** rows (each
+    only while it has sessions); with nothing active it reads “All caught up”
+    above them. Empty states start at the rows' content inset.
+  - **Auto-archive** is derived, never a flag. A top-level session that is
+    read, idle, not submitting, with no pending or queued send and an empty
+    draft, lists under Archived once the later of its last activity and
+    `lastSeenAt` is older than Settings → **Archive read sessions after**
+    (`sessions.autoArchiveAfter`: 1 hour, 12 hours (default), 3 days, Never;
+    1h, 12h, 3d where the 252-point sidebar is too narrow for the words).
+    The selection never auto-archives; `lastSeenAt` is set when a session is
+    opened, read, restored or stops being the selection. The list re-evaluates every minute. Sending,
+    opening or Restore brings it back.
+  - Archived lists manual and auto-archived sessions by project; archived
+    attention and unread results keep their dots. A search query covers every
+    top-level session, titles and conversations, archived ones marked with
+    the archive box and snoozed ones with the moon.
+  - **Snooze** (`snoozedUntil`) hides a top-level session until a time: 1 hour,
+    3 hours, Tomorrow (9:00) or Next week (Monday 9:00) on the user's calendar
+    (`Calendar.app`). It is not offered on archived or auto-archived sessions
+    or while a question waits for an answer; archiving clears it. The Snoozed
+    page lists snoozed sessions by project, each counting down to its wake
+    (`45m`, `3h`, `2d`, rounded to the nearest unit) in place of the age; a
+    running turn keeps its timer. A snoozed row offers **Wake now**.
+  - A session wakes when its time passes (a timer while running, and at
+    launch for anything already due), or early when a new question, approval
+    or failure arrives, including one that launch restores (an unconfirmed
+    send, unverified native work); a completion does not wake it. Waking clears
+    `snoozedUntil` and the read receipt, so it returns unread and needs a read
+    before it can auto-archive again, unless its conversation is on screen;
+    a session without a result restarts its auto-archive clock instead.
+    Sending, steering or queueing from its composer also ends the snooze, and New session never
+    reuses a snoozed draft. While snoozed, its completion makes no sound or announcement, its
+    unread result stays out of the dots, glance and unread counts, and it
+    never auto-archives. Its work, busy tracking, quit protection, receipts,
+    queued messages and delegated children are unchanged.
+  - Rows are about 34 points: status glyph (spinning arc, pulsing
+    question, green check or red mark while unread; a quiet mark for a read
+    failure; Instrument uses its lamps), title (dimmed once read), the runtime
+    (notch only; a quiet **Plan ready** instead while a plan waits unread) and
+    a compact age, or the ticking turn timer while working.
+    The notch keeps each row to one line; the full-session sidebar wraps a
+    title to two lines, with the glyph, age and ellipsis on its first line.
+    The latest message is the tooltip and part of the accessibility label.
+    Hover, focus or open swaps the age for the ellipsis, which expands Rename,
+    Snooze or Wake now, Archive or Restore, and Continue in Hermes… (legacy
+    only) inline, wrapping onto further rows in the sidebar rather than
+    truncating. Snooze swaps those actions for its four choices and Cancel
+    (wrapping the same way); the right-click menu shows them as a submenu.
+  - Order keeps the stable order used by the dots. Archiving keeps history,
+    drafts, selection and receipts; active work cannot be archived. Sending
+    restores an archived session.
 - **Questions.** A pending question replaces the composer. Choices stay unsent
   until Reply. Free-text alternatives, progress, per-question state and
   duplicate protection are shared across windows; failed submissions keep the
-  answer.
+  answer. Refined and Tahoe size the card to its question up to a cap;
+  Instrument keeps a fixed card. While its question area has more below the
+  edge, **More ⌄** at the end of the action row scrolls to the rest (no edge
+  fade, which would dim a whole visible choice), and the scroller flashes when
+  the card appears, so a choice past the edge is never hidden without a cue.
 - **Failed delegated work** gives its parent red attention and a Review action.
   Child turn ownership keeps old failures from changing a later turn's outcome.
 - **Quit and Reconnect** check all app-owned work, including submissions and
@@ -721,10 +956,11 @@ identify selection.
 ## Projects
 
 A project is a working folder. Both session browsers group visible sessions
-under the folder's name (full path on hover), keeping stable order for groups
-and rows. A draft without its own folder belongs to the default folder. Search,
-chips, archive and indicators are unchanged; a group shows only while it has
-visible rows.
+under a header with a folder glyph, the folder's name (full path on hover) and
+its row count, keeping stable order for groups and rows. A draft without its
+own folder belongs to the default folder. Search, Archived, archive and
+indicators are unchanged; a group shows only while it has visible rows, so a
+folder whose sessions are all archived leaves the default list.
 
 - Each project header's **+** starts a draft there. **New project** (the
   sessions title row in the notch; beside **+** in the full-session sidebar)
@@ -738,18 +974,21 @@ visible rows.
 
 - **Blocking questions** (Hermes `clarify`, Claude Code `AskUserQuestion`,
   Codex `requestUserInput`, Pi `notch_ask_user`/extension dialogs, OpenCode
-  questions/forms) use the card that replaces the composer. A native question
-  header joins the runtime name in the title; option descriptions sit under
-  their options. Pi's written-answer choice opens an input dialog in the same
-  card. OpenCode replies keep native option values and multiple selections.
-  Antigravity does not expose question contents in JSON mode; its setup note
-  and opaque-step notice say to ask and answer as ordinary messages.
+  questions/forms, Antigravity `ask_question`) use the card that replaces the
+  composer. A native question header joins the runtime name in the title; option
+  descriptions sit under their options. Pi's written-answer choice opens an input
+  dialog in the same card. OpenCode replies keep native option values and
+  multiple selections. Antigravity questions offer one choice from their options
+  and no written answer.
 - **Non-blocking questions** (Codex `request_user_input_async`) arrive with the
   answer that asked them and do not hold the turn. They render as a card under
   that message (options plus an always-allowed written answer). Reply sends one
   ordinary message (one answer alone; several as question/answer pairs) without
   touching the composer's draft or files, and waits while the session works or a
-  send is unconfirmed. Once a later message exists the card is read-only. The
+  send is unconfirmed. The card stays answerable while the agent writes or runs
+  more in that turn, and its turn's work stays unfolded while it is open; once
+  a later message of yours follows, it is read-only. A delegation result, a
+  delegated question or a message from another session does not close it. The
   composer and Stop stay available. Question-only messages survive restart with
   their card.
 - **Approvals** describe a Claude Code tool in its own terms (command and
@@ -765,29 +1004,54 @@ visible rows.
 
 ## Composer model controls
 
-The prompt field holds only attach, the editor and Send/Stop (Refined's
-toolbar adds SnapShot, harness, folder and, on secondary pages, the
-destination session). Session settings sit in a quiet 22-point row **under the
-field**: permission mode at the left, then model with reasoning effort, and the
-context gauge at the right, as plain secondary-color text buttons. The row
-takes height from the transcript, not the panel. Each control is optional
-(model and context on by default, permission modes off).
+The composer is **one field in every design**: a ready plan's row,
+attachments and the editor on top, and one bar along its bottom edge holding
+every control:
+`[+] [SnapShot] [harness (drafts) · folder · session (secondary pages)] …
+[model] [permission mode] [context gauge] [Send/Stop]`. Nothing sits in a row
+above or under the field, so a tall draft, a queue or a banner can never push a
+control out of view. Session settings (model with reasoning effort, permission
+mode, context gauge) are plain secondary-color buttons in the bar's trailing
+group, shown on the session page (compact) or always (full window). Each is
+optional (model and context on by default, permission modes off). A draft's
+harness chooser stays in the bar. A started session keeps a plain harness label
+in Refined and Instrument, whose placeholder hides behind a draft or the busy
+hint; Tahoe drops it (the placeholder “Ask Codex…” and the editor's spoken label
+name the harness), and Legacy Hermes keeps its label everywhere. The folder chip
+stops at 150 points on one line. When the bar is tight the model's effort drops
+first, then a model name longer than a dozen characters truncates, down to about a
+dozen (a shorter name and **Runtime default** stay whole), and the
+permission mode shows only its glyph (its name stays in help and VoiceOver);
+then the session name, the harness label, **Continue in Hermes…** and the folder
+chip share what is left, truncating rather than pushing the field past the
+panel's margins, and **Restore archived session** keeps only its icon. The gauge
+and Send keep their size.
 
 The model label shows the runtime's display name for the selected, reported or
-default model (the ID only when unnamed), no “Next:” prefix, then the effort
-when the model has efforts (`xhigh` reads **Extra high**), no chevron. It
-truncates within the row.
+default model (the ID only when unnamed; **Runtime default** when none is
+known), no “Next:” prefix, then the effort when the model has efforts (`xhigh`
+reads **Extra high**) one step quieter than the name, no chevron. A long name truncates within the bar; it
+never collapses to a lone “…”.
 
-The model picker is a bounded overlay above its row with an inset **Search
+The model picker is a bounded overlay rising from the bar with an inset **Search
 models…** field, refresh and Close. Search filters by name or ID without
 changing selection. Choosing a model with efforts keeps the picker open for
 **Reasoning effort**; the section is omitted when unsupported. No footer hints.
 Loading, errors and empty results stay visible. Choices apply on Send and are
 disabled during parent/child work or unresolved sends. Changing session or
-runtime, or collapsing, dismisses it. Model and context overlays render above
-the destination/folder row. The context gauge's content-sized bubble keeps its
-unknown/estimate, hover, accessibility and dismissal behavior. Opening one
-chooser closes the other; neither shifts the composer or transcript.
+runtime, or collapsing, dismisses it. Model, permission and context overlays
+open upward from the bar's trailing group, above the field's edge and the
+editor. The context gauge stays as it is (a ring, Instrument's
+segment meter). Its bubble has a fixed 264-point width, so it never jumps
+between states: a **Context** section label with Close, the percentage
+(unclamped, `≈` for estimates) with `42k / 200k` at the right and a
+[usage bar](#usage); a report without a window heads with what is known
+(`42k used`) and has no bar, and `—` stands only before the first report. A
+caption follows (**Estimate**, **Window not
+reported**, **Over the reported window**, then **Updated** and the report time;
+**No report yet** before the first report). Hover, accessibility and dismissal
+are unchanged. Opening one chooser closes the other; neither shifts the
+composer or transcript.
 
 Clicking outside the runtime picker, model picker or context bubble dismisses
 it in both surfaces, including clicks in another window or app, and the click
@@ -797,8 +1061,8 @@ toggle on click. Closing removes the click monitoring.
 
 ## Permission modes
 
-An optional control (icon and mode name) at the left of the row under the field
-sets how much the agent may do unasked in this conversation: **Default
+An optional control (icon and mode name) in the composer's bar, between the model
+and the context gauge, sets how much the agent may do unasked in this conversation: **Default
 permissions** (the harness's own settings), **Ask**, **Auto-edit**, **Plan**,
 **Full access**. Off by default behind **Show permission modes**; shown only
 for harnesses that map at least one mode, listing only those
@@ -823,17 +1087,30 @@ for harnesses that map at least one mode, listing only those
 row, opening **Usage**, a scrolling page within the panel bounds; Back returns.
 
 - **Account limits**: each set-up harness that reports limits (Codex, Claude
-  Code), one row per window with percentage used or **Limit reached**, reset
-  time and when reported. Unknown values show `—`, never 0. Opening or
-  refreshing asks Codex again; Claude Code reports only during a turn. Errors
-  show under their harness.
+  Code), headed by **Updated** and the report time (the date instead when not
+  today). One row per window, shortest window first, a plain window before its
+  per-model or per-bucket variants, **Extra usage** last. A row is the window
+  name with the percentage used (or **Limit reached** in amber) at the right, a
+  bar, and the reset: **Resets in 1 h 40 min** within a day, then weekday and
+  time, a date beyond six days, all in one time style. Usage and context
+  dates use the app's language with the system region and 12- or 24-hour
+  clock (`Locale.app`), so an English interface never shows German weekdays.
+  A reset already past reads **Reset since last report** and shows the window
+  as unknown. Opening or refreshing asks Codex again; Claude Code reports only
+  during a turn. Errors show under their harness.
+- **Bars** fill with the share used and take the warning color (amber, in
+  every design) when reached or from 90 %. Unknown is a dim track with
+  no fill and `—`, never 0 %. Refined draws a thin capsule, Tahoe an
+  accent-colored capsule, Instrument a segment meter across the width.
 - **Sessions started here**: tokens per day and harness for messages sent from
   the companion, newest first (30 rows). An unreported day shows `—`; a partly
   reported day adds “N unreported”.
 - **In a session** (with Show usage and **Show context usage** on), the context
-  bubble adds that harness's limits below the token count, **Limit reached** in
-  amber. Opening it asks Codex again; Claude Code's rows come from its last
-  turn.
+  bubble adds a **<Harness> usage** section below the context for a harness that
+  reports limits: Updated time (Instrument's rule label shows the bare time)
+  and a refresh button in its header, then the
+  same rows as the page. Past four windows the rows scroll inside the bubble.
+  Opening it asks Codex again; Claude Code's rows come from its last turn.
 
 ## SnapShot
 
@@ -883,12 +1160,13 @@ session inside its parent; notch silhouette and bounds are unchanged.
 - **Sessions an agent creates.** `create_sessions` adds ordinary sessions in the
   caller's project that list, search and notify normally.
 - **Tools.** Companion tools read the same under any harness prefix
-  (`mcp__notch__`, `notch.`, Codex's bare name): “Delegate / Delegating /
+  (`mcp__notch__`, `notch.`, OpenCode's per-session `notch-<16 hex>_`, Codex's
+  bare name): “Delegate / Delegating /
   Delegated a child task”, “Get / Getting / Got delegated task status”, and so
-  on. While a turn waits on a delegation `wait`, the header reads **Waiting on a
-  child**.
-- **Settings.** **Cross-agent delegation** (default on) lets Claude Code,
-  Codex, Pi and DeepSeek Harness sessions opened afterwards delegate.
+  on. While a turn waits on a delegation `wait`, the header's status dot reads
+  **Waiting on a child** (tooltip and spoken title).
+- **Settings.** **Cross-agent delegation** (default on) lets sessions of every
+  harness (OpenCode from 2.0) opened afterwards delegate.
 - **Delete.** Deleting a parent removes its children from the companion; native
   histories stay.
 - **Changes.** The delegating parent turn folds each child's changed files into

@@ -37,7 +37,13 @@ quitting stops owned runtimes, so first verify every app-owned session and
 delegated child is idle.
 
 `LSUIElement` keeps the companion out of the Dock. Bundled resources include
-the original interaction sounds, app icon, and the app's bridge resources.
+the original interaction sounds, app icon, the app's bridge resources and the
+agents' unmodified SVG marks (`Resources/AgentLogos/<runtime>.svg`, flattened
+into the bundle; Antigravity's is `antigravity.png`, its official SVG rasterized
+unmodified because AppKit ignores SVG filters; see
+[third-party marks](third-party-marks.md)). macOS draws them with `NSImage`
+directly; release verification checks each byte for byte like every other
+resource.
 No sound is downloaded at runtime. The original icon is a native vector drawing
 of the existing left-side cream eyes within one matte black notch silhouette,
 on a soft cream tile. It includes standard and Retina icon sizes.
@@ -202,7 +208,9 @@ NOTCH_RUN_BUSY_INPUT_TEST=1 NOTCH_LIVE_RUNTIMES=codex,claude swift test --filter
 ```
 
 Read the chosen test before enabling it. Other opt-ins cover Hermes startup,
-profile/catalog checks, questions, model selection and delegation. Native Hermes
+profile/catalog checks, questions, model selection and delegation;
+`python3 Tests/Backend/verify_hermes_delegation.py` checks Hermes's delegation
+tool hooks in a throwaway home without a prompt. Native Hermes
 Python checks need the interpreter from its installed dependency environment;
 no Hermes installation or credentials belong in GitHub CI. Preserve original
 profiles and existing conversations. A temporary companion registry separates
@@ -221,7 +229,15 @@ stamped release label.
 
 `scripts/render-ui-fixtures.sh --changes-only` renders the collapsed change
 summary, expanded file diff, narrow workspace summary, and integrated compact
-and full-session conversations using synthetic change metadata and no runtime.
+and full-session conversations using synthetic change metadata and no runtime;
+`changes-history-*` adds an older turn (its card collapsed) before a latest
+turn whose open card lists six of eight files and “2 more files” (three and
+“5 more files” in the notch). `--delegation-only` gives the delegating turn a
+card with the child's group, open while the child's result is handled.
+`--work-only` renders a finished turn whose commentary and tool calls fold above
+its answer and changes (`compact-`/`full-worked-collapsed`, `-expanded`) and the
+same turn live with its interleaved text and ticking footer (`-worked-live`);
+the full render includes them.
 
 Run `scripts/render-ui-fixtures.sh` to render the actual SwiftUI/AppKit views
 with a mock transport and temporary session storage. It writes PNGs under

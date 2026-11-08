@@ -10,6 +10,34 @@ struct RuntimeRateLimit: Codable, Equatable, Identifiable {
     var reportedAt = Date()
     var id: String { name }
 
+    /// The share used for a bar: reached is full, unknown stays nil (never 0).
+    var fraction: Double? { reached ? 1 : usedPercent.map { min(1, max(0, $0 / 100)) } }
+    /// The window reset after this report, so its numbers are out of date.
+    func isStale(now: Date = Date()) -> Bool { resetsAt.map { $0 <= now } ?? false }
+
+    /// Shorter windows first, a plain window before its per-model or
+    /// per-bucket variants, extra usage last. Ties keep their order.
+    static func sorted(_ limits: [Self]) -> [Self] {
+        func order(_ limit: Self) -> (Int, Int) {
+            let parts = limit.name.components(separatedBy: " · ")
+            if limit.name.lowercased().hasPrefix("extra usage") { return (.max, parts.count) }
+            return (parts.lazy.compactMap(minutes(label:)).first ?? .max - 1, parts.count)
+        }
+        return limits.sorted { order($0) < order($1) }
+    }
+
+    /// The inverse of `label(minutes:)`.
+    static func minutes(label: String) -> Int? {
+        switch label {
+        case "Weekly": return 10_080
+        case "Daily": return 1_440
+        default:
+            let pieces = label.split(separator: "-")
+            guard pieces.count == 2, let count = Int(pieces[0]) else { return nil }
+            return ["minute": 1, "hour": 60, "day": 1_440][String(pieces[1])].map { $0 * count }
+        }
+    }
+
     /// `account/rateLimits/read` (multi-bucket or single) or the
     /// `account/rateLimits/updated` notification's snapshot.
     static func codex(_ value: [String: Any]) -> [Self] {

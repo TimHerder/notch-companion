@@ -323,13 +323,20 @@ struct CodexProtocolState {
             var rows: [[String: Any]] = []
             var texts: [String] = []
             var questions: [[String: Any]] = []
+            var firstItem = ""
+            var replies = 0
             func flush() {
                 guard !texts.isEmpty || !questions.isEmpty else { return }
-                var row: [String: Any] = ["role": "assistant", "text": texts.joined(separator: "\n\n"), "row_id": turn["id"] as? String ?? ""]
+                // The turn's first reply keeps the turn's ID, as when replies were one row.
+                let turnID = turn["id"] as? String ?? ""
+                var row: [String: Any] = ["role": "assistant", "text": texts.joined(separator: "\n\n"), "row_id": replies == 0 ? turnID : turnID + ":" + firstItem]
                 if !questions.isEmpty { row["questions"] = questions }
-                rows.append(row); texts = []; questions = []
+                rows.append(row); texts = []; questions = []; replies += 1
             }
             for item in turn["items"] as? [[String: Any]] ?? [] {
+                // Text the agent wrote between tool calls is its own row, as it streamed.
+                if Self.toolTypes.contains(item["type"] as? String ?? "") { flush() }
+                if texts.isEmpty && questions.isEmpty { firstItem = item["id"] as? String ?? "\(rows.count)" }
                 if item["type"] as? String == "userMessage" {
                     flush()
                     let content = item["content"] as? [[String: Any]] ?? []

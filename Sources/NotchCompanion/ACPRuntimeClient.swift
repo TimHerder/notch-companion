@@ -1,8 +1,8 @@
 import Foundation
 
-/// Native OpenCode / DeepSeek Harness / Cursor CLI ACP v1 frontends. No injected tools,
-/// provider overrides, or alternate empty agent homes; modes only as advertised
-/// and explicitly chosen per session.
+/// Native OpenCode / DeepSeek Harness / Cursor CLI / Antigravity CLI ACP v1 frontends. Only
+/// the companion's delegation bridge is injected; no provider overrides or alternate empty
+/// agent homes; modes only as advertised and explicitly chosen per session.
 @MainActor
 final class ACPRuntimeClient: RuntimeTransport {
     var onEvent: ((String, [String: Any]) -> Void)?
@@ -16,7 +16,7 @@ final class ACPRuntimeClient: RuntimeTransport {
     private var pending: [Int: CheckedContinuation<[String: Any], Error>] = [:]
     private var deadlines: [Int: Task<Void, Never>] = [:]
     private var submissions: [String: CheckedContinuation<[String: Any], Error>] = [:]
-    private var state = ACPProtocolState()
+    private lazy var state = ACPProtocolState(antigravity: runtime == .antigravity)
     private var capabilities: [String: Any] = [:]
     private var directories: [String: String] = [:]
     private var images: [String: [String]] = [:]
@@ -26,7 +26,16 @@ final class ACPRuntimeClient: RuntimeTransport {
     private var inheritedModes: [String: String] = [:]
     private var modeOverridden = Set<String>()
     private var version = "ACP v1"
+    /// A turn's limit in seconds, not counting time it waits on the user (settable by tests).
+    var promptTimeout: Double = 1_800
+    /// How long an overdue turn has to confirm its cancellation before the process is restarted.
+    var promptGrace: Double = 45
+    /// When the user last answered each session's request; the turn's full period restarts there.
+    private var answered: [String: ContinuousClock.Instant] = [:]
+    /// Overdue turns, kept busy until the agent confirms, and the error they settle with.
+    private var overdue: [String: String] = [:]
     private let executableOverride: URL?
+    private var executable: URL?
 
     init(runtime: RuntimeKind, profileID: String, executableOverride: URL? = nil) {
         self.runtime = runtime
@@ -49,13 +58,18 @@ final class ACPRuntimeClient: RuntimeTransport {
         if ready { return }
         guard !process.isRunning else { throw ACPClientError.unavailable("The ACP frontend is already connecting.") }
         try await NativeJSONProcess.awaitPendingStops()
+        if runtime == .antigravity {
+            let native = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(runtime.defaultProfileDirectory).standardizedFileURL.resolvingSymlinksInPath().path
+            guard profileID == native else { throw ACPClientError.unavailable("Antigravity CLI supports only its existing ~/.gemini/antigravity-cli profile. A custom home cannot be selected through its native interface.") }
+        }
         let executable = try executableOverride ?? RuntimeInstallation.executable(for: runtime)
+        self.executable = executable
         var environment = RuntimeEnvironment.native(runtime: runtime, profileID: profileID)
         let arguments: [String]
         if runtime == .deepseek {
             let launch = try Self.deepSeekLaunch(profileID: profileID)
             environment["DSH_HOME"] = launch.home; arguments = launch.arguments
-        } else if runtime == .opencode || runtime == .cursor { arguments = ["acp"] }
+        } else if [.opencode, .cursor, .antigravity].contains(runtime) { arguments = ["acp"] }
         else { throw ACPClientError.unavailable("This runtime has no supported ACP launch contract.") }
         let run = UUID(); generation = run
         process.onFrame = { [weak self] frame in
@@ -68,7 +82,8 @@ final class ACPRuntimeClient: RuntimeTransport {
             try process.start(executable: executable, arguments: arguments, environment: environment, cwd: FileManager.default.homeDirectoryForCurrentUser)
             let response = try await rpc("initialize", ["protocolVersion": 1,
                 "clientCapabilities": ["fs": ["readTextFile": false, "writeTextFile": false], "terminal": false,
-                                       "elicitation": ["form": runtime == .opencode]],
+                                       // No form for agy: its questions then arrive as plain-option `interaction_` permission requests.
+                                       "elicitation": runtime == .antigravity ? [String: Any]() : ["form": runtime == .opencode]],
                 "clientInfo": ["name": "notch-companion", "title": "Notch Companion", "version": "0.3.0"]])
             guard response["protocolVersion"] as? Int == 1 else { throw ACPClientError.unavailable("\(runtime.title) did not negotiate ACP v1. Select a compatible native installation.") }
             capabilities = response["agentCapabilities"] as? [String: Any] ?? [:]
@@ -96,7 +111,13 @@ final class ACPRuntimeClient: RuntimeTransport {
         if method == "runtime.models" {
             let cwd = params["cwd"] as? String ?? ""
             let sid = directories.first(where: { $0.value == cwd })?.key
-            return ["catalog": sid.map { ACPProtocolState.catalog(state.config[$0] ?? []) }
+            if sid == nil, runtime == .antigravity, let executable {
+                let run = generation
+                let catalog = try await AntigravityClient.discoverModels(executable: executable, profileID: profileID, cwd: ClaudeClient.trustedDirectory(params))
+                guard run == generation else { throw ACPClientError.unavailable("Antigravity disconnected during model discovery.") }
+                return ["catalog": catalog]
+            }
+            return ["catalog": sid.map { state.catalog($0) }
                 ?? RuntimeModelCatalog(note: "ACP reports models when a native session opens. Send the first message with the native default; the companion does not create hidden sessions to fetch a catalog.")]
         }
         if method == "session.create" || method == "session.resume" {
@@ -105,16 +126,26 @@ final class ACPRuntimeClient: RuntimeTransport {
             }
             let cwd = params["cwd"] as? String ?? ""
             guard cwd.hasPrefix("/"), FileManager.default.fileExists(atPath: cwd) else { throw ACPClientError.unavailable("Choose this conversation's existing native working folder before opening it.") }
+            if runtime == .antigravity { _ = try ClaudeClient.trustedDirectory(params) }
             // A reload of a live session (Check last send) keeps the bridge it was opened with.
             let servers = (params["delegation"] as? [String: Any]).map(Self.mcpServers)
                 ?? (params["session_id"] as? String).flatMap { delegationServers[$0] } ?? []
             var args: [String: Any] = ["cwd": cwd, "mcpServers": servers]
+            // Antigravity keeps an appended prompt only for this process, so every open with the bridge sends it.
+            if !servers.isEmpty, (((capabilities["_meta"] as? [String: Any])?["antigravity"] as? [String: Any])?["systemPrompt"] as? [String: Any])?["append"] as? Bool == true {
+                args["_meta"] = ["antigravity": ["systemPrompt": ["append": Delegation.instructions]]]
+            }
             var nativeMethod = "session/new"
             let saved = params["session_id"] as? String
             if method == "session.resume" {
                 guard let saved, !saved.isEmpty else { throw ACPClientError.unavailable("The saved native session ID is missing.") }
                 guard !state.active.contains(saved), state.children[saved]?.isEmpty ?? true else { throw ACPClientError.unavailable("This native session still has active or unverified delegated work.") }
-                if capabilities["loadSession"] as? Bool == true {
+                // agy's load accepts IDs it never saved, so a cold resume of a conversation that was ever prompted must find it in its native list.
+                if runtime == .antigravity, !state.owned.contains(saved), params["native_submission_attempted"] as? Bool != false, try await !listed(saved) {
+                    throw ACPClientError.unavailable("Antigravity no longer lists this saved conversation, and resuming it would start an empty one under the same ID. Its history here is kept; continue in a new session.")
+                }
+                // Antigravity resumes without a replay, as T3 Code does.
+                if capabilities["loadSession"] as? Bool == true, runtime != .antigravity {
                     nativeMethod = "session/load"; state.loading.insert(saved); state.history[saved] = []
                     state.historyWithoutMessageIDs.remove(saved)
                 } else if (capabilities["sessionCapabilities"] as? [String: Any])?["resume"] != nil { nativeMethod = "session/resume" }
@@ -128,20 +159,22 @@ final class ACPRuntimeClient: RuntimeTransport {
                 state.owned.insert(sid); state.loading.remove(sid); directories[sid] = cwd
                 delegationServers[sid] = servers
                 state.config[sid] = result["configOptions"] as? [[String: Any]] ?? []
+                if runtime == .antigravity { state.models[sid] = result["models"] as? [String: Any] }
                 let modes = result["modes"] as? [String: Any]
                 modeIDs[sid] = ACPProtocolState.permissionModes(modes)
-                // Cursor's `ask` mode is read-only Q&A, not ask-before-editing.
-                if runtime == .cursor { modeIDs[sid]?[.ask] = nil }
+                // Cursor's `ask` mode is read-only Q&A, not ask-before-editing. Antigravity's
+                // `default` follows its native permission settings, which may never ask.
+                if runtime == .cursor || runtime == .antigravity { modeIDs[sid]?[.ask] = nil }
                 if let current = modes?["currentModeId"] as? String { inheritedModes[sid] = current }
-                let catalog = ACPProtocolState.catalog(state.config[sid] ?? [])
+                let catalog = state.catalog(sid)
                 let promptCaps = capabilities["promptCapabilities"] as? [String: Any] ?? [:]
                 var info: [String: Any] = ["capabilities": ["resume": capabilities["loadSession"] as? Bool == true || (capabilities["sessionCapabilities"] as? [String: Any])?["resume"] != nil,
                     "attachments": true, "images": promptCaps["image"] as? Bool == true, "approvals": true,
-                    "questions": runtime == .opencode || runtime == .cursor, "modelSelection": !catalog.models.isEmpty,
+                    "questions": [.opencode, .cursor, .antigravity].contains(runtime), "modelSelection": !catalog.models.isEmpty,
                     "contextUsage": true, "delegation": false,
                     "permissionModes": PermissionMode.allCases.filter { modeIDs[sid]?[$0] != nil }.map(\.rawValue)],
-                    "capability_note": runtime == .cursor ? runtime.capabilityNote : runtime == .deepseek
-                        ? "Experimental: selected native ACP composition; native resume preserves context but ACP does not replay history or expose interactive extensions. Lost sends require native verification."
+                    "capability_note": [.cursor, .antigravity].contains(runtime) ? runtime.capabilityNote : runtime == .deepseek
+                        ? "Selected native ACP composition; native resume preserves context but ACP does not replay history or expose interactive extensions. Lost sends require native verification."
                         : "ACP v1: native child activity is shown, but ACP cannot confirm child completion. If delegation occurs, further sends remain protected pending native verification. Models are reported after the native session opens."]
                 if let model = catalog.defaultModel?.model { info["model"] = model }
                 var response: [String: Any] = ["session_id": sid, "stored_session_id": sid, "profile_id": profileID, "cwd": cwd, "running": false, "info": info, "catalog": catalog]
@@ -161,6 +194,13 @@ final class ACPRuntimeClient: RuntimeTransport {
         case "session.model.set":
             guard !state.active.contains(sid), state.children[sid]?.isEmpty ?? true else { throw ACPClientError.unavailable("Wait for native work and verify delegated activity before changing models.") }
             let model = params["model"] as? String ?? ""
+            if state.models[sid] != nil {
+                guard state.catalog(sid).models.contains(where: { $0.choice.model == model }) else { throw ACPClientError.unavailable("Choose a model advertised by this native ACP session.") }
+                // Session-scoped; the response is empty, so the agent's acknowledgement is the readback.
+                _ = try await rpc("session/set_model", ["sessionId": sid, "modelId": model])
+                state.models[sid]?["currentModelId"] = model
+                onEvent?("session.info", ["session_id": sid, "model": model]); return [:]
+            }
             let options = state.config[sid] ?? []
             guard let option = options.first(where: { $0["category"] as? String == "model" || $0["id"] as? String == "model" }),
                   let configID = option["id"] as? String,
@@ -213,27 +253,29 @@ final class ACPRuntimeClient: RuntimeTransport {
                 Task { @MainActor [weak self] in
                     guard let self, self.generation == run else { return }
                     do {
-                        let result = try await self.rpc("session/prompt", ["sessionId": sid, "prompt": prompt], timeout: 1_800)
+                        let result = try await self.rpc("session/prompt", ["sessionId": sid, "prompt": prompt], timeout: self.promptTimeout)
                         guard self.generation == run else { return }
                         self.accept(sid)
-                        self.emit(self.state.finish(sid, stopReason: result["stopReason"] as? String ?? "unknown"))
+                        self.emit(self.state.finish(sid, stopReason: result["stopReason"] as? String ?? "unknown", error: self.overdue.removeValue(forKey: sid)))
                     } catch {
                         guard self.generation == run else { return }
-                        if case ACPClientError.rpc = error {
-                            let accepted = self.state.started.contains(sid)
-                            if accepted { self.emit(self.state.finish(sid, stopReason: "error", error: error.localizedDescription)) }
-                            else { self.state.active.remove(sid) }
-                        }
-                        self.submissions.removeValue(forKey: sid)?.resume(throwing: error)
+                        // An overdue turn the agent ends with an error was still held for the whole period: never a definitive rejection.
+                        let reported: Error = self.overdue.removeValue(forKey: sid).map { ACPClientError.unavailable($0) } ?? error
+                        if self.state.started.contains(sid) { self.emit(self.state.finish(sid, stopReason: "error", error: reported.localizedDescription)) }
+                        else { self.state.active.remove(sid) }
+                        self.submissions.removeValue(forKey: sid)?.resume(throwing: reported)
                     }
                 }
             }
         case "session.interrupt":
             try process.send(["jsonrpc": "2.0", "method": "session/cancel", "params": ["sessionId": sid]])
             guard state.children[sid]?.isEmpty ?? true else { throw ACPClientError.unavailable("Cancellation was requested, but ACP cannot confirm delegated children stopped. Check and stop them in native OpenCode; the companion will not mark them idle without evidence.") }
+            // The acknowledgement drops this session's cards, so their requests are answered here.
+            for frame in state.cancelRequests(sid) { try process.send(frame) }
             return ["interrupted": true]
         case "approval.respond", "clarify.respond":
             if let frame = try state.answer(params, approval: method == "approval.respond") { try process.send(frame) }
+            answered[sid] = .now
             return ["resolved": true]
         case "session.rename":
             return ["renamed": true, "local_only": true] // ACP has no native title setter.
@@ -269,21 +311,56 @@ final class ACPRuntimeClient: RuntimeTransport {
             if let error = frame["error"] as? [String: Any] {
                 let code = error["code"] as? Int ?? -1
                 let message = error["message"] as? String ?? "The native ACP request failed."
-                continuation.resume(throwing: ACPClientError.rpc(code, message + (code == -32000 ? " Complete authentication in the native runtime if requested." : "")))
+                // ACP's auth_required; agy reuses the sign-in cached by an interactive `agy` session.
+                let text = code != -32000 ? message : runtime == .antigravity ? "Antigravity CLI is not signed in. Run agy in Terminal and sign in once, then send again."
+                    : message + " Complete authentication in the native runtime if requested."
+                continuation.resume(throwing: ACPClientError.rpc(code, text))
             } else if let result = frame["result"] as? [String: Any] { continuation.resume(returning: result) }
             else if frame["result"] is NSNull { continuation.resume(returning: [:]) }
             else { continuation.resume(throwing: ACPClientError.unavailable("The native runtime sent an invalid ACP result.")) }
         }
     }
 
+    private func listed(_ sid: String) async throws -> Bool {
+        var cursor: String?
+        for _ in 0..<100 {
+            let page = try await rpc("session/list", cursor.map { ["cursor": $0] } ?? [:])
+            if (page["sessions"] as? [[String: Any]] ?? []).contains(where: { $0["sessionId"] as? String == sid }) { return true }
+            guard let next = page["nextCursor"] as? String, !next.isEmpty, next != cursor else { return false }
+            cursor = next
+        }
+        return false
+    }
+
     private func rpc(_ method: String, _ params: [String: Any], timeout: Double = 45) async throws -> [String: Any] {
         sequence += 1; let id = sequence, run = generation
+        let turn = method == "session/prompt" ? params["sessionId"] as? String : nil
         return try await withCheckedThrowingContinuation { continuation in
             pending[id] = continuation
             deadlines[id] = Task { @MainActor [weak self] in
-                do { try await Task.sleep(for: .seconds(timeout)) } catch { return }
-                guard let self, self.generation == run else { return }
-                self.fail(ACPClientError.unavailable("\(self.runtime.title) timed out during \(method). Check that the selected native profile exposes ACP v1. Reconnect and inspect the saved session before retrying a prompt."))
+                let period = Duration.seconds(timeout)
+                var until = ContinuousClock.now + period, cancelling = false
+                while true {
+                    do { try await Task.sleep(until: until, clock: .continuous) } catch { return }
+                    guard let self, self.generation == run else { return }
+                    guard let turn else {
+                        self.fail(ACPClientError.unavailable("\(self.runtime.title) timed out during \(method). Check that the selected native profile exposes ACP v1. Reconnect and inspect the saved session before retrying a prompt."))
+                        return
+                    }
+                    let minutes = Int(timeout / 60)
+                    let overdue = "\(self.runtime.title) did not finish this turn in \(minutes) minutes, so it was cancelled. Check the native conversation before sending again."
+                    // Only stopping the process proves an unconfirmed cancellation ended the turn; the send stays unconfirmed.
+                    if cancelling { self.fail(ACPClientError.unavailable(overdue)); return }
+                    // Waiting on the user never counts: the full period restarts while a request is open and after each answer.
+                    if self.state.requests.values.contains(where: { $0.session == turn }) { until = .now + period; continue }
+                    if let answer = self.answered[turn], answer + period > .now { until = answer + period; continue }
+                    // Ask only this turn to stop and keep it busy until the agent answers the prompt.
+                    cancelling = true
+                    self.overdue[turn] = overdue
+                    try? self.process.send(["jsonrpc": "2.0", "method": "session/cancel", "params": ["sessionId": turn]])
+                    self.onEvent?("runtime.notice", ["session_id": turn, "message": "\(self.runtime.title) has run this turn for \(minutes) minutes, so it was asked to stop. The session stays busy until it confirms."])
+                    until = .now + .seconds(self.promptGrace)
+                }
             }
             do { try process.send(["jsonrpc": "2.0", "id": id, "method": method, "params": params]) }
             catch { deadlines.removeValue(forKey: id)?.cancel(); pending.removeValue(forKey: id)?.resume(throwing: error) }
@@ -297,8 +374,9 @@ final class ACPRuntimeClient: RuntimeTransport {
         for deadline in deadlines.values { deadline.cancel() }; deadlines.removeAll()
         for item in pending.values { item.resume(throwing: error) }; pending.removeAll()
         for item in submissions.values { item.resume(throwing: error) }; submissions.removeAll()
-        process.stop(); state = ACPProtocolState(); directories.removeAll(); images.removeAll(); capabilities.removeAll()
+        process.stop(); state = ACPProtocolState(antigravity: runtime == .antigravity); directories.removeAll(); images.removeAll(); capabilities.removeAll()
         modeIDs.removeAll(); inheritedModes.removeAll(); modeOverridden.removeAll(); delegationServers.removeAll()
+        answered.removeAll(); overdue.removeAll()
     }
     private static func imageMIME(_ url: URL) -> String? {
         ["png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"][url.pathExtension.lowercased()]

@@ -101,6 +101,10 @@ struct ToolActivity: Identifiable, Codable, Equatable {
         for prefix in ["mcp__\(server)__", "\(server).", "\(server)__", "\(server)/"] where name.hasPrefix(prefix) {
             return String(name.dropFirst(prefix.count))
         }
+        // OpenCode 2 gives each session its own server, `notch-<16 hex>`.
+        if let match = name.prefixMatch(of: #/notch-[0-9a-f]{16}_/#) { return String(name[match.range.upperBound...]) }
+        // OpenClaw node tools are `notch_<tool>`; a bare `notch_session_*` is the tool itself.
+        if name.hasPrefix(server + "_"), delegationLabels[String(name.dropFirst(server.count + 1))] != nil { return String(name.dropFirst(server.count + 1)) }
         return delegationLabels[name] == nil ? nil : name
     }
     var displayName: String {
@@ -161,7 +165,7 @@ struct QueuedSend: Codable, Equatable {
 }
 
 enum SessionFilter: String, CaseIterable, Identifiable {
-    case all, needsYou, unread, archived
+    case all, needsYou, unread, archived, snoozed
     var id: Self { self }
     var title: String {
         switch self {
@@ -169,6 +173,31 @@ enum SessionFilter: String, CaseIterable, Identifiable {
         case .needsYou: return "Needs you"
         case .unread: return "Unread"
         case .archived: return "Archived"
+        case .snoozed: return "Snoozed"
+        }
+    }
+}
+
+/// How long a read, idle session stays in Your sessions before it is listed
+/// under Archived. Derived on display; nothing is flagged or swept.
+enum SessionAutoArchive: String, CaseIterable, Identifiable {
+    case hour, halfDay, threeDays, never
+    static let key = "sessions.autoArchiveAfter"
+    var id: Self { self }
+    var label: String {
+        switch self {
+        case .hour: return "1 hour"
+        case .halfDay: return "12 hours"
+        case .threeDays: return "3 days"
+        case .never: return "Never"
+        }
+    }
+    var interval: TimeInterval? {
+        switch self {
+        case .hour: return 3_600
+        case .halfDay: return 12 * 3_600
+        case .threeDays: return 3 * 86_400
+        case .never: return nil
         }
     }
 }
@@ -195,6 +224,8 @@ struct PendingRequest: Identifiable, Equatable {
     var allowsFreeText: Bool = true
     /// Native option descriptions, shown under their choice.
     var choiceDetails: [String: String] = [:]
+    /// The turn's native plan approval (Claude `ExitPlanMode`, Cursor `create_plan`).
+    var isPlan: Bool = false
 }
 
 struct Attachment: Identifiable, Codable, Equatable {
@@ -246,8 +277,16 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var changes: [TurnChanges] = []
     /// Tokens each companion turn used, as the runtime reported them; absent is unknown.
     var turnTokens: [String: Int] = [:]
+    /// When each turn ended (completed, failed or stopped), keyed by its visible user row:
+    /// steering and wakes share a turn ID but each starts its own block.
+    var turnEndedAt: [String: Date] = [:]
+    /// How each of those turns ended on its own (`.finished`, `.failed`, `.interrupted`), keyed alike,
+    /// so a later send that never became a turn cannot relabel it.
+    var turnOutcome: [String: WorkState] = [:]
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
+    /// Last opened, read or restored; with `updatedAt` it starts the auto-archive clock.
+    var lastSeenAt: Date? = nil
     var draft: String = ""
     var attachments: [Attachment] = []
     var workspacePath: String? = nil
@@ -255,10 +294,18 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var completionID: String? = nil
     var acknowledgedCompletionID: String? = nil
     var isArchived: Bool = false
+    /// Hidden from the active list until then, or until it needs the user.
+    var snoozedUntil: Date? = nil
     /// An app-owned child lives inside this parent session only.
     var parentSessionID: String? = nil
     var delegation: DelegationRecord? = nil
     var queuedSends: [QueuedSend] = []
+    /// The mode in use when Plan was chosen, for Plan ready's Implement; nil is Default permissions.
+    var prePlanPermissionMode: PermissionMode? = nil
+    /// The turn whose Plan ready banner Keep planning set aside.
+    var planReadyDismissedTurnID: String? = nil
+    /// The latest turn sent in Plan, whose plan choosing Plan again keeps.
+    var planTurnID: String? = nil
     var latestResponse: String { messages.last(where: { $0.role == "assistant" })?.text ?? "" }
     var isBusy: Bool { nativeActivityUnverified != nil || state == .working || state == .waiting || agents.contains { $0.state == .working || $0.state == .waiting } }
     /// Its own turn or native children are working; app-owned children are not counted.
@@ -272,6 +319,21 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     // Legacy children did not have turn metadata. On a legacy session they
     // remain relevant until the next real turn gives the session a new ID.
     var failedCurrentAgents: [ChildAgent] { agents.filter { $0.state == .failed && $0.turnID == latestUserTurnID } }
+    /// A turn that ended without its runtime reporting it (a quit, a disconnect, a local
+    /// Stop, an older save) keeps the session's stop or own failure as its outcome,
+    /// unless the latest visible user row already has one.
+    mutating func recordUnreportedOutcome() {
+        guard state == .interrupted || state == .failed && failedCurrentAgents.isEmpty,
+              let boundary = messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) }),
+              turnOutcome[boundary.id] == nil else { return }
+        turnOutcome[boundary.id] = state
+    }
+    /// The runtime reported how the latest turn ended; that replaces any provisional
+    /// outcome. A failed child is not the turn's own failure.
+    mutating func recordReportedOutcome() {
+        guard let boundary = messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) }) else { return }
+        turnOutcome[boundary.id] = state == .interrupted || state == .failed && failedCurrentAgents.isEmpty ? state : .finished
+    }
     var displayState: WorkState {
         if nativeActivityUnverified != nil { return .waiting }
         // Delivery uncertainty is a readable warning, not a live question.
@@ -298,7 +360,17 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     mutating func acknowledgeResult() -> Bool {
         guard hasUnreadResult, !isBusy else { return false }
         acknowledgedCompletionID = completionReceipt
+        lastSeenAt = Date()
         return true
+    }
+
+    /// Read, idle, with nothing pending or drafted, and untouched for `interval`:
+    /// it leaves the default list for Archived without an archive flag. A snoozed one waits for its wake.
+    func isDormant(after interval: TimeInterval?, now: Date = Date()) -> Bool {
+        guard let interval, !isArchived, snoozedUntil == nil, CollapsedStatus.resolve(session: self) == .none, !isBusy,
+              pendingSubmission == nil, queuedSends.isEmpty, attachments.isEmpty,
+              draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return max(updatedAt, lastSeenAt ?? .distantPast) < now.addingTimeInterval(-interval)
     }
 }
 
@@ -369,6 +441,11 @@ struct SessionIndicator: Identifiable, Equatable {
 
 // Additive persistence fields must not discard conversations from an older build.
 extension CompanionSession {
+    /// A queued message with this ID already reached the transcript or is the unconfirmed send.
+    func wasDelivered(_ queuedID: String) -> Bool {
+        pendingSubmission?.id == queuedID || messages.contains { $0.id == queuedID }
+    }
+
     mutating func restoreStagedSubmission() {
         guard let staged = stagedSubmission else { return }
         if let original = staged.draft {
@@ -380,7 +457,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -419,12 +496,19 @@ extension CompanionSession {
         permissionMode = try? values.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
         fullAccessConfirmed = try values.decodeIfPresent(Bool.self, forKey: .fullAccessConfirmed) ?? false
         turnTokens = try values.decodeIfPresent([String: Int].self, forKey: .turnTokens) ?? [:]
+        turnEndedAt = try values.decodeIfPresent([String: Date].self, forKey: .turnEndedAt) ?? [:]
+        turnOutcome = try values.decodeIfPresent([String: WorkState].self, forKey: .turnOutcome) ?? [:]
         runtimeInfo = try values.decodeIfPresent(RuntimeSessionInfo.self, forKey: .runtimeInfo)
         trustedProjectPath = try values.decodeIfPresent(String.self, forKey: .trustedProjectPath)
         nativeActivityUnverified = try values.decodeIfPresent(String.self, forKey: .nativeActivityUnverified)
         parentSessionID = try values.decodeIfPresent(String.self, forKey: .parentSessionID)
         delegation = try values.decodeIfPresent(DelegationRecord.self, forKey: .delegation)
         queuedSends = try values.decodeIfPresent([QueuedSend].self, forKey: .queuedSends) ?? []
+        lastSeenAt = try values.decodeIfPresent(Date.self, forKey: .lastSeenAt)
+        snoozedUntil = try values.decodeIfPresent(Date.self, forKey: .snoozedUntil)
+        prePlanPermissionMode = try? values.decodeIfPresent(PermissionMode.self, forKey: .prePlanPermissionMode)
+        planReadyDismissedTurnID = try values.decodeIfPresent(String.self, forKey: .planReadyDismissedTurnID)
+        planTurnID = try values.decodeIfPresent(String.self, forKey: .planTurnID)
         // Assign legacy children to the current restored turn once, so future
         // prompts do not inherit an old child's failure.
         for index in agents.indices where agents[index].turnID == nil {
@@ -583,14 +667,12 @@ struct NotchGeometry: Equatable {
     /// The mascot stage: a larger island where the mascot presents a moment, shaped
     /// and centred like the glance.
     static let stageWidth: CGFloat = 440
-    static let stageBodyHeight: CGFloat = 132
-    /// A question's answers: the body fits one row, each further row grows the stage.
-    var stageAnswerRows = 0
-    static let stageAnswerHeight: CGFloat = 30
-    var stageFrame: CGRect {
-        islandFrame(width: Self.stageWidth,
-                    height: bandHeight + Self.stageBodyHeight + CGFloat(max(0, stageAnswerRows - 1)) * Self.stageAnswerHeight)
-    }
+    /// The mascot's 150-point figure needs this much body below the band.
+    static let mascotStageBodyHeight: CGFloat = 132
+    /// The body's height for the presented moment, measured from its content
+    /// (`StageContent.bodyHeight`); the host sets it before staging.
+    var stageBodyHeight: CGFloat = mascotStageBodyHeight
+    var stageFrame: CGRect { islandFrame(width: Self.stageWidth, height: bandHeight + stageBodyHeight) }
     /// A physical camera's right edge in glance coordinates; band text starts after it.
     var glanceCameraMaxX: CGFloat? { hasHardware ? hardware.maxX - glanceFrame.minX : nil }
     var glanceCameraMinX: CGFloat? { hasHardware ? hardware.minX - glanceFrame.minX : nil }
@@ -762,6 +844,7 @@ enum SessionHistory {
         var roleOrdinals: [String: Int] = [:]
         var priorCursor = 0
         var currentTurnID: String?
+        var previousDate: Date?
         return visibleRows.map { row in
             let role = row["role"] as? String ?? ""
             let rawText = row["text"] as? String ?? ""
@@ -787,8 +870,13 @@ enum SessionHistory {
             if let matchingIndex { priorCursor = matchingIndex + 1 }
             let id = prior?.id ?? backendID ?? UUID().uuidString
             if role == "user" { currentTurnID = prior?.turnID ?? prior?.id ?? id }
+            // An unmatched reply without a native time stays at its turn's start, not
+            // after that turn's tools: it inherits the previous row's time.
+            let createdAt = prior?.createdAt ?? (row["timestamp"] as? Double).map(Date.init(timeIntervalSince1970:))
+                ?? (role == "assistant" ? previousDate : nil) ?? Date()
+            previousDate = createdAt
             return ChatMessage(id: id, role: role, text: role == "user" ? prior?.text ?? text : text,
-                               createdAt: prior?.createdAt ?? (row["timestamp"] as? Double).map(Date.init(timeIntervalSince1970:)) ?? Date(),
+                               createdAt: createdAt,
                                turnID: prior?.turnID ?? currentTurnID,
                                questions: role == "assistant" ? AsyncQuestion.decode(row["questions"]) ?? prior?.questions : nil,
                                kind: prior?.kind)

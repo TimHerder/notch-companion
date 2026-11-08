@@ -47,7 +47,7 @@ def release_events():
             target.put(frame)
 
 
-def done(sid, text, interrupted=False):
+def done(sid, text, interrupted=False, error=None):
     rows = history[sid]
     model = sessions[sid].get('model', dict(providerID='native', id='default'))
     info = dict(id='msg_response_' + str(len(rows)), sessionID=sid, role='assistant',
@@ -55,6 +55,8 @@ def done(sid, text, interrupted=False):
                 tokens=dict(input=123, output=4, reasoning=0, cache=dict(read=20, write=7)))
     if interrupted:
         info['error'] = dict(name='MessageAbortedError')
+    if error:
+        info['error'] = error
     rows.append(dict(info=info, parts=[dict(id='part_' + str(len(rows)), sessionID=sid, messageID=info['id'], type='text', text=text)]))
     statuses.pop(sid, None)
     save()
@@ -74,8 +76,34 @@ def delegate(sid):
     done(sid, 'Parent has replied; child is still waiting')
 
 
+def split_tail(sid):
+    # Each step is one poll: a text tail plus a new call, then a new call plus later text.
+    info = dict(id='msg_split', sessionID=sid, role='assistant', time=dict(created=1))
+    bash = dict(id='call_bash', type='tool', tool='bash', state=dict(status='completed', input=dict(command='swift test'), output='ok'))
+    read = dict(id='call_read', type='tool', tool='read', state=dict(status='completed', input=dict(path='a.swift'), output='ok'))
+    head, row = dict(type='text', text="I'll run the tests now."), dict(info=info, parts=[])
+    with lock:
+        history[sid].append(row)
+    for parts in [[dict(type='text', text="I'll run the tests")], [head, bash], [head, bash, read, dict(type='text', text='Found it.')]]:
+        with lock:
+            row['parts'] = parts
+            event('message.updated', sessionID=sid, info=info)
+        time.sleep(.3)
+    with lock:
+        info['time']['completed'] = 2
+        statuses.pop(sid, None)
+        save()
+        event('session.status', sessionID=sid, status=dict(type='idle'))
+
+
 def work(sid, text):
     time.sleep(.10)
+    if text == 'split-tail':
+        return split_tail(sid)
+    if text == 'session-error':
+        with lock:
+            event('session.error', sessionID=sid, error=dict(name='ProviderAuthError', data=dict(providerID='native', message='Native provider credentials expired')))
+        time.sleep(.2)
     with lock:
         if text == 'delayed-child':
             child = 'ses_child'
@@ -85,6 +113,9 @@ def work(sid, text):
             threading.Thread(target=release_child, daemon=True).start()
         elif text == 'delegate':
             delegate(sid)
+        elif text == 'terminal-error':
+            # The failure is only on the final message: no session.error frame.
+            done(sid, 'Partial answer', error=dict(name='APIError', data=dict(message='Provider rejected the request')))
         elif text == 'question':
             questions['question_root'] = dict(id='question_root', sessionID=sid, questions=[dict(question='Choose color', options=[dict(label='Sage'), dict(label='Pearl')], custom=False, multiple=False)])
             event('question.asked', **questions['question_root'])

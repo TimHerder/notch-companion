@@ -2,23 +2,40 @@ import XCTest
 @testable import NotchCompanion
 
 final class ConversationTimelineTests: XCTestCase {
-    private func message(_ id: String, _ role: String, _ second: Double, text: String? = nil) -> ChatMessage {
-        ChatMessage(id: id, role: role, text: text ?? id, createdAt: Date(timeIntervalSince1970: second))
+    private func message(_ id: String, _ role: String, _ second: Double, text: String? = nil, turn: String? = nil) -> ChatMessage {
+        ChatMessage(id: id, role: role, text: text ?? id, createdAt: Date(timeIntervalSince1970: second), turnID: turn)
     }
 
-    private func tool(_ id: String, _ second: Double) -> ToolActivity {
-        ToolActivity(id: id, name: "read_file", detail: id, startedAt: Date(timeIntervalSince1970: second))
+    private func tool(_ id: String, _ second: Double, turn: String? = nil, state: WorkState = .working) -> ToolActivity {
+        ToolActivity(id: id, name: "read_file", detail: id, state: state, startedAt: Date(timeIntervalSince1970: second), turnID: turn)
+    }
+
+    /// Top-level items, with a folded turn's work spliced in where it sits.
+    private func flattened(_ timeline: [ConversationTimelineItem]) -> [ConversationTimelineItem] {
+        timeline.flatMap { item -> [ConversationTimelineItem] in
+            if case .work(let work) = item { return work.entries }
+            return [item]
+        }
     }
 
     private func groups(_ timeline: [ConversationTimelineItem]) -> [ToolCallGroup] {
-        timeline.compactMap { if case .tools(let group) = $0 { return group }; return nil }
+        flattened(timeline).compactMap { if case .tools(let group) = $0 { return group }; return nil }
     }
 
     private func messages(_ timeline: [ConversationTimelineItem]) -> [ChatMessage] {
-        timeline.compactMap { if case .message(let message) = $0 { return message }; return nil }
+        flattened(timeline).compactMap {
+            switch $0 {
+            case .message(let message), .commentary(let message): return message
+            default: return nil
+            }
+        }
     }
 
-    func testCompletedTurnsPreserveEveryMessageAndCollapseTheirOwnTools() {
+    private func works(_ timeline: [ConversationTimelineItem]) -> [TurnWork] {
+        timeline.compactMap { if case .work(let work) = $0 { return work }; return nil }
+    }
+
+    func testCompletedTurnsFoldTheirOwnWorkAboveTheirAnswers() {
         var session = CompanionSession()
         session.id = "session"
         session.messages = [message("u1", "user", 10), message("a1", "assistant", 11),
@@ -26,26 +43,45 @@ final class ConversationTimelineTests: XCTestCase {
         session.tools = [tool("t1", 12), tool("t2", 22), tool("t3", 23)]
         session.state = .finished
         let timeline = ConversationTimeline.build(session: session)
-        XCTAssertEqual(timeline.map(\.id), ["message:u1", "tools:session:turn:u1", "message:a1",
-                                            "message:u2", "tools:session:turn:u2", "message:a2"])
+        XCTAssertEqual(timeline.map(\.id), ["message:u1", "work:session:u1", "message:a1",
+                                            "message:u2", "work:session:u2", "message:a2"])
         XCTAssertEqual(messages(timeline), session.messages)
         XCTAssertEqual(groups(timeline).map { $0.tools.map(\.id) }, [["t1"], ["t2", "t3"]])
         XCTAssertEqual(groups(timeline).flatMap(\.olderTools), session.tools)
         XCTAssertTrue(groups(timeline).allSatisfy { !$0.isLive && $0.liveTools.isEmpty })
+        XCTAssertTrue(works(timeline).allSatisfy(\.folds))
+        // Turns from before end times were saved say how much work they hold.
+        XCTAssertEqual(works(timeline).map(\.label), ["Worked · 1 step", "Worked · 2 steps"])
     }
 
-    func testStreamingAssistantAppearsAfterItsToolsDespiteEarlyCreationTime() {
+    func testLiveTextAndToolsInterleaveInTheOrderTheyBegan() {
         var session = CompanionSession()
+        session.id = "session"
         session.state = .working
         session.parentTurnComplete = false
-        session.messages = [message("u", "user", 10), message("a", "assistant", 11, text: "The answer is coming…")]
-        session.tools = [tool("t1", 12), tool("t2", 13)]
-        let timeline = ConversationTimeline.build(session: session)
-        XCTAssertEqual(timeline.count, 3)
-        XCTAssertEqual(timeline.first?.id, "message:u")
-        XCTAssertEqual(timeline.last?.id, "message:a")
-        XCTAssertEqual(groups(timeline).first?.liveTools.map(\.id), ["t1", "t2"])
-        XCTAssertTrue(groups(timeline).first?.olderTools.isEmpty == true)
+        session.messages = [message("u", "user", 10), message("look", "assistant", 11, text: "Let me look."),
+                            message("found", "assistant", 14, text: "Found it; testing."), message("answer", "assistant", 17, text: "All green.")]
+        session.tools = [tool("t1", 12, state: .finished), tool("t2", 13, state: .finished), tool("t3", 15, state: .finished), tool("t4", 16)]
+        let live = ConversationTimeline.build(session: session)
+        XCTAssertEqual(live.map(\.id), ["message:u", "message:look", "tools:session:run:t1",
+                                        "message:found", "tools:session:run:t3", "message:answer"])
+        guard case .commentary = live[1], case .commentary = live[3], case .message = live[5] else {
+            return XCTFail("Text followed by tools is commentary; the newest text reads as the answer")
+        }
+        XCTAssertEqual(groups(live).map(\.isLive), [false, true], "Only the newest run is live")
+        XCTAssertEqual(groups(live).last?.liveTools.map(\.id), ["t3", "t4"])
+
+        session.state = .finished
+        session.parentTurnComplete = true
+        session.turnEndedAt["u"] = Date(timeIntervalSince1970: 10 + 134)
+        let finished = ConversationTimeline.build(session: session)
+        XCTAssertEqual(finished.map(\.id), ["message:u", "work:session:u", "message:answer"])
+        let work = try? XCTUnwrap(works(finished).first)
+        XCTAssertEqual(work?.entries.map(\.id), ["message:look", "tools:session:run:t1", "message:found", "tools:session:run:t3"])
+        XCTAssertEqual(work?.label, "Worked for 2:14")
+        XCTAssertEqual(work?.folds, true)
+        XCTAssertEqual(groups(finished).map(\.id), groups(live).map(\.id), "Runs keep their identity when the turn folds")
+        XCTAssertTrue(groups(finished).allSatisfy { !$0.isLive })
     }
 
     func testFourthCallRollsOldestIntoHistoryWithoutChangingRemainingIDs() {
@@ -82,26 +118,28 @@ final class ConversationTimelineTests: XCTestCase {
         session.tools = (1...12).map { tool("t\($0)", Double(10 + $0)) }
         let live = groups(ConversationTimeline.build(session: session))[0]
         session.state = .finished
-        session.messages.append(message("final", "assistant", 10.5))
-        let finished = groups(ConversationTimeline.build(session: session))[0]
+        session.messages.append(message("final", "assistant", 30))
+        let timeline = ConversationTimeline.build(session: session)
+        let finished = groups(timeline)[0]
         XCTAssertEqual(live.id, finished.id)
         XCTAssertEqual(live.liveTools.count, 3)
         XCTAssertEqual(live.olderTools.count, 9)
         XCTAssertTrue(finished.liveTools.isEmpty)
         XCTAssertEqual(finished.olderTools, session.tools)
+        XCTAssertEqual(timeline.last?.id, "message:final")
     }
 
     func testEqualTimestampsUseCanonicalMessageAndToolOrder() {
         var session = CompanionSession()
+        session.id = "session"
         session.messages = [message("u1", "user", 10), message("a1", "assistant", 10),
                             message("u2", "user", 10), message("a2", "assistant", 10)]
         session.tools = [tool("z-first", 10), tool("a-second", 10)]
         let timeline = ConversationTimeline.build(session: session)
         XCTAssertEqual(messages(timeline), session.messages)
+        XCTAssertEqual(timeline.map(\.id), ["message:u1", "message:a1", "message:u2", "work:session:u2", "message:a2"])
         XCTAssertEqual(groups(timeline).count, 1)
-        XCTAssertTrue(groups(timeline)[0].id.hasSuffix(":u2"))
         XCTAssertEqual(groups(timeline)[0].tools.map(\.id), ["z-first", "a-second"])
-        XCTAssertEqual(timeline.last?.id, "message:a2")
     }
 
     func testPartialHistoryRetainsUnassignedCallsAndExcludesNonConversationRoles() {
@@ -112,16 +150,18 @@ final class ConversationTimelineTests: XCTestCase {
         let timeline = ConversationTimeline.build(session: session)
         XCTAssertEqual(messages(timeline).map(\.id), ["u", "a"])
         XCTAssertEqual(groups(timeline).flatMap(\.tools).map(\.id), ["orphan", "current"])
-        XCTAssertEqual(timeline.first?.id, "tools:\(session.id):unassigned")
+        XCTAssertEqual(timeline.first?.id, "tools:\(session.id):run:orphan")
         XCTAssertEqual(Set(timeline.map(\.id)).count, timeline.count)
     }
 
-    func testAssistantCommentaryRemainsInOrderBeforeGroupedToolsAndFinalResponse() {
+    func testFinishedTurnFoldsCommentaryAndToolsInTrueOrderAboveTheAnswer() {
         var session = CompanionSession()
         session.messages = [message("u", "user", 10), message("commentary", "assistant", 11), message("answer", "assistant", 13)]
         session.tools = [tool("call", 12)]
         let timeline = ConversationTimeline.build(session: session)
-        XCTAssertEqual(timeline.map(\.id), ["message:u", "message:commentary", "tools:\(session.id):turn:u", "message:answer"])
+        XCTAssertEqual(timeline.map(\.id), ["message:u", "work:\(session.id):u", "message:answer"])
+        XCTAssertEqual(works(timeline).first?.entries.map(\.id), ["message:commentary", "tools:\(session.id):run:call"])
+        guard case .commentary = works(timeline).first?.entries.first else { return XCTFail("Folded text is commentary") }
         XCTAssertEqual(messages(timeline), session.messages)
     }
 
@@ -149,28 +189,112 @@ final class ConversationTimelineTests: XCTestCase {
         session.id = "session"
         var firstUser = message("hermes-restored-u1", "user", 100)
         firstUser.turnID = "original-u1"
-        var firstTool = tool("first-tool", 500)
-        firstTool.turnID = "original-u1"
-        var secondTool = tool("second-tool", 5)
-        secondTool.turnID = "u2"
         session.messages = [firstUser, message("a1", "assistant", 101), message("u2", "user", 200), message("a2", "assistant", 201)]
-        session.tools = [firstTool, secondTool]
-        let actual = groups(ConversationTimeline.build(session: session))
-        XCTAssertEqual(actual.map(\.id), ["tools:session:turn:original-u1", "tools:session:turn:u2"])
-        XCTAssertEqual(actual.map { $0.tools.map(\.id) }, [["first-tool"], ["second-tool"]])
+        session.tools = [tool("first-tool", 500, turn: "original-u1"), tool("second-tool", 5, turn: "u2")]
+        let timeline = ConversationTimeline.build(session: session)
+        XCTAssertEqual(timeline.map(\.id), ["message:hermes-restored-u1", "work:session:hermes-restored-u1", "message:a1",
+                                            "message:u2", "work:session:u2", "message:a2"])
+        XCTAssertEqual(groups(timeline).map { $0.tools.map(\.id) }, [["first-tool"], ["second-tool"]])
     }
 
     func testMissingExplicitOwnerDoesNotAttachToAnUnrelatedNewerTurn() {
         var session = CompanionSession()
         session.messages = [message("u", "user", 10)]
-        var call = tool("retained", 20)
-        call.turnID = "missing-prior-user"
-        session.tools = [call]
+        session.tools = [tool("retained", 20, turn: "missing-prior-user")]
         session.state = .working
-        let group = groups(ConversationTimeline.build(session: session))[0]
-        XCTAssertTrue(group.id.hasSuffix(":unassigned"))
+        let timeline = ConversationTimeline.build(session: session)
+        XCTAssertEqual(timeline.map(\.id), ["tools:\(session.id):run:retained", "message:u"])
+        let group = groups(timeline)[0]
         XCTAssertFalse(group.isLive)
         XCTAssertEqual(group.olderTools.map(\.id), ["retained"])
+    }
+
+    // MARK: Steering, wakes and outcomes
+
+    func testSteerInsideATurnDoesNotMoveEarlierTools() {
+        var session = CompanionSession()
+        session.id = "session"
+        session.messages = [message("u", "user", 10, turn: "u"), message("a1", "assistant", 11, turn: "u"),
+                            message("steer", "user", 20, turn: "u"), message("a2", "assistant", 21, turn: "u"),
+                            message("final", "assistant", 23, turn: "u")]
+        session.tools = [tool("before", 12, turn: "u"), tool("after", 22, turn: "u")]
+        session.changes = [TurnChanges(id: "u", workspace: "/project", files: [ChangedFile(path: "a.txt", additions: 1, deletions: 0)])]
+        session.state = .working
+        let live = ConversationTimeline.build(session: session)
+        XCTAssertEqual(live.map(\.id), ["message:u", "message:a1", "tools:session:run:before", "message:steer",
+                                        "message:a2", "tools:session:run:after", "message:final", "changes:u"])
+        XCTAssertEqual(groups(live).map(\.isLive), [false, true])
+
+        session.state = .finished
+        session.turnEndedAt["steer"] = Date(timeIntervalSince1970: 30)
+        let finished = ConversationTimeline.build(session: session)
+        XCTAssertEqual(finished.map(\.id), ["message:u", "work:session:u", "message:a1", "message:steer",
+                                            "work:session:steer", "message:final", "changes:u"])
+        // The steered block ended when the steer arrived; the turn's changes follow its last answer.
+        XCTAssertEqual(works(finished).map(\.label), ["Worked for 10s", "Worked for 10s"])
+        XCTAssertEqual(works(finished).map { $0.entries.map(\.id) }, [["tools:session:run:before"], ["message:a2", "tools:session:run:after"]])
+    }
+
+    func testTurnThatEndedBeforeWritingKeepsItsWorkOpenUnderItsOutcome() {
+        var session = CompanionSession()
+        session.id = "session"
+        session.messages = [message("u", "user", 10)]
+        session.tools = [tool("broken", 12, state: .failed)]
+        session.turnOutcome["u"] = .failed
+        session.turnEndedAt["u"] = Date(timeIntervalSince1970: 73)
+        let failed = ConversationTimeline.build(session: session)
+        XCTAssertEqual(failed.map(\.id), ["message:u", "work:session:u"])
+        let work = works(failed)[0]
+        XCTAssertFalse(work.folds, "With no answer to fold above, the work stays open")
+        XCTAssertEqual(work.label, "Failed after 1:03")
+        XCTAssertEqual(work.entries.map(\.id), ["tools:session:run:broken"])
+        session.turnOutcome["u"] = .interrupted
+        session.turnEndedAt = [:]
+        XCTAssertEqual(works(ConversationTimeline.build(session: session)).first?.label, "Stopped")
+
+        // A failed turn that wrote text keeps it as its answer, under a fold that says how it ended.
+        session.messages.append(message("partial", "assistant", 13, text: "Halfway: the build passes."))
+        session.turnOutcome["u"] = .failed
+        session.turnEndedAt["u"] = Date(timeIntervalSince1970: 73)
+        XCTAssertEqual(ConversationTimeline.build(session: session).map(\.id), ["message:u", "work:session:u", "message:partial"])
+        XCTAssertEqual(works(ConversationTimeline.build(session: session)).first?.label, "Failed after 1:03")
+        // Only the recorded outcome labels a turn, never the session's later state.
+        session.turnOutcome = [:]
+        session.state = .failed
+        XCTAssertEqual(works(ConversationTimeline.build(session: session)).first?.label, "Worked for 1:03")
+    }
+
+    func testTurnStartRunsFromThePromptASteerOrSteeredWakeContinued() {
+        var session = CompanionSession()
+        session.messages = [message("old", "user", 1, turn: "old"), message("a0", "assistant", 2, turn: "old"),
+                            message("u", "user", 10, turn: "u"), message("a1", "assistant", 11, turn: "u"),
+                            message("steer", "user", 20, turn: "u")]
+        session.turnEndedAt["old"] = Date(timeIntervalSince1970: 5)
+        XCTAssertEqual(SessionDigest.turnStart(session), Date(timeIntervalSince1970: 10), "A steer keeps the turn's clock")
+        session.messages.append(ChatMessage(id: "wake", role: "user", text: "Delegated task finished.",
+                                            createdAt: Date(timeIntervalSince1970: 30), turnID: "u", kind: ChatMessage.delegationResult))
+        XCTAssertEqual(SessionDigest.turnStart(session), Date(timeIntervalSince1970: 10), "So does a steered wake")
+        session.turnEndedAt["steer"] = Date(timeIntervalSince1970: 25)
+        XCTAssertEqual(SessionDigest.turnStart(session), Date(timeIntervalSince1970: 30), "A wake after the turn ended starts its own")
+    }
+
+    func testWorkDurationFormatAndEndFallbacks() {
+        XCTAssertEqual([8, 59, 60, 134, 3_730].map { TurnWork.format(TimeInterval($0)) }, ["8s", "59s", "1:00", "2:14", "1:02:10"])
+        var session = CompanionSession()
+        session.id = "session"
+        session.messages = [message("u1", "user", 10, turn: "u1"), message("a1", "assistant", 11, turn: "u1"),
+                            message("wake", "user", 50, turn: "u1"), message("a2", "assistant", 51, turn: "u1"),
+                            message("u3", "user", 200, turn: "u3"), message("a3", "assistant", 201, turn: "u3")]
+        // A turn with only an answer still shows how long it took, when that is known.
+        session.turnEndedAt["wake"] = Date(timeIntervalSince1970: 58)
+        let timeline = ConversationTimeline.build(session: session)
+        XCTAssertEqual(timeline.map(\.id), ["message:u1", "work:session:u1", "message:a1", "message:wake", "work:session:wake",
+                                            "message:a2", "message:u3", "message:a3"])
+        // The first block ends when the wake that shares its turn begins; u3's end is unknown.
+        XCTAssertEqual(works(timeline).map(\.label), ["Worked for 40s", "Worked for 8s"])
+        XCTAssertTrue(works(timeline).allSatisfy { !$0.folds && $0.entries.isEmpty }, "Nothing to fold is a quiet line")
+        session.turnEndedAt["u1"] = Date(timeIntervalSince1970: 12)
+        XCTAssertEqual(works(ConversationTimeline.build(session: session)).first?.label, "Worked for 2s", "A saved end wins")
     }
 
     func testRestorationWithoutTimestampsPreservesOrderedFilePromptIdentity() {
@@ -191,7 +315,8 @@ final class ConversationTimelineTests: XCTestCase {
         session.messages = restored
         session.tools = [tool("legacy-without-turn-id", 12)]
         XCTAssertEqual(groups(ConversationTimeline.build(session: session)).first?.tools.map(\.id), ["legacy-without-turn-id"])
-        XCTAssertFalse(groups(ConversationTimeline.build(session: session)).first!.id.hasSuffix(":unassigned"))
+        XCTAssertEqual(ConversationTimeline.build(session: session).map(\.id),
+                       ["message:local-user", "work:\(session.id):local-user", "message:local-assistant"], "The call stays in its turn")
     }
 
     func testRestorationRetainsRepeatedMessagesByTheirOrderedOccurrences() {
@@ -263,7 +388,7 @@ final class ConversationTimelineTests: XCTestCase {
         session.tools = [oldCall]
         let timeline = ConversationTimeline.build(session: session)
         XCTAssertEqual(messages(timeline).map(\.id), ["u1", "a1", "a2", "u2"])
-        XCTAssertEqual(groups(timeline).first?.id, "tools:session:turn:u1")
+        XCTAssertEqual(timeline.map(\.id), ["message:u1", "work:session:u1", "message:a2", "message:u2"])
         XCTAssertEqual(groups(timeline).first?.tools.map(\.id), [oldCall.id])
         XCTAssertEqual(SessionHistory.syntheticTurnAliases(in: session.messages), ["synthetic": "u1"])
         session.messages.removeLast()
@@ -304,9 +429,26 @@ final class ConversationTimelineTests: XCTestCase {
                             message("placeholder", "assistant", 12, text: "")]
         session.tools = [tool("call", 13)]
         let timeline = ConversationTimeline.build(session: session)
-        XCTAssertEqual(timeline.map(\.id), ["message:u", "message:commentary", "tools:\(session.id):turn:u"])
+        XCTAssertEqual(timeline.map(\.id), ["message:u", "message:commentary", "tools:\(session.id):run:call"])
+        // A segment's time is when its first text arrived, after the call.
         session.messages[2].text = "Here is the result"
+        session.messages[2].createdAt = Date(timeIntervalSince1970: 14)
         let streaming = ConversationTimeline.build(session: session)
-        XCTAssertEqual(streaming.map(\.id), ["message:u", "message:commentary", "tools:\(session.id):turn:u", "message:placeholder"])
+        XCTAssertEqual(streaming.map(\.id), ["message:u", "message:commentary", "tools:\(session.id):run:call", "message:placeholder"])
+    }
+
+    func testUnmatchedRestoredRepliesStayAtTheirTurnStartInsteadOfNow() {
+        // An older save kept one merged reply; native history now has two.
+        let previous = [message("u", "user", 10, text: "Fix it", turn: "u"), message("merged", "assistant", 11, text: "Looking.\n\nFixed.", turn: "u")]
+        let rows: [[String: Any]] = [["role": "user", "text": "Fix it"], ["role": "assistant", "text": "Looking."], ["role": "assistant", "text": "Fixed."]]
+        let restored = SessionHistory.messages(rows, preserving: previous)
+        XCTAssertEqual(restored.first?.id, "u")
+        XCTAssertEqual(restored.map(\.createdAt), Array(repeating: Date(timeIntervalSince1970: 10), count: 3))
+        XCTAssertEqual(restored.map(\.turnID), ["u", "u", "u"])
+        var session = CompanionSession()
+        session.messages = restored
+        session.tools = [tool("call", 12, turn: "u", state: .finished)]
+        let timeline = ConversationTimeline.build(session: session)
+        XCTAssertEqual(timeline.last?.id, "message:\(restored[2].id)", "The answer stays last, below its folded work")
     }
 }

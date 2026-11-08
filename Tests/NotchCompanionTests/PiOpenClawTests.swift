@@ -160,6 +160,12 @@ final class PiOpenClawTests: XCTestCase {
         XCTAssertTrue(key.publicKey.isValidSignature(signature, for: Data(payload.utf8)))
         XCTAssertFalse(key.publicKey.isValidSignature(signature, for: Data((payload + "wrong").utf8)))
         XCTAssertEqual(proof["signedAt"] as? Int, 12345)
+        // The node link signs its own role and mode with the same device, and no operator scopes.
+        let node = try device.proof(nonce: "challenge", timestamp: 12345, token: nil, scopes: [], mode: "node", role: "node")
+        XCTAssertEqual(node["id"] as? String, id)
+        let nodeEncoded = try XCTUnwrap(node["signature"] as? String).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        let nodeSignature = try XCTUnwrap(Data(base64Encoded: nodeEncoded + String(repeating: "=", count: (4 - nodeEncoded.count % 4) % 4)))
+        XCTAssertTrue(key.publicKey.isValidSignature(nodeSignature, for: Data("v3|\(id)|gateway-client|node|node||12345||challenge|macos|mac".utf8)))
     }
     func testOpenClawConfigReadsJSON5WithoutMutationAndRejectsUnsupportedRouting() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -642,5 +648,362 @@ extension PiOpenClawTests {
         try oversized.write(to: folder.appendingPathComponent("large.json5"))
         try "{$include:'large.json5'}".write(to: main, atomically: true, encoding: .utf8)
         XCTAssertThrowsError(try OpenClawConfigIncludes.read(main, environment: [:]))
+    }
+}
+
+/// OpenClaw sessions host delegation through the companion's node link.
+extension PiOpenClawTests {
+    func testOpenClawNodeDescriptorsUseTheReservedNodeMCPShape() throws {
+        let descriptors = OpenClawNodeLink.descriptors(Delegation.tools)
+        XCTAssertEqual(descriptors.count, Delegation.tools.count)
+        XCTAssertLessThanOrEqual(descriptors.count, 128, "The Gateway keeps at most 128 per node")
+        let pattern = try NSRegularExpression(pattern: "^[A-Za-z][A-Za-z0-9_-]{0,63}$")
+        for (descriptor, tool) in zip(descriptors, Delegation.tools) {
+            let name = try XCTUnwrap(descriptor["name"] as? String), original = try XCTUnwrap(tool["name"] as? String)
+            XCTAssertEqual(name, "notch_" + original)
+            XCTAssertNotNil(pattern.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)), name)
+            XCTAssertEqual(ToolActivity.delegationTool(name), original, "Tool rows keep their companion labels")
+            // node-mcp is trusted only with this exact command and an MCP route.
+            XCTAssertEqual(descriptor["pluginId"] as? String, "node-mcp")
+            XCTAssertEqual(descriptor["command"] as? String, "mcp.tools.call.v1")
+            XCTAssertEqual(descriptor["mcp"] as? [String: String], ["server": "notch", "tool": original])
+            let description = try XCTUnwrap(descriptor["description"] as? String)
+            XCTAssertTrue((1...1024).contains(description.count))
+            XCTAssertEqual((descriptor["parameters"] as? [String: Any])?["type"] as? String, "object")
+        }
+        let old = try JSONSerialization.data(withJSONObject: ["privateKey": Data([1]).base64EncodedString(), "token": "operator", "scopes": ["operator.read"]])
+        let device = try JSONDecoder().decode(OpenClawDevice.self, from: old)
+        XCTAssertEqual(device.token, "operator", "An existing Keychain pairing still decodes")
+        XCTAssertNil(device.nodeToken)
+    }
+
+    func testOpenClawNodeInvocationsOutsideTheCompanionAreRefused() async throws {
+        func request(_ command: String = "mcp.tools.call.v1", server: String = "notch") -> [String: Any] {
+            ["id": "i", "nodeId": "n", "command": command, "timeoutMs": 120_000, "sessionKey": "agent:main:notch:x",
+             "paramsJSON": #"{"server":"\#(server)","tool":"task_status","arguments":{"taskId":"t"}}"#]
+        }
+        let grant = OpenClawNodeLink.Grant(url: URL(string: "http://127.0.0.1:9/mcp")!, token: "t")
+        for refused in [request("system.run"), request(server: "other"), request().merging(["paramsJSON": "not json"] as [String: Any]) { _, new in new }] {
+            let reply = await OpenClawNodeLink.call(refused, grant: grant)
+            XCTAssertEqual(reply["ok"] as? Bool, false)
+            XCTAssertEqual((reply["error"] as? [String: Any])?["code"] as? String, "INVALID_REQUEST")
+        }
+        // Another agent on the same Gateway sees the tools, but has no companion grant behind it.
+        let reply = await OpenClawNodeLink.call(request(), grant: nil)
+        let payload = try XCTUnwrap(reply["payload"] as? [String: Any])
+        XCTAssertEqual(payload["isError"] as? Bool, true)
+        XCTAssertTrue(((payload["content"] as? [[String: Any]])?.first?["text"] as? String ?? "").contains("capability_denied"))
+    }
+
+    @MainActor
+    func testOpenClawNodeLinkPublishesToolsAndServesOnlyCompanionSessions() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let script = directory.appendingPathComponent("gateway.py"), portFile = directory.appendingPathComponent("port"), log = directory.appendingPathComponent("node.log")
+        // Two concurrent connections: the operator and the node. The first node
+        // connect needs pairing; the second publishes before command approval.
+        let source = #"""
+        import socket,hashlib,base64,json,struct,sys,threading
+        server=socket.socket();server.bind(('127.0.0.1',0));server.listen(8)
+        open(sys.argv[1],'w').write(str(server.getsockname()[1]))
+        log=open(sys.argv[2],'a');lock=threading.Lock();keys=[];nodes=[0]
+        methods=['chat.send','chat.history','chat.abort','sessions.create','sessions.messages.subscribe','question.resolve','exec.approval.resolve']
+        scopes=['operator.read','operator.write','operator.approvals','operator.questions']
+        def record(kind,value):
+          with lock: log.write(json.dumps({'kind':kind,'value':value})+'\n');log.flush()
+        def exact(c,n):
+          result=b''
+          while len(result)<n:
+            part=c.recv(n-len(result))
+            if not part: raise EOFError()
+            result+=part
+          return result
+        def frame(c,value):
+          data=json.dumps(value).encode();n=len(data)
+          header=bytes([129,n]) if n<126 else bytes([129,126])+struct.pack('!H',n)
+          c.sendall(header+data)
+        def event(c,name,payload): frame(c,{'type':'event','event':name,'payload':payload})
+        def reply(c,r,payload): frame(c,{'type':'res','id':r['id'],'ok':True,'payload':payload})
+        def read(c):
+          a,b=exact(c,2)
+          if a&15==8: raise EOFError()
+          n=b&127
+          if n==126:n=struct.unpack('!H',exact(c,2))[0]
+          elif n==127:n=struct.unpack('!Q',exact(c,8))[0]
+          mask=exact(c,4) if b&128 else None;data=exact(c,n)
+          if mask:data=bytes(x^mask[i%4] for i,x in enumerate(data))
+          return json.loads(data)
+        def handle(c):
+          node=None
+          try:
+            header=b''
+            while b'\r\n\r\n' not in header:header+=c.recv(4096)
+            key=[line.split(b':',1)[1].strip() for line in header.split(b'\r\n') if line.lower().startswith(b'sec-websocket-key:')][0]
+            accept=base64.b64encode(hashlib.sha1(key+b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
+            c.sendall(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+accept+b'\r\n\r\n')
+            event(c,'connect.challenge',{'nonce':'fixture-challenge','ts':123456789})
+            while True:
+              r=read(c);m=r['method'];p=r['params']
+              if m=='connect' and p['role']=='node':
+                record('node.connect',p);node=p['device']['id']
+                with lock: nodes[0]+=1;attempt=nodes[0]
+                if attempt==1:
+                  frame(c,{'type':'res','id':r['id'],'ok':False,'error':{'code':'NOT_PAIRED','message':'pairing required','details':{'code':'PAIRING_REQUIRED','requestId':'device-request-1'}}});return
+                reply(c,r,{'type':'hello-ok','protocol':4,'auth':{'role':'node','scopes':[],'deviceToken':'node-token'},'features':{'methods':[]},'policy':{}})
+              elif m=='connect':
+                assert p['role']=='operator' and p['scopes']==scopes
+                reply(c,r,{'type':'hello-ok','protocol':4,'auth':{'scopes':scopes},'features':{'methods':methods},'policy':{'tickIntervalMs':30000}})
+              elif m=='sessions.create':
+                with lock: keys.append(p['key'])
+                reply(c,r,{'key':p['key'],'sessionId':'native-'+p['key']})
+              elif m=='sessions.messages.subscribe':reply(c,r,{})
+              elif m=='chat.history':reply(c,r,{'sessionKey':p['sessionKey'],'messages':[],'sessionInfo':{'hasActiveRun':False}})
+              elif m=='node.pluginTools.update':
+                record('node.pluginTools.update',p)
+                reply(c,r,{'nodeId':node,'tools':[]})
+                def invoke(i,key,command,call):
+                  request={'id':i,'nodeId':node,'command':command,'paramsJSON':json.dumps(call),'timeoutMs':120000,'idempotencyKey':i}
+                  if key: request['sessionKey']=key
+                  event(c,'node.invoke.request',request)
+                invoke('foreign','agent:existing:main','mcp.tools.call.v1',{'server':'notch','tool':'task_status','arguments':{'taskId':'t'}})
+                invoke('owned',keys[1],'mcp.tools.call.v1',{'server':'notch','tool':'orchestrator_capabilities','arguments':{'search':'fixture'}})
+                invoke('second',keys[2],'mcp.tools.call.v1',{'server':'notch','tool':'notch_session_list','arguments':{}})
+                invoke('plain',keys[0],'mcp.tools.call.v1',{'server':'notch','tool':'notch_session_list','arguments':{}})
+                invoke('command',keys[1],'system.run',{'server':'notch','tool':'orchestrator_capabilities'})
+              elif m=='node.invoke.result':record('node.invoke.result',p);reply(c,r,{'ok':True})
+              else:raise Exception('unhandled method '+m)
+          except EOFError:pass
+          finally:c.close()
+        while True:
+          c,_=server.accept();threading.Thread(target=handle,args=(c,),daemon=True).start()
+        """#
+        try source.write(to: script, atomically: true, encoding: .utf8)
+        let gateway = Process(); gateway.executableURL = URL(fileURLWithPath: "/usr/bin/python3"); gateway.arguments = [script.path, portFile.path, log.path]
+        gateway.standardOutput = FileHandle.nullDevice; gateway.standardError = FileHandle.nullDevice
+        try gateway.run()
+        defer { if gateway.isRunning { gateway.terminate() } }
+        for _ in 0..<100 {
+            if FileManager.default.fileExists(atPath: portFile.path) { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let port = try XCTUnwrap(Int(String(contentsOf: portFile, encoding: .utf8)))
+        let config: [String: Any] = ["gateway": ["port": port, "auth": ["mode": "none"]], "agents": ["list": [["id": "existing", "workspace": directory.path]]]]
+        try JSONSerialization.data(withJSONObject: config).write(to: directory.appendingPathComponent("openclaw.json"))
+
+        let server = DelegationServer()
+        var calls: [(DelegationCaller, String, [String: Any])] = []
+        server.tools = { _ in Delegation.tools }
+        server.call = { caller, name, arguments in calls.append((caller, name, arguments)); return ["fixture": "answer"] }
+        let url = try await server.start()
+        defer { server.stop() }
+        let first = server.issueToken(for: DelegationCaller(sessionID: "companion-1", runtime: .openclaw, subagent: false))
+        let second = server.issueToken(for: DelegationCaller(sessionID: "companion-2", runtime: .openclaw, subagent: false))
+
+        let client = OpenClawClient(profileID: RuntimeProfileIdentity.openClaw(directory: directory.path, agent: "existing"),
+                                    device: OpenClawDevice(privateKey: Curve25519.Signing.PrivateKey().rawRepresentation))
+        defer { client.disconnect() }
+        try await client.connect()
+        var notices: [String] = []
+        client.onEvent = { name, payload in if name == "runtime.notice" { notices.append(payload["message"] as? String ?? "") } }
+        func frames(_ kind: String) -> [[String: Any]] {
+            ((try? String(contentsOf: log, encoding: .utf8)) ?? "").split(separator: "\n").compactMap {
+                let row = try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+                return row?["kind"] as? String == kind ? row?["value"] as? [String: Any] : nil
+            }
+        }
+        func eventually(_ condition: () -> Bool) async {
+            for _ in 0..<300 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
+        }
+
+        _ = try await client.request("session.create", params: ["cwd": directory.path])
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(frames("node.connect").isEmpty, "Without delegation no node link opens")
+        _ = try await client.request("session.create", params: ["cwd": directory.path, "delegation": ["url": url.absoluteString, "token": first]])
+        await eventually { notices.count == 1 }
+        XCTAssertTrue(notices.first?.contains("device-request-1") == true, "\(notices)")
+        XCTAssertTrue(notices.first?.contains("Chat keeps working") == true)
+        // The next session that gets delegation tries again.
+        _ = try await client.request("session.create", params: ["cwd": directory.path, "delegation": ["url": url.absoluteString, "token": second]])
+        await eventually { frames("node.invoke.result").count == 5 }
+
+        let connects = frames("node.connect")
+        XCTAssertEqual(connects.count, 2)
+        for connect in connects {
+            XCTAssertEqual(connect["role"] as? String, "node")
+            XCTAssertEqual((connect["client"] as? [String: Any])?["mode"] as? String, "node")
+            XCTAssertEqual(connect["scopes"] as? [String], [])
+            XCTAssertEqual(connect["commands"] as? [String], ["mcp.tools.call.v1"])
+            XCTAssertEqual((connect["device"] as? [String: Any])?["nonce"] as? String, "fixture-challenge")
+        }
+        let published = try XCTUnwrap(frames("node.pluginTools.update").first?["tools"] as? [[String: Any]])
+        XCTAssertEqual(published.compactMap { $0["name"] as? String }, OpenClawNodeLink.descriptors(Delegation.tools).compactMap { $0["name"] as? String })
+        await eventually { notices.count == 2 }
+        XCTAssertTrue(notices.last?.contains("openclaw nodes approve") == true, "Filtered tools need the user's approval in OpenClaw: \(notices)")
+
+        let results = Dictionary(frames("node.invoke.result").map { ($0["id"] as? String ?? "", $0) }, uniquingKeysWith: { first, _ in first })
+        let node = (connects.last?["device"] as? [String: Any])?["id"] as? String
+        XCTAssertNotNil(node)
+        XCTAssertTrue(results.values.allSatisfy { $0["nodeId"] as? String == node })
+        // A companion session opened without delegation is refused like a foreign one.
+        for refused in ["foreign", "plain"] {
+            let payload = try XCTUnwrap(results[refused]?["payload"] as? [String: Any], refused)
+            XCTAssertEqual(payload["isError"] as? Bool, true, refused)
+            XCTAssertTrue(((payload["content"] as? [[String: Any]])?.first?["text"] as? String ?? "").contains("capability_denied"), refused)
+        }
+        let owned = try XCTUnwrap(results["owned"]?["payload"] as? [String: Any])
+        XCTAssertEqual(owned["isError"] as? Bool, false)
+        XCTAssertEqual((owned["structuredContent"] as? [String: Any])?["fixture"] as? String, "answer")
+        XCTAssertEqual(results["command"]?["ok"] as? Bool, false)
+        // Each call runs as the companion session that owns the calling key, with its own token.
+        XCTAssertEqual(Set(calls.map { $0.0.sessionID + ":" + $0.1 }), ["companion-1:orchestrator_capabilities", "companion-2:notch_session_list"])
+        XCTAssertEqual(calls.first { $0.1 == "orchestrator_capabilities" }?.2["search"] as? String, "fixture")
+        XCTAssertTrue(gateway.isRunning, "The existing Gateway is never stopped")
+    }
+
+    @MainActor
+    func testOpenClawAgentProfilesOfOneGatewayShareOneNodeLink() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let script = directory.appendingPathComponent("gateway.py"), portFile = directory.appendingPathComponent("port")
+        let log = directory.appendingPathComponent("node.log"), trigger = directory.appendingPathComponent("round")
+        // Each round written to `trigger` invokes a tool once for every session key on the node that published.
+        let source = #"""
+        import socket,hashlib,base64,json,struct,sys,threading,time
+        server=socket.socket();server.bind(('127.0.0.1',0));server.listen(8)
+        open(sys.argv[1],'w').write(str(server.getsockname()[1]))
+        log=open(sys.argv[2],'a');lock=threading.Lock();keys=[]
+        methods=['chat.send','chat.history','chat.abort','sessions.create','sessions.messages.subscribe','question.resolve','exec.approval.resolve']
+        scopes=['operator.read','operator.write','operator.approvals','operator.questions']
+        def record(kind,value):
+          with lock: log.write(json.dumps({'kind':kind,'value':value})+'\n');log.flush()
+        def exact(c,n):
+          result=b''
+          while len(result)<n:
+            part=c.recv(n-len(result))
+            if not part: raise EOFError()
+            result+=part
+          return result
+        def frame(c,value):
+          data=json.dumps(value).encode();n=len(data)
+          header=bytes([129,n]) if n<126 else bytes([129,126])+struct.pack('!H',n) if n<65536 else bytes([129,127])+struct.pack('!Q',n)
+          with lock: c.sendall(header+data)
+        def reply(c,r,payload): frame(c,{'type':'res','id':r['id'],'ok':True,'payload':payload})
+        def read(c):
+          a,b=exact(c,2)
+          if a&15==8: raise EOFError()
+          n=b&127
+          if n==126:n=struct.unpack('!H',exact(c,2))[0]
+          elif n==127:n=struct.unpack('!Q',exact(c,8))[0]
+          mask=exact(c,4) if b&128 else None;data=exact(c,n)
+          if mask:data=bytes(x^mask[i%4] for i,x in enumerate(data))
+          return json.loads(data)
+        def rounds(c,node):
+          done=0
+          while True:
+            time.sleep(0.01)
+            try: wanted=int(open(sys.argv[3]).read())
+            except Exception: continue
+            while done<wanted:
+              done+=1
+              with lock: current=list(keys)
+              for i,key in enumerate(current):
+                call={'server':'notch','tool':'notch_session_list','arguments':{}}
+                frame(c,{'type':'event','event':'node.invoke.request','payload':{'id':'%d-%d'%(done,i),'nodeId':node,'command':'mcp.tools.call.v1','paramsJSON':json.dumps(call),'timeoutMs':120000,'sessionKey':key}})
+        def handle(c):
+          node=None
+          try:
+            header=b''
+            while b'\r\n\r\n' not in header:header+=c.recv(4096)
+            key=[line.split(b':',1)[1].strip() for line in header.split(b'\r\n') if line.lower().startswith(b'sec-websocket-key:')][0]
+            accept=base64.b64encode(hashlib.sha1(key+b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
+            c.sendall(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+accept+b'\r\n\r\n')
+            frame(c,{'type':'event','event':'connect.challenge','payload':{'nonce':'fixture-challenge','ts':123456789}})
+            while True:
+              r=read(c);m=r['method'];p=r['params']
+              if m=='connect' and p['role']=='node':
+                record('node.connect',p);node=p['device']['id']
+                reply(c,r,{'type':'hello-ok','protocol':4,'auth':{'role':'node','scopes':[],'deviceToken':'node-token'},'features':{'methods':[]},'policy':{}})
+              elif m=='connect':reply(c,r,{'type':'hello-ok','protocol':4,'auth':{'scopes':scopes},'features':{'methods':methods},'policy':{'tickIntervalMs':30000}})
+              elif m=='sessions.create':
+                with lock: keys.append(p['key'])
+                reply(c,r,{'key':p['key'],'sessionId':'native-'+p['key']})
+              elif m=='sessions.messages.subscribe':reply(c,r,{})
+              elif m=='chat.history':reply(c,r,{'sessionKey':p['sessionKey'],'messages':[],'sessionInfo':{'hasActiveRun':False}})
+              elif m=='node.pluginTools.update':
+                reply(c,r,{'nodeId':node,'tools':p['tools']})
+                threading.Thread(target=rounds,args=(c,node),daemon=True).start()
+              elif m=='node.invoke.result':record('node.invoke.result',p);reply(c,r,{'ok':True})
+              else:raise Exception('unhandled method '+m)
+          except EOFError:pass
+          finally:
+            if node: record('node.closed',{'id':node})
+            c.close()
+        while True:
+          c,_=server.accept();threading.Thread(target=handle,args=(c,),daemon=True).start()
+        """#
+        try source.write(to: script, atomically: true, encoding: .utf8)
+        let gateway = Process(); gateway.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        gateway.arguments = [script.path, portFile.path, log.path, trigger.path]
+        gateway.standardOutput = FileHandle.nullDevice; gateway.standardError = FileHandle.nullDevice
+        try gateway.run()
+        defer { if gateway.isRunning { gateway.terminate() } }
+        for _ in 0..<100 {
+            if FileManager.default.fileExists(atPath: portFile.path) { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let port = try XCTUnwrap(Int(String(contentsOf: portFile, encoding: .utf8)))
+        let config: [String: Any] = ["gateway": ["port": port, "auth": ["mode": "none"]],
+                                     "agents": ["list": [["id": "main", "workspace": directory.path], ["id": "work", "workspace": directory.path]]]]
+        try JSONSerialization.data(withJSONObject: config).write(to: directory.appendingPathComponent("openclaw.json"))
+
+        let server = DelegationServer()
+        var callers: [String] = []
+        server.tools = { _ in Delegation.tools }
+        server.call = { caller, _, _ in callers.append(caller.sessionID); return [:] }
+        let url = try await server.start()
+        defer { server.stop() }
+        // Both agent profiles find the same Keychain device, as `OpenClawDevice.account` hashes only folder and endpoint.
+        let device = OpenClawDevice(privateKey: Curve25519.Signing.PrivateKey().rawRepresentation)
+        let main = OpenClawClient(profileID: RuntimeProfileIdentity.openClaw(directory: directory.path, agent: "main"), device: device)
+        let work = OpenClawClient(profileID: RuntimeProfileIdentity.openClaw(directory: directory.path, agent: "work"), device: device)
+        defer { main.disconnect(); work.disconnect() }
+        try await main.connect()
+        try await work.connect()
+        for (client, companion) in [(main, "companion-main"), (work, "companion-work")] {
+            let token = server.issueToken(for: DelegationCaller(sessionID: companion, runtime: .openclaw, subagent: false))
+            _ = try await client.request("session.create", params: ["delegation": ["url": url.absoluteString, "token": token]])
+        }
+        func frames(_ kind: String) -> [[String: Any]] {
+            ((try? String(contentsOf: log, encoding: .utf8)) ?? "").split(separator: "\n").compactMap {
+                let row = try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+                return row?["kind"] as? String == kind ? row?["value"] as? [String: Any] : nil
+            }
+        }
+        func eventually(_ condition: () -> Bool) async {
+            for _ in 0..<300 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
+        }
+        func denied(_ id: String) -> Bool? {
+            guard let payload = frames("node.invoke.result").first(where: { $0["id"] as? String == id })?["payload"] as? [String: Any] else { return nil }
+            return payload["isError"] as? Bool == true
+        }
+
+        try "1".write(to: trigger, atomically: true, encoding: .utf8)
+        await eventually { frames("node.invoke.result").count >= 2 }
+        XCTAssertEqual(frames("node.connect").count, 1, "One node per device, whichever agent delegates")
+        XCTAssertEqual(denied("1-0"), false, "The main agent's session is served")
+        XCTAssertEqual(denied("1-1"), false, "And so is the work agent's, on the same link")
+        XCTAssertEqual(Set(callers), ["companion-main", "companion-work"])
+
+        main.disconnect()
+        try "2".write(to: trigger, atomically: true, encoding: .utf8)
+        await eventually { frames("node.invoke.result").count >= 4 }
+        XCTAssertTrue(frames("node.closed").isEmpty, "The link stays while another agent still uses it")
+        XCTAssertEqual(denied("2-0"), true, "A disconnected agent's sessions are refused")
+        XCTAssertEqual(denied("2-1"), false)
+        work.disconnect()
+        await eventually { !frames("node.closed").isEmpty }
+        XCTAssertEqual(frames("node.closed").count, 1, "The last connection closes the link")
     }
 }

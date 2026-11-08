@@ -10,8 +10,11 @@ import XCTest
     /// Runtime IDs whose sends the harness refuses outright.
     var rejectSubmits: Set<String> = []
     var failNextCreate = false
+    var nextResumeError: Error?
     var createDelay: Duration?
     var modelDelay: Duration?
+    /// What each harness's installation reports about hosting delegation, by runtime name.
+    var hosts: [String: Bool] = [:]
     struct Rejected: LocalizedError, RuntimeDefinitiveRejection { var errorDescription: String? { "Refused." } }
     func connect() async throws { onConnectionChange?(true, nil) }
     func disconnect() { onConnectionChange?(false, nil) }
@@ -20,15 +23,20 @@ import XCTest
         switch method {
         case "session.create", "session.resume":
             if failNextCreate { failNextCreate = false; throw AppError("The harness did not start.") }
+            if method == "session.resume", let error = nextResumeError { nextResumeError = nil; throw error }
             if let createDelay { try await Task.sleep(for: createDelay) }
             let owner = params["companion_id"] as? String ?? UUID().uuidString
-            return ["session_id": "rt-" + owner, "stored_session_id": "native-" + owner]
+            var result: [String: Any] = ["session_id": "rt-" + owner, "stored_session_id": "native-" + owner]
+            result["hosts_delegation"] = hosts[params["runtime"] as? String ?? ""]
+            return result
         case "runtime.models":
             // Deliberately finish even after cancellation: the caller must
             // recheck before creating a child from this late catalog.
             if let modelDelay { try? await Task.sleep(for: modelDelay) }
-            return ["catalog": RuntimeModelCatalog(defaultModel: RuntimeModelChoice(model: "fixture-default"),
+            var result: [String: Any] = ["catalog": RuntimeModelCatalog(defaultModel: RuntimeModelChoice(model: "fixture-default"),
                 models: [RuntimeModelOption(choice: RuntimeModelChoice(model: "fixture-large"), title: "Large", reasoningEfforts: ["high"])])]
+            result["hosts_delegation"] = hosts[params["runtime"] as? String ?? ""]
+            return result
         case "prompt.steer" where steerFails: throw AppError("No running turn.")
         case "prompt.submit" where rejectSubmits.contains(params["session_id"] as? String ?? ""): throw Rejected()
         default: return [:]
@@ -357,6 +365,18 @@ import XCTest
         XCTAssertEqual(otherTransport.prompts(otherParent).count, 1)
     }
 
+    func testAWaitCountsChildCreationAgainstItsTimeout() async throws {
+        let (model, transport, _, _) = makeModel()
+        let (_, caller) = try await activeParent(model)
+        transport.createDelay = .milliseconds(800)
+        let started = Date()
+        let waited = try await model.handleDelegationTool(caller, name: "delegate_task", arguments: ["task": "Slow start", "mode": "wait", "timeoutMs": 600])
+        XCTAssertEqual(waited["waitTimedOut"] as? Bool, true)
+        XCTAssertEqual(waited["next"] as? String, Delegation.next)
+        // One budget from the call, so an OpenClaw wait answers inside the Gateway's node deadline.
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.2, "A 0.8 s creation uses up the 0.6 s budget, so the wait returns at once")
+    }
+
     func testAGrandchildKeepsEveryoneBusyUntilItEnds() async throws {
         let (model, transport, _, _) = makeModel()
         let (parentID, caller) = try await activeParent(model)
@@ -410,6 +430,25 @@ import XCTest
         XCTAssertEqual((capabilities["features"] as? [String: Any])?["maxBatchThreads"] as? Int, 20)
     }
 
+    func testOpenClawCallersWaitInsideTheGatewayDeadlineAndGetTheInstructions() async throws {
+        // A node tool call ends at 120 s, so every OpenClaw wait returns `next` before that.
+        XCTAssertEqual(AppModel.waitTimeout([:], runtime: .openclaw), Delegation.openClawMaxWait)
+        XCTAssertEqual(AppModel.waitTimeout(["timeoutMs": 3_600_000], runtime: .openclaw), Delegation.openClawMaxWait)
+        XCTAssertEqual(AppModel.waitTimeout(["timeoutMs": 5_000], runtime: .openclaw), 5)
+        XCTAssertEqual(AppModel.waitTimeout([:], runtime: .codex), Delegation.defaultWait)
+        XCTAssertEqual(AppModel.waitTimeout(["timeoutMs": 3_600_000], runtime: .codex), Delegation.maxWait)
+        XCTAssertLessThan(Delegation.openClawMaxWait, 120)
+
+        let (model, _, _, _) = makeModel()
+        let (_, caller) = try await activeParent(model, runtime: .openclaw)
+        let capabilities = try await model.handleDelegationTool(caller, name: "orchestrator_capabilities", arguments: [:])
+        XCTAssertEqual(capabilities["instructions"] as? String, Delegation.instructions, "Node tools carry no server instructions")
+        let (other, _, _, _) = makeModel()
+        let (_, codex) = try await activeParent(other)
+        let codexCapabilities = try await other.handleDelegationTool(codex, name: "orchestrator_capabilities", arguments: [:])
+        XCTAssertNil(codexCapabilities["instructions"], "Other harnesses already have them in their own prompt")
+    }
+
     func testRegistryRoundTripsDelegationAndOldRegistriesDecode() throws {
         var child = CompanionSession()
         child.parentSessionID = "parent"
@@ -431,13 +470,76 @@ import XCTest
     }
 
     func testCompanionToolsAreLabelledUnderEveryPrefix() {
-        for name in ["mcp__notch__delegate_task", "notch.delegate_task", "delegate_task"] {
+        for name in ["mcp__notch__delegate_task", "notch.delegate_task", "delegate_task", "notch_delegate_task", OpenCodeClient.delegationServerName("ses_x") + "_delegate_task"] {
             XCTAssertEqual(ToolActivity(id: "a", name: name, detail: "").displayName, "Delegating a child task", name)
         }
+        XCTAssertNil(ToolActivity.delegationTool("notch-docs_search"), "Only a companion server's tools, not a user's server named notch-…")
+        // OpenClaw's `notch_` prefix, and the bare tools that already start with `notch_`.
+        XCTAssertEqual(ToolActivity.delegationTool("notch_notch_session_list"), "notch_session_list")
+        XCTAssertEqual(ToolActivity.delegationTool("notch_session_list"), "notch_session_list")
+        XCTAssertNil(ToolActivity.delegationTool("notch_unrelated"))
         XCTAssertEqual(ToolActivity(id: "a", name: "mcp__notch__task_status", detail: "", state: .finished).displayName, "Got delegated task status")
         XCTAssertEqual(NotchHeaderView.status(state: .working, session: CompanionSession(), waitingOnChild: true).text, "Waiting on a child")
         XCTAssertLessThan(Delegation.instructions.utf8.count, 4_000, "Codex truncates a longer context entry")
         XCTAssertEqual(Set(Delegation.tools.compactMap { $0["name"] as? String }), Set(ToolActivity.delegationLabels.keys), "Every tool has a label")
+    }
+
+    func testAnInstallationThatCannotHostGetsNoTokenAndIsNotOfferedAsDelegating() async throws {
+        for hosts in [false, true] {
+            let (model, transport, _, _) = makeModel(preferences: preferences(ready: [.codex, .opencode]))
+            transport.hosts["opencode"] = hosts
+            // Opened before anything was known: the installation's answer decides whether the token stays.
+            await model.connect()
+            await model.newSession(showPanel: false, runtime: .opencode)
+            let direct = try XCTUnwrap(model.currentID)
+            model.draft = "Hello"
+            await model.send()
+            XCTAssertNotNil(transport.calls.last { $0.0 == "session.create" }?.1["delegation"])
+            XCTAssertEqual(model.delegationServer.hasGrant(sessionID: direct), hosts, "OpenCode 1.x never uses its token")
+
+            let (_, caller) = try await activeParent(model)
+            let capabilities = try await model.handleDelegationTool(caller, name: "orchestrator_capabilities", arguments: [:])
+            let rows = try XCTUnwrap(capabilities["runtimes"] as? [[String: Any]])
+            let constraints = rows.first { $0["runtime"] as? String == "opencode" }?["constraints"] as? [String] ?? []
+            XCTAssertEqual(constraints.contains("Its children cannot delegate further."), !hosts)
+            let task = try await model.handleDelegationTool(caller, name: "delegate_task", arguments: ["task": "Look", "target": ["runtime": "opencode"]])
+            let delegated = try XCTUnwrap(child(model, task: task["taskId"]))
+            XCTAssertEqual(transport.calls.last { $0.0 == "session.create" }?.1["delegation"] != nil, hosts, "Only a hosting child gets the tools")
+            XCTAssertEqual(model.delegationServer.hasGrant(sessionID: delegated.id), hosts)
+        }
+    }
+
+    func testOpenCodeToolsRefuseACallFromAnotherNativeSession() async throws {
+        let (model, _, _, _) = makeModel(preferences: preferences(ready: [.codex, .opencode]))
+        let (parentID, caller) = try await activeParent(model, runtime: .opencode)
+        let server = model.delegationServer
+        let token = server.issueToken(for: caller)
+        func post(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {
+            let response = await server.respond(method: "POST", path: "/mcp", headers: ["Authorization": "Bearer " + token],
+                                                body: try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 1, "method": method, "params": params]))
+            return try XCTUnwrap((try JSONSerialization.jsonObject(with: response.body) as? [String: Any])?["result"] as? [String: Any])
+        }
+        func list(from native: String?) async throws -> Bool {
+            var params: [String: Any] = ["name": "notch_session_list", "arguments": [:]]
+            if let native { params["_meta"] = ["ai.opencode/sessionID": native] }
+            let result = try await post("tools/call", params)
+            if result["isError"] as? Bool == true {
+                XCTAssertTrue(((result["content"] as? [[String: Any]])?.first?["text"] as? String)?.contains("capability_denied") == true)
+            }
+            return result["isError"] as? Bool == false
+        }
+        let initialized = try await post("initialize", ["protocolVersion": "2025-06-18"])
+        XCTAssertEqual(initialized["instructions"] as? String, "", "The session instruction entry carries them once, not once per server")
+        let own = try XCTUnwrap(model.sessions.first { $0.id == parentID }?.storedID)
+        let ownResult = try await list(from: own)
+        XCTAssertTrue(ownResult, "The session itself")
+        let unnamed = try await list(from: nil)
+        XCTAssertTrue(unnamed, "No session named, nothing to check")
+        let other = try await list(from: "ses_another")
+        XCTAssertFalse(other, "Another session cannot use this session's server and token")
+        model.update(parentID) { $0.agents.append(ChildAgent(id: "ses_native_child", nativeID: "ses_native_child", title: "Explore")) }
+        let nativeChild = try await list(from: "ses_native_child")
+        XCTAssertTrue(nativeChild, "A native subagent works inside its parent's turn")
     }
 
     // MARK: Session tools
@@ -805,6 +907,21 @@ import XCTest
         XCTAssertEqual(transport.calls.filter { $0.0 == "session.create" }.compactMap { $0.1["delegation"] }.count, 2)
     }
 
+    func testAHermesSessionReplacedAfterAMissingUnusedIDStillGetsTheTools() async throws {
+        let (model, transport, _, _) = makeModel(preferences: preferences(ready: [.hermes, .codex]))
+        await model.connect()
+        await model.newSession(showPanel: false, runtime: .hermes)
+        let id = try XCTUnwrap(model.currentID)
+        model.update(id) { $0.storedID = "vanished-before-first-prompt" }
+        transport.nextResumeError = HermesClientError.rpc(4007, "session not found")
+        model.draft = "Plan the release"
+        await model.send()
+        let opens = transport.calls.filter { ["session.resume", "session.create"].contains($0.0) }
+        XCTAssertEqual(opens.map(\.0), ["session.resume", "session.create"])
+        XCTAssertNotNil(opens.last?.1["delegation"], "The replacement session gets the tools with a fresh token")
+        XCTAssertTrue(model.delegationServer.hasGrant(sessionID: id))
+    }
+
     func testStopWhileAChildIsStartingKeepsItFromStarting() async throws {
         let (model, transport, _, _) = makeModel()
         let (parentID, caller) = try await activeParent(model)
@@ -831,6 +948,10 @@ import XCTest
     }
 
     func testAnACPReloadKeepsTheBridgeItWasOpenedWith() async throws {
+        for runtime in [RuntimeKind.opencode, .cursor] { try await checkACPReloadKeepsTheBridge(runtime) }
+    }
+
+    private func checkACPReloadKeepsTheBridge(_ runtime: RuntimeKind) async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("notch-acp-delegation-\(UUID().uuidString)")
         folders.append(folder)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -849,7 +970,7 @@ import XCTest
             if wire is not None: print(json.dumps({"jsonrpc": "2.0", "id": wire, "result": result}), flush=True)
         """#.utf8).write(to: executable)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-        let client = ACPRuntimeClient(runtime: .opencode, profileID: folder.path, executableOverride: executable)
+        let client = ACPRuntimeClient(runtime: runtime, profileID: folder.path, executableOverride: executable)
         defer { client.disconnect() }
         try await client.connect()
         let delegation: [String: Any] = ["url": "http://127.0.0.1:9/mcp", "token": "tok", "bridge": "/bin/bridge"]
@@ -860,7 +981,7 @@ import XCTest
         }
         let servers = rows.filter { ["session/new", "session/load"].contains($0["method"] as? String) }
             .map { (($0["params"] as? [String: Any])?["mcpServers"] as? [[String: Any]])?.first?["command"] as? String }
-        XCTAssertEqual(servers, ["/bin/bridge", "/bin/bridge"], "Check last send reloads with the same bridge")
+        XCTAssertEqual(servers, ["/bin/bridge", "/bin/bridge"], "\(runtime.title): Check last send reloads with the same bridge")
     }
 
     func testAClientThatClosesCancelsItsBlockingToolCall() async throws {
@@ -1059,7 +1180,7 @@ import XCTest
         var untouched = ["PATH": "/usr/bin"]
         XCTAssertTrue(PiClient.delegationArguments(nil, environment: &untouched).isEmpty)
         XCTAssertEqual(untouched, ["PATH": "/usr/bin"])
-        XCTAssertEqual(RuntimeKind.allCases.filter(\.hostsDelegation), [.codex, .pi, .claude, .deepseek])
+        XCTAssertEqual(RuntimeKind.allCases.filter(\.hostsDelegation), RuntimeKind.allCases, "Every harness hosts delegation")
     }
 
     func testTheStdioBridgeRelaysEachLineWithTheSessionToken() async throws {
@@ -1149,6 +1270,84 @@ import XCTest
         XCTAssertTrue(text.contains("t1") && text.contains("task_status"), text)
         XCTAssertEqual((result["prompt"] as? [String: Any])?["systemPrompt"] as? String, "BASE\n\nPi instructions.", "Appended, never replacing Pi's prompt")
         XCTAssertTrue(result["token"] is NSNull, "The token is cleared before the agent runs commands")
+    }
+
+    /// The lines SharedHermesClient writes, read by the bundled launcher against
+    /// stand-ins for Hermes's registry and session map, calling the real server.
+    func testTheHermesLauncherRegistersTheToolsAndCallsAsTheBoundSession() async throws {
+        let candidates = ["/usr/bin"] + (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
+        guard let python = candidates.map({ URL(fileURLWithPath: $0).appendingPathComponent("python3") })
+            .first(where: { FileManager.default.isExecutableFile(atPath: $0.path) }) else { throw XCTSkip("python3 is needed to load the Hermes launcher.") }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/NotchCompanion/Resources/hermes_frontend.py")
+        let server = DelegationServer()
+        defer { server.stop() }
+        server.tools = { _ in Delegation.tools }
+        var callers: [DelegationCaller] = []
+        server.call = { caller, name, arguments in callers.append(caller); return ["tool": name, "taskId": arguments["taskId"] ?? ""] }
+        let url = try await server.start()
+        let token = server.issueToken(for: DelegationCaller(sessionID: "hermes-parent", runtime: .hermes, subagent: false))
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("notch-hermes-launcher-\(UUID().uuidString)")
+        folders.append(folder)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let driver = folder.appendingPathComponent("driver.py")
+        try Data("""
+        import importlib.util, json, sys, threading
+        from types import ModuleType, SimpleNamespace
+        spec = importlib.util.spec_from_file_location("frontend", sys.argv[1])
+        frontend = importlib.util.module_from_spec(spec); spec.loader.exec_module(frontend)
+        class Registry:
+            entries = {}
+            def register(self, name, toolset, schema, handler, check_fn=None, execution_timeout=None):
+                self.entries[name] = SimpleNamespace(toolset=toolset, handler=handler, execution_timeout=execution_timeout)
+            def get_entry(self, name): return self.entries.get(name)
+        registry = ModuleType("tools.registry"); registry.registry = Registry()
+        server = ModuleType("tui_gateway.server")
+        server._sessions = {"live-1": {"session_key": "stored-1", "agent": None}}
+        server._sessions_lock = threading.RLock()
+        server._load_enabled_toolsets = lambda platform=None: ["file"]
+        agent = ModuleType("agent"); agent.prompt_builder = ModuleType("agent.prompt_builder"); agent.prompt_builder.PLATFORM_HINTS = {}
+        sys.modules.update({"tools.registry": registry, "tui_gateway.server": server, "agent": agent,
+                            "agent.prompt_builder": agent.prompt_builder, "tools.interrupt": None})
+        reports = []
+        delegation = frontend.NotchDelegation(report=reports.append)
+        frontend.os.kill = lambda *_: None  # the scripted pipe's EOF must not stop this driver
+        frontend.watch_parent(None, delegation.receive)
+        entries = registry.registry.entries
+        status = entries["mcp__notch__task_status"].handler({"taskId": "t1"}, session_id="stored-1")
+        print(json.dumps({"reports": reports, "names": sorted(entries), "toolsets": server._load_enabled_toolsets(),
+                          "timeouts": sorted({entry.execution_timeout for entry in entries.values()}),
+                          "hint": agent.prompt_builder.PLATFORM_HINTS.get("notch_companion", ""), "status": status}))
+        """.utf8).write(to: driver)
+        var pipe = Data()
+        for message in [SharedHermesClient.toolsMessage,
+                        SharedHermesClient.bindMessage(session: "live-1", delegation: ["url": url.absoluteString, "token": token])] {
+            pipe += try JSONSerialization.data(withJSONObject: message) + Data([0x0A])
+        }
+        let process = Process()
+        process.executableURL = python
+        process.arguments = ["-I", "-B", driver.path, source.path]
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input; process.standardOutput = output; process.standardError = FileHandle.nullDevice
+        let reader = Task.detached { output.fileHandleForReading.readDataToEndOfFile() }
+        try process.run()
+        try input.fileHandleForWriting.write(contentsOf: pipe)
+        try input.fileHandleForWriting.close()
+        let data = await reader.value
+        await withCheckedContinuation { done in DispatchQueue.global().async { process.waitUntilExit(); done.resume() } }
+        let result = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any], String(decoding: data, as: UTF8.self))
+        let reports = try XCTUnwrap(result["reports"] as? [[String: Any]])
+        XCTAssertEqual(reports.count, 1)
+        XCTAssertNil(SharedHermesClient.delegationFailure(reports[0]), "The launcher confirms the tools before any session opens")
+        XCTAssertEqual(result["names"] as? [String], Delegation.tools.compactMap { ($0["name"] as? String).map { "mcp__notch__" + $0 } }.sorted())
+        XCTAssertEqual(result["toolsets"] as? [String], ["file", "notch"], "An explicit toolset selection gains only the notch toolset")
+        XCTAssertEqual(result["timeouts"] as? [Int], [3900], "Hour-long waits are not cut by Hermes's tool executor")
+        XCTAssertTrue((result["hint"] as? String ?? "").hasSuffix(Delegation.instructions))
+        let status = try XCTUnwrap(JSONSerialization.jsonObject(with: Data((result["status"] as? String ?? "").utf8)) as? [String: Any])
+        XCTAssertEqual(status["taskId"] as? String, "t1")
+        XCTAssertEqual(status["tool"] as? String, "task_status")
+        XCTAssertEqual(callers, [DelegationCaller(sessionID: "hermes-parent", runtime: .hermes, subagent: false)], "The call ran as the bound session")
+        XCTAssertNotNil(SharedHermesClient.delegationFailure(["ready": false]), "A refusal becomes the session's notice")
     }
 
     func testCodexThreadsGetOnlyTheirOwnServerAndInstructionsOnce() async throws {

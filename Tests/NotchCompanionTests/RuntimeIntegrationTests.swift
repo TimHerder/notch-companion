@@ -170,7 +170,11 @@ final class RuntimeIntegrationTests: XCTestCase {
         old.draft = "Continue this work"; old.attachments = [Attachment(url: URL(fileURLWithPath: "/tmp/previous.txt"))]
         model.sessions = [old]; model.currentID = old.id
         await model.continueLegacySession(old.id)
-        XCTAssertEqual(model.sessions.first { $0.id == old.id }, old)
+        // Leaving it restarts only its local auto-archive clock; its native identity and history are untouched.
+        var left = old
+        left.lastSeenAt = model.sessions.first { $0.id == old.id }?.lastSeenAt
+        XCTAssertNotNil(left.lastSeenAt)
+        XCTAssertEqual(model.sessions.first { $0.id == old.id }, left)
         let next = try XCTUnwrap(model.current)
         XCTAssertNotEqual(next.id, old.id)
         XCTAssertFalse(next.isLegacyPrivate)
@@ -246,10 +250,14 @@ final class RuntimeIntegrationTests: XCTestCase {
         XCTAssertTrue(model.hasActiveWork, "Reading cannot certify native delivery or allow a silent reload")
         let saved = try JSONDecoder().decode([CompanionSession].self, from: Data(contentsOf: file))
         XCTAssertNotNil(saved.first?.pendingSubmission)
+        // A relaunch or disconnect records a provisional outcome for the unconfirmed turn.
+        let row = try XCTUnwrap(model.current?.messages.last { $0.role == "user" })
+        model.sessions[0].turnOutcome[row.id] = .interrupted
         await model.send()
         XCTAssertEqual(transport.calls.filter { $0.0 == "prompt.submit" }.count, 1)
         XCTAssertNil(model.current?.pendingSubmission)
         XCTAssertEqual(model.current?.state, .finished)
+        XCTAssertEqual(model.current?.turnOutcome[row.id], .finished, "The runtime's terminal status replaces a provisional outcome")
         XCTAssertTrue(model.current?.hasUnreadCompletion == true)
         XCTAssertTrue(model.draft.isEmpty)
         XCTAssertEqual(model.current?.messages.filter { $0.role == "user" }.count, 1)

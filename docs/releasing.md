@@ -126,7 +126,7 @@ A release in a private repository is still private. Before changing visibility:
   using that exact download.
 - Enable private vulnerability reporting. Check [SECURITY.md](../SECURITY.md),
   the issue templates and links. Keep PR creation limited to collaborators.
-- Keep experimental adapters labeled.
+- Check that the [verification record](verification.md) states each adapter's evidence.
 
 Developer ID signing and notarization, universal binaries and an in-app updater
 are future options. No workflow changes repository visibility.

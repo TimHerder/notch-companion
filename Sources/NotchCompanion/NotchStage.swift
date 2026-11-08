@@ -1,16 +1,23 @@
 import AppKit
 import SwiftUI
 
-/// What the popup stage says about an announcement, derived from live state:
-/// a question answered meanwhile shows that it landed.
+/// What the popup stage says about an announcement. Results and failures
+/// show the message snapshotted when announced; a question shows the live
+/// request, so one answered meanwhile shows that it landed.
 struct StageContent: Equatable {
     var title: String
     var detail: String
-    var runtime: String?
+    /// Faint trailing facts: the runtime and how long the turn worked.
+    var meta: String?
     /// The pending question or approval the stage answers in place.
     var request: PendingRequest?
     var quickReply: GlanceQuickReply?
     var answered = false
+    /// What an approval wants to run, in its own monospaced field.
+    var command: String?
+    /// A finished turn's changes, summarised on one quiet line.
+    var changes: TurnChanges?
+    /// The column beside the mascot (or the eyes' inset); text hangs after the icon.
     var textWidth: CGFloat = column
 
     @MainActor static func make(_ announcement: NotchAnnouncement, sessions: [CompanionSession],
@@ -24,15 +31,39 @@ struct StageContent: Equatable {
             break
         }
         guard let session = sessions.first(where: { $0.id == announcement.sessionID }) else {
-            return StageContent(title: announcement.title, detail: "", textWidth: textWidth)
+            return StageContent(title: announcement.title, detail: announcement.detail, textWidth: textWidth)
         }
-        let entry = SessionDigest.entry(session, requests: requests)
-        let answered = announcement.kind == .needsInput && entry.status != .needsInput
-        let request = announcement.kind == .needsInput && !answered && session.nativeActivityUnverified == nil && session.runtimeID != nil
-            ? requests.first(where: { $0.sessionID == session.runtimeID }) : nil
-        return StageContent(title: session.title, detail: entry.detail, runtime: entry.runtime, request: request,
-                            quickReply: request.flatMap { GlanceQuickReply.make(for: $0, maxCharacters: .max) }, answered: answered,
-                            textWidth: textWidth)
+        let runtime = session.isLegacyPrivate ? "Legacy Hermes" : session.runtime.title
+        var content = StageContent(title: session.title, detail: announcement.detail,
+                                   meta: announcement.worked.map { "\(runtime) · \(SessionDigest.elapsed($0))" } ?? runtime,
+                                   textWidth: textWidth)
+        switch announcement.kind {
+        case .finished:
+            content.changes = session.changes.first { $0.id == session.latestUserTurnID && !$0.allFiles.isEmpty }
+        case .needsInput:
+            content.answered = CollapsedStatus.resolve(session: session) != .waiting
+            guard !content.answered, session.nativeActivityUnverified == nil, session.runtimeID != nil,
+                  let request = requests.first(where: { $0.sessionID == session.runtimeID }) else {
+                if content.answered, announcement.isApproval {
+                    content.detail = "Wants to run"
+                    content.command = announcement.detail
+                }
+                if content.detail.isEmpty { content.detail = SessionDigest.entry(session, requests: requests).detail }
+                break
+            }
+            content.request = request
+            content.quickReply = GlanceQuickReply.make(for: request, maxCharacters: .max)
+            let detail = SessionDigest.oneLine(request.detail)
+            if request.kind == .approval, !detail.isEmpty {
+                content.detail = "Wants to run"
+                content.command = detail
+            } else {
+                content.detail = detail.isEmpty ? request.title : detail
+            }
+        case .failed, .hello:
+            break
+        }
+        return content
     }
 
     /// One typed line answers an open or single-choice question.
@@ -42,13 +73,73 @@ struct StageContent: Equatable {
     }
 
     /// Choices wrap across the text column the way the stage lays them out.
-    var choiceRows: [[GlanceQuickReply.Choice]] { quickReply.map { Self.pack($0.choices, width: textWidth) } ?? [] }
+    var choiceRows: [[GlanceQuickReply.Choice]] { quickReply.map { Self.pack($0.choices, width: bodyWidth) } ?? [] }
 
     /// Rows under the question: choices, then a reply field; or the sent confirmation.
     var answerRows: Int { answered ? 1 : choiceRows.count + (acceptsText ? 1 : 0) }
 
     static let column = NotchGeometry.stageWidth - MascotLayout.stageColumn - 14
     static let rowSpacing: CGFloat = 4
+
+    // MARK: Layout, shared by the view and the stage's height
+
+    /// The status icon's column; message, field and answers hang after it.
+    static let indent: CGFloat = 23
+    static let headerHeight: CGFloat = 20
+    static let messageFont = NSFont.systemFont(ofSize: 12.5)
+    static let lineHeight = messageFont.ascender - messageFont.descender + messageFont.leading
+    static let messageGap: CGFloat = 4
+    static let changesGap: CGFloat = 6, changesHeight: CGFloat = 14
+    static let commandGap: CGFloat = 8, commandHeight: CGFloat = 24
+    static let commandFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+    static let commandLineHeight = commandFont.ascender - commandFont.descender + commandFont.leading
+    static let commandMaxLines = 3
+    static let answersGap: CGFloat = 10, answerHeight: CGFloat = 26
+    static let topPadding: CGFloat = 8, bottomPadding: CGFloat = 16
+
+    var bodyWidth: CGFloat { max(1, textWidth - Self.indent) }
+
+    /// Lines the message takes at the column width: up to three, two when answers or a command follow.
+    var messageLines: Int {
+        guard !detail.isEmpty else { return 0 }
+        let bounds = (detail as NSString).boundingRect(with: NSSize(width: bodyWidth, height: .greatestFiniteMagnitude),
+                                                       options: [.usesLineFragmentOrigin], attributes: [.font: Self.messageFont])
+        let lines = max(1, Int((bounds.height / Self.lineHeight).rounded()))
+        return min(answerRows > 0 || command != nil ? 2 : 3, lines)
+    }
+
+    /// A command may break between any two characters, so wrapping never hides its middle.
+    static func breakable(_ command: String) -> String { command.map(String.init).joined(separator: "\u{200B}") }
+
+    /// Lines the command wraps to inside its field's 8-point insets: up to three, tail-truncated after that.
+    var commandLines: Int {
+        guard let command else { return 0 }
+        // Far more than three lines' worth at the stage's width; measuring further changes nothing.
+        let bounds = (Self.breakable(String(command.prefix(400))) as NSString)
+            .boundingRect(with: NSSize(width: bodyWidth - 16, height: .greatestFiniteMagnitude),
+                          options: [.usesLineFragmentOrigin], attributes: [.font: Self.commandFont])
+        return min(Self.commandMaxLines, max(1, Int((bounds.height / Self.commandLineHeight).rounded())))
+    }
+
+    /// One line keeps the 24-point field; each further line adds its height.
+    var commandFieldHeight: CGFloat { Self.commandHeight + ceil(CGFloat(max(0, commandLines - 1)) * Self.commandLineHeight) }
+
+    var answersHeight: CGFloat {
+        let rows = CGFloat(answerRows)
+        return rows > 0 ? rows * Self.answerHeight + (rows - 1) * Self.rowSpacing : 0
+    }
+
+    /// The stage body under the band, measured from its content. With the
+    /// mascot it keeps the room its 150-point figure needs.
+    func bodyHeight(mascot: Bool) -> CGFloat {
+        let lines = messageLines
+        var height = Self.topPadding + Self.headerHeight + Self.bottomPadding
+        if lines > 0 { height += Self.messageGap + ceil(CGFloat(lines) * Self.lineHeight) }
+        if changes != nil { height += Self.changesGap + Self.changesHeight }
+        if command != nil { height += Self.commandGap + commandFieldHeight }
+        if answerRows > 0 { height += Self.answersGap + answersHeight }
+        return mascot ? max(NotchGeometry.mascotStageBodyHeight, height) : height
+    }
 
     static func pack(_ choices: [GlanceQuickReply.Choice], width: CGFloat = column) -> [[GlanceQuickReply.Choice]] {
         let font = NSFont.systemFont(ofSize: 11, weight: .medium)
@@ -79,67 +170,125 @@ extension AppModel {
                                  mascot: mascotEnabled ? mascotCharacter.label : nil)
     }
 
-    /// Answer rows the current stage shows; they size the stage.
-    var stageAnswerRows: Int { stageContent?.answerRows ?? 0 }
+    /// The current stage's body height; the host sizes the stage with it.
+    var stageBodyHeight: CGFloat { stageContent?.bodyHeight(mascot: mascotEnabled) ?? NotchGeometry.mascotStageBodyHeight }
 }
 
-/// The stage's text, beside the mascot when selected: verb, title, a little of the result, or the
-/// question with its answers. Clicking opens the session and hovering away
-/// lets it retract, so it carries no buttons of its own. The mascot itself is drawn
-/// by the eyes' layer.
+/// The stage's text, beside the mascot when selected: the acting status icon,
+/// title and faint meta, the message, then a change line, an approval's
+/// command or the question's answers. Clicking opens the session and hovering
+/// away lets it retract, so it carries no buttons of its own. The mascot itself
+/// is drawn by the eyes' layer.
 struct NotchStageView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
         let stage = model.notchPresentation.stage
         if let announcement = model.announcement, let content = model.stageContent {
-            let rows = CGFloat(content.answerRows)
-            let answersHeight = rows > 0 ? rows * 26 + (rows - 1) * StageContent.rowSpacing + 6 : 0
-            ZStack(alignment: .bottomLeading) {
+            let lines = content.messageLines
+            ZStack {
+                // Everything but the answers, the mascot included, opens the session.
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.openAnnouncedSession() }
+                    .pressableCursor()
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 6) {
-                        AnnouncementLabel(announcement: announcement, reducedMotion: model.reducedMotion, showsTitle: false)
-                        if let runtime = content.runtime {
-                            Text("· \(runtime)").font(.system(size: 11)).foregroundStyle(IslandStyle.faint).lineLimit(1)
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(alignment: .firstTextBaseline, spacing: 0) {
+                            AnnouncementIcon(announcement: announcement, reducedMotion: model.reducedMotion, size: 14)
+                                .frame(width: StageContent.indent, alignment: .leading)
+                            Text(content.title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                            Spacer(minLength: 10)
+                            if let meta = content.meta {
+                                Text(meta).font(.system(size: 10.5).monospacedDigit()).foregroundStyle(IslandStyle.faint)
+                                    .lineLimit(1).fixedSize()
+                            }
                         }
-                        Spacer(minLength: 0)
-                    }
-                    .frame(height: 22)
-                    .glanceReveal(peek: stage, index: 0, reducedMotion: model.reducedMotion)
-                    Text(content.title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
-                        .padding(.top, 4)
+                        .frame(height: StageContent.headerHeight)
+                        .glanceReveal(peek: stage, index: 0, reducedMotion: model.reducedMotion)
+                        Group {
+                            if lines > 0 {
+                                Text(content.detail).font(Font(StageContent.messageFont))
+                                    .foregroundStyle(IslandStyle.text.opacity(0.78))
+                                    .lineLimit(lines)
+                                    .frame(height: ceil(CGFloat(lines) * StageContent.lineHeight), alignment: .topLeading)
+                                    .padding(.top, StageContent.messageGap)
+                            }
+                            if let changes = content.changes { changeLine(changes) }
+                            if let command = content.command { commandField(command, height: content.commandFieldHeight) }
+                        }
+                        .padding(.leading, StageContent.indent)
                         .glanceReveal(peek: stage, index: 1, reducedMotion: model.reducedMotion)
-                    Text(content.detail).font(.system(size: 12)).foregroundStyle(IslandStyle.secondary)
-                        .lineLimit(content.answerRows > 0 ? 2 : 3).fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 3)
-                        .glanceReveal(peek: stage, index: 2, reducedMotion: model.reducedMotion)
-                    Spacer(minLength: 0)
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(spoken(announcement, content))
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { model.openAnnouncedSession() }
+                    .accessibilityAction(named: "Dismiss") { model.dismissStage?() }
+                    if content.answerRows > 0 {
+                        answers(content)
+                            .padding(.top, StageContent.answersGap)
+                            .padding(.leading, StageContent.indent)
+                            .glanceReveal(peek: stage, index: 2, reducedMotion: model.reducedMotion)
+                    }
                 }
                 .padding(.leading, model.stageTextInset)
                 .padding(.trailing, 14)
-                .padding(.top, 6)
-                .padding(.bottom, 14 + answersHeight)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                // Everything but the answers, the mascot included, opens the session.
-                .contentShape(Rectangle())
-                .onTapGesture { model.openAnnouncedSession() }
-                .pressableCursor()
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(announcement.kind.verb): \(content.title). \(content.detail)")
-                .accessibilityAddTraits(.isButton)
-                .accessibilityAction(named: "Dismiss") { model.dismissStage?() }
-                if content.answerRows > 0 {
-                    answers(content)
-                        .padding(.leading, model.stageTextInset)
-                        .padding(.trailing, 14)
-                        .padding(.bottom, 14)
-                        .glanceReveal(peek: stage, index: 3, reducedMotion: model.reducedMotion)
-                }
+                .padding(.top, StageContent.topPadding)
+                .padding(.bottom, StageContent.bottomPadding)
+                // Beside the mascot the text centres on the figure; with the eyes it starts under the band.
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: model.mascotEnabled ? .leading : .topLeading)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .foregroundStyle(IslandStyle.text)
             .accessibilityElement(children: .contain)
         }
+    }
+
+    private func spoken(_ announcement: NotchAnnouncement, _ content: StageContent) -> String {
+        var parts = ["\(announcement.kind.verb): \(content.title)"]
+        if !content.detail.isEmpty { parts.append(content.detail) }
+        if let command = content.command { parts.append(String(command.prefix(NotchAnnouncement.spokenLimit))) }
+        if let changes = content.changes {
+            parts.append("\(changes.allFiles.count) changed files, \(Self.added(changes)) lines added, \(Self.removed(changes)) removed")
+        }
+        return parts.joined(separator: ". ")
+    }
+
+    private static func added(_ changes: TurnChanges) -> Int { changes.allFiles.compactMap(\.additions).reduce(0, +) }
+    private static func removed(_ changes: TurnChanges) -> Int { changes.allFiles.compactMap(\.deletions).reduce(0, +) }
+
+    /// "4 files  +120 −8", quiet, the counts in their diff colors.
+    private func changeLine(_ changes: TurnChanges) -> some View {
+        let files = changes.allFiles.count
+        return HStack(spacing: 8) {
+            Text("\(files) \(files == 1 ? "file" : "files")").foregroundStyle(IslandStyle.secondary)
+            HStack(spacing: 5) {
+                Text("+\(Self.added(changes))").foregroundStyle(IslandStyle.indicatorColor(.finished))
+                Text("−\(Self.removed(changes))").foregroundStyle(IslandStyle.error)
+            }
+        }
+        .font(.system(size: 11, weight: .medium).monospacedDigit())
+        .lineLimit(1)
+        .frame(height: StageContent.changesHeight)
+        .padding(.top, StageContent.changesGap)
+    }
+
+    /// What an approval wants to run, monospaced: it wraps between any characters
+    /// up to three lines and only then truncates at the tail, never in the middle.
+    private func commandField(_ command: String, height: CGFloat) -> some View {
+        // Three lines overflow long before this; it matches what bodyHeight measures.
+        Text(StageContent.breakable(String(command.prefix(400))))
+            .font(Font(StageContent.commandFont))
+            .foregroundStyle(IslandStyle.text.opacity(0.9))
+            .lineLimit(StageContent.commandMaxLines).truncationMode(.tail)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .leading)
+            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.white.opacity(0.08), lineWidth: 0.75))
+            .padding(.top, StageContent.commandGap)
     }
 
     @ViewBuilder private func answers(_ content: StageContent) -> some View {
@@ -148,7 +297,7 @@ struct NotchStageView: View {
             if content.answered {
                 Label("Answer sent", systemImage: "checkmark")
                     .font(.system(size: 11.5, weight: .medium)).foregroundStyle(IslandStyle.accent)
-                    .frame(height: 26)
+                    .frame(height: StageContent.answerHeight)
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             } else if let request = content.request {
                 ForEach(Array(content.choiceRows.enumerated()), id: \.offset) { _, row in
@@ -159,7 +308,7 @@ struct NotchStageView: View {
                                 .accessibilityLabel("\(choice.label), answer \(content.title)")
                         }
                     }
-                    .frame(height: 26)
+                    .frame(height: StageContent.answerHeight)
                 }
                 if content.acceptsText {
                     StageReplyField(placeholder: content.quickReply == nil ? "Type your answer…" : "Or type an answer…",
@@ -173,7 +322,7 @@ struct NotchStageView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .disabled(answering)
         .overlay(alignment: .topTrailing) {
-            if answering { ProgressView().controlSize(.mini).frame(height: 26) }
+            if answering { ProgressView().controlSize(.mini).frame(height: StageContent.answerHeight) }
         }
         .animation(model.reducedMotion ? nil : .snappy(duration: 0.25), value: content.answered)
     }

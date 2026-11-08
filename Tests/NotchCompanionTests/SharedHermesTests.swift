@@ -83,7 +83,9 @@ final class SharedHermesTests: XCTestCase {
             "session.resume": ["session_id"],
             "prompt.submit": ["session_id", "text", "surface"]
         ]
-        let routing: [String: Any] = ["cwd": "/work", "project_trusted": true, "activity_unverified": false, "pending_turn_id": "turn"]
+        // The delegation token reaches the frontend over its ownership pipe, never the wire.
+        let routing: [String: Any] = ["cwd": "/work", "project_trusted": true, "activity_unverified": false, "pending_turn_id": "turn", "native_submission_attempted": false,
+                                      "delegation": ["url": "http://127.0.0.1:9/mcp", "token": "tok"]]
         let create = SharedHermesClient.nativeParams("session.create", routing.merging(["title": "New session"]) { a, _ in a })
         XCTAssertEqual(Set(create.keys), accepted["session.create"])
         XCTAssertEqual(create["cwd"] as? String, "/work")

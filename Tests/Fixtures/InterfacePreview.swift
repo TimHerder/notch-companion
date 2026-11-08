@@ -395,13 +395,13 @@ import ImageIO
                 ChangedFile(path: "Resources/companion.png", additions: nil, deletions: nil, patch: "Binary files differ")])
         for expanded in [false, true] {
             try render(ChangeSummaryView(summary: summary, editorName: "VS Code", open: { _ in }, chooseEditor: { _ in },
-                onInspect: {}, showsFiles: expanded, selectedPath: expanded ? summary.files[0].path : nil)
+                onInspect: {}, showsFiles: expanded, toggle: {}, selectedPath: expanded ? summary.files[0].path : nil)
                 .padding(16).frame(width: 540, height: expanded ? 520 : 80, alignment: .top)
                 .background(CompanionStyle.background).environment(\.colorScheme, .dark),
                 size: NSSize(width: 540, height: expanded ? 520 : 80), name: expanded ? "changes-diff" : "changes-collapsed", output: output)
         }
         summary.source = .workspace
-        try render(ChangeSummaryView(summary: summary, editorName: "VS Code", open: { _ in }, chooseEditor: { _ in }, onInspect: {}, showsFiles: true)
+        try render(ChangeSummaryView(summary: summary, editorName: "VS Code", open: { _ in }, chooseEditor: { _ in }, onInspect: {}, showsFiles: true, toggle: {})
             .padding(16).frame(width: 380, height: 350, alignment: .top).background(CompanionStyle.background).environment(\.colorScheme, .dark),
             size: NSSize(width: 380, height: 350), name: "changes-workspace-small", output: output)
         // A parent turn with a shared child (its file in the parent's capture too) and a worktree child.
@@ -412,17 +412,27 @@ import ImageIO
             TurnChanges(id: "child-2", workspace: "/tmp/Worktrees/Project-1a2b/streaming", files: UnifiedDiff.files(patch.replacingOccurrences(of: "Welcome back", with: "Hi again"))
                 + [ChangedFile(path: "Sources/Stream.swift", kind: "Added", additions: 48)], capturedAt: Date(), label: "Try a streaming greeting · Codex · worktree")]
         try render(ChangeSummaryView(summary: delegated, editorName: "VS Code", open: { _ in }, chooseEditor: { _ in }, onInspect: {},
-            showsFiles: true, selectedPath: "child-2\u{0}Sources/Companion.swift")
+            showsFiles: true, toggle: {}, selectedPath: "child-2\u{0}Sources/Companion.swift")
             .padding(16).frame(width: 540, height: 640, alignment: .top).background(CompanionStyle.background).environment(\.colorScheme, .dark),
             size: NSSize(width: 540, height: 640), name: "changes-delegated", output: output)
+        // Eight files: the first six run into the first child; the second child waits behind "2 more files".
+        var crowded = delegated
+        crowded.files += ["Sources/Panel.swift", "Sources/Onboarding.swift", "Docs/welcome.md", "README.md"].map { ChangedFile(path: $0, additions: 4, deletions: 1) }
+        try render(ChangeSummaryView(summary: crowded, editorName: "VS Code", open: { _ in }, chooseEditor: { _ in }, onInspect: {}, showsFiles: true, toggle: {})
+            .padding(16).frame(width: 540, height: 560, alignment: .top).background(CompanionStyle.background).environment(\.colorScheme, .dark),
+            size: NSSize(width: 540, height: 560), name: "changes-delegated-long", output: output)
         summary.source = .agent
         let model = AppModel(storageURL: temporary.appendingPathComponent("changes.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
         defer { model.shutdown() }
         model.sessions[0].runtime = .codex
         model.sessions[0].title = "Add a welcome message"
         model.sessions[0].workspacePath = summary.workspace
-        model.sessions[0].messages = [ChatMessage(id: "turn", role: "user", text: "Add a welcome message.", turnID: "turn"),
-            ChatMessage(role: "assistant", text: "Added the welcome message and its tests.", turnID: "turn")]
+        let asked = Date().addingTimeInterval(-120)
+        model.sessions[0].messages = [ChatMessage(id: "turn", role: "user", text: "Add a welcome message.", createdAt: asked, turnID: "turn"),
+            ChatMessage(role: "assistant", text: "Added the welcome message and its tests.", createdAt: asked.addingTimeInterval(47), turnID: "turn")]
+        model.sessions[0].tools = [ToolActivity(id: "edit", name: "edit_file", detail: "Sources/Companion.swift", state: .finished,
+                                                startedAt: asked.addingTimeInterval(9), finishedAt: asked.addingTimeInterval(10), turnID: "turn")]
+        model.sessions[0].turnEndedAt = ["turn": asked.addingTimeInterval(48)]
         model.sessions[0].state = .finished
         model.sessions[0].changes = [summary]
         model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1920, height: 1080), topInset: 0, leftArea: nil, rightArea: nil)
@@ -431,6 +441,91 @@ import ImageIO
         model.reducedMotion = true
         try render(UnifiedNotchView(model: model), size: model.geometry!.expandedFrame.size, name: "changes-compact", output: output)
         try render(FullSessionView(model: model), size: NSSize(width: 900, height: 660), name: "changes-full", output: output)
+        // An older turn's card starts collapsed; the latest lists six files, then "2 more files".
+        let earlier = asked.addingTimeInterval(-600)
+        model.sessions[0].messages.insert(contentsOf: [
+            ChatMessage(id: "first", role: "user", text: "Rename the greeting helper.", createdAt: earlier, turnID: "first"),
+            ChatMessage(role: "assistant", text: "Renamed it to `welcome()`.", createdAt: earlier.addingTimeInterval(20), turnID: "first")], at: 0)
+        model.sessions[0].turnEndedAt["first"] = earlier.addingTimeInterval(21)
+        var longer = summary
+        longer.files += ["Sources/Panel.swift", "Sources/Onboarding.swift", "Tests/OnboardingTests.swift", "Docs/welcome.md", "README.md"]
+            .map { ChangedFile(path: $0, additions: 4, deletions: 1) }
+        model.sessions[0].changes = [TurnChanges(id: "first", workspace: summary.workspace, source: .agent,
+                                                 files: [ChangedFile(path: "Sources/Greeting.swift", additions: 3, deletions: 3)]), longer]
+        try render(UnifiedNotchView(model: model), size: model.geometry!.expandedFrame.size, name: "changes-history-compact", output: output)
+        // Tall enough to show both turns.
+        try render(FullSessionView(model: model), size: NSSize(width: 900, height: 1100), name: "changes-history-full", output: output)
+    }
+
+    /// A finished turn whose commentary and tool calls fold above its answer and
+    /// changes, collapsed and unfolded, and the same turn live, text and calls interleaved.
+    @MainActor static func renderWork(output: URL, temporary: URL, preferences: UserDefaults) throws {
+        let model = AppModel(storageURL: temporary.appendingPathComponent("work.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
+        defer { model.shutdown() }
+        func turn(startedAgo: TimeInterval) {
+            let start = Date().addingTimeInterval(-startedAgo)
+            func at(_ second: Double) -> Date { start.addingTimeInterval(second) }
+            func reply(_ id: String, _ second: Double, _ text: String) -> ChatMessage {
+                ChatMessage(id: id, role: "assistant", text: text, createdAt: at(second), turnID: "fix")
+            }
+            func call(_ id: String, _ name: String, _ detail: String, _ from: Double, _ to: Double) -> ToolActivity {
+                ToolActivity(id: id, name: name, detail: detail, state: .finished, startedAt: at(from), finishedAt: at(to), turnID: "fix")
+            }
+            model.sessions[0].messages = [
+                ChatMessage(id: "fix", role: "user", text: "NotchControlsTests fails on CI about one run in five. Find out why and fix it.",
+                            createdAt: at(0), turnID: "fix"),
+                reply("look", 2, "I'll read the test and the hover code first."),
+                reply("found", 31, "The test sleeps for a real 150 ms while the hover delay runs on the animation clock, so a slow runner still sees the panel closed. I'll inject the clock."),
+                reply("answer", 128, """
+                Fixed. The hover test no longer depends on wall-clock timing.
+
+                - `NotchControls` takes its hover delay from an injected clock.
+                - The test advances that clock instead of sleeping.
+
+                The suite passed 50 runs in a row locally.
+                """)]
+            model.sessions[0].tools = [
+                call("read", "read_file", "Tests/NotchCompanionTests/NotchControlsTests.swift", 4, 4.3),
+                call("grep", "grep", "hoverDelay Sources/NotchCompanion", 6, 6.4),
+                call("log", "terminal", "gh run view 4182 --log-failed", 9, 27),
+                call("edit", "edit_file", "Sources/NotchCompanion/NotchControls.swift", 40, 40.6),
+                call("edit-test", "edit_file", "Tests/NotchCompanionTests/NotchControlsTests.swift", 44, 44.5),
+                call("test", "terminal", "for i in $(seq 50); do swift test --filter NotchControlsTests || break; done", 50, 126)]
+            model.sessions[0].turnEndedAt = ["fix": at(134)]
+        }
+        turn(startedAgo: 900)
+        model.sessions[0].runtime = .codex
+        model.sessions[0].title = "Fix the flaky hover test"
+        model.sessions[0].workspacePath = "/tmp/Notch"
+        model.sessions[0].changes = [TurnChanges(id: "fix", workspace: "/tmp/Notch", source: .agent, files: [
+            ChangedFile(path: "Sources/NotchCompanion/NotchControls.swift", additions: 18, deletions: 7),
+            ChangedFile(path: "Tests/NotchCompanionTests/NotchControlsTests.swift", additions: 6, deletions: 2)])]
+        model.sessions[0].state = .finished
+        model.connection = true
+        model.reducedMotion = true
+        model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1920, height: 1080), topInset: 0, leftArea: nil, rightArea: nil)
+        model.notchPresentation = .expanded(model.geometry!)
+        model.expanded = true
+        let compact = model.geometry!.expandedFrame.size, full = NSSize(width: 900, height: 660)
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-worked-collapsed", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-worked-collapsed", output: output)
+        model.expandedWork = ["work:\(model.sessions[0].id):fix"]
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-worked-expanded", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-worked-expanded", output: output)
+        // Live, 42 seconds in: the earlier run folds into a row, the newest shows its calls.
+        model.expandedWork = []
+        turn(startedAgo: 42)
+        model.sessions[0].messages.removeLast()
+        model.sessions[0].tools.removeLast()
+        model.sessions[0].tools[4].state = .working
+        model.sessions[0].tools[4].finishedAt = nil
+        model.sessions[0].turnEndedAt = [:]
+        model.sessions[0].changes = []
+        model.sessions[0].runtimeID = "preview"
+        model.sessions[0].state = .working
+        model.sessions[0].parentTurnComplete = false
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-worked-live", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-worked-live", output: output)
     }
 
     /// A Claude parent with a native subagent and an app-owned Codex child, the
@@ -453,6 +548,11 @@ import ImageIO
         parent.runtime = .claude
         parent.parentTurnComplete = false
         parent.tools = [ToolActivity(id: "delegate", name: "mcp__notch__delegate_task", detail: "Review the parser fix", state: .finished, turnID: "turn")]
+        // The delegating turn's card, with the child's own edit, stays open while its result is handled.
+        parent.changes = [TurnChanges(id: "turn", workspace: "/tmp/Parser", source: .agent,
+            files: [ChangedFile(path: "Sources/Parser.swift", additions: 6, deletions: 2)],
+            delegated: [TurnChanges(id: "child", workspace: "/tmp/Parser", files: [ChangedFile(path: "Notes/parser-review.md", kind: "Added", additions: 9)],
+                                    label: "Review the parser fix · Codex")])]
         var child = CompanionSession(id: "child", title: "Review the parser fix", state: .finished,
             messages: [ChatMessage(id: "task", role: "user", text: "Act as the review sub-agent for this task.\n\nReview the parser fix in Sources/Parser.swift.", turnID: "task"),
                        ChatMessage(role: "assistant", text: "Two findings: the empty-input branch skips the error, and `parse(_:)` lacks a test for trailing commas.", turnID: "task")],
@@ -494,6 +594,9 @@ import ImageIO
 
     @MainActor static func render<V: View>(_ content: V, size: NSSize, name: String, output: URL,
                                            settle: TimeInterval = 0.35) throws {
+        // `--only a,b` renders just the fixtures whose names start with one of these prefixes.
+        if let index = CommandLine.arguments.firstIndex(of: "--only"), index + 1 < CommandLine.arguments.count,
+           !CommandLine.arguments[index + 1].split(separator: ",").contains(where: { name.hasPrefix($0) }) { return }
         let hosting = NSHostingView(rootView: content)
         hosting.sizingOptions = []
         hosting.frame = NSRect(origin: .zero, size: size)
@@ -564,6 +667,10 @@ import ImageIO
             try renderDelegation(output: output, temporary: temporary, preferences: preferences)
             return
         }
+        if CommandLine.arguments.contains("--work-only") {
+            try renderWork(output: output, temporary: temporary, preferences: preferences)
+            return
+        }
         let model = AppModel(storageURL: temporary.appendingPathComponent("sessions.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
         defer { model.shutdown() }
         let user = ChatMessage(id: "turn", role: "user", text: "Review the plan and suggest next steps.", turnID: "turn")
@@ -586,7 +693,13 @@ import ImageIO
             CompanionSession(id: "running", title: "Compare the implementation options", state: .working),
             CompanionSession(id: "question", title: "Plan the next release", state: .waiting),
             CompanionSession(id: "failure", title: "Review delegated work", state: .failed),
-            CompanionSession(id: "archive", title: "Last week’s notes", state: .finished, isArchived: true)
+            CompanionSession(id: "archive", title: "Last week’s notes", state: .finished, isArchived: true),
+            // Read and idle for three days: listed under Archived without a flag.
+            CompanionSession(id: "dormant", title: "Welcome email for testers", state: .finished,
+                             messages: [ChatMessage(role: "user", text: "Draft a welcome email for new testers."),
+                                        ChatMessage(role: "assistant", text: "Here is a short draft for review.")],
+                             updatedAt: Date().addingTimeInterval(-3 * 86_400), workspacePath: "/tmp/Website",
+                             completionID: "dormant-result", acknowledgedCompletionID: "dormant-result")
         ]
         model.sessions[1].runtime = .codex
         model.sessions[3].isLegacyPrivate = true
@@ -661,6 +774,7 @@ import ImageIO
         try render(FullSessionView(model: model), size: NSSize(width: 1440, height: 900), name: "full-conversation-wide", output: output)
         try render(FullSessionView(model: model, tab: "Activity"), size: full, name: "full-activity", output: output)
         try render(FullSessionView(model: model, tab: "Team"), size: full, name: "full-team-empty", output: output)
+        try renderWork(output: output, temporary: temporary, preferences: preferences)
         let sending = AppModel(storageURL: temporary.appendingPathComponent("sending.json"), playsSounds: false,
                                client: PreviewTransport(), preferences: preferences)
         defer { sending.shutdown() }
@@ -684,6 +798,18 @@ import ImageIO
             context: RuntimeContextUsage(used: 42000, limit: 200000, estimated: true))
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-model-context", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-model-context", output: output)
+        // The narrowest window, a 64-character session name in the bar: a short model name and
+        // Runtime default keep their whole label.
+        let (modelInfo, sessionTitle, catalogKey) = (model.sessions[0].runtimeInfo, model.sessions[0].title, model.modelCatalogKey(for: model.sessions[0]))
+        let catalog = model.modelCatalogs[catalogKey]
+        model.sessions[0].title = String(String(repeating: "A long session name ", count: 4).prefix(64))
+        model.modelCatalogs[catalogKey] = nil
+        for (suffix, name) in [("short", "gpt-5.2"), ("default", nil)] {
+            model.sessions[0].runtimeInfo = RuntimeSessionInfo(model: name, provider: nil, context: modelInfo?.context)
+            try render(FullSessionView(model: model, tab: "Activity"), size: NSSize(width: 780, height: 550),
+                       name: "full-model-title-\(suffix)", output: output)
+        }
+        (model.sessions[0].runtimeInfo, model.sessions[0].title, model.modelCatalogs[catalogKey]) = (modelInfo, sessionTitle, catalog)
         try render(ModelControlsView(model: model, choosingModel: true).padding(20)
             .frame(width: 560, height: 350, alignment: .bottomTrailing).background(CompanionStyle.background)
             .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
@@ -702,10 +828,45 @@ import ImageIO
         model.sessions[0].modelOverride = nil
         model.sessions[0].state = .working
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-busy-draft", output: output)
-        // A working turn's tool calls: older ones fold away, the latest three stay live.
+        // Queued messages offer Steer now, Edit and Cancel; a typed draft disables Edit and takes the steer key.
+        let (busyRuntime, busyDraft) = (model.sessions[0].runtime, model.draft)
+        model.sessions[0].runtime = .codex
+        model.sessions[0].parentTurnComplete = false
+        model.sessions[0].queuedSends = [
+            QueuedSend(id: "queue-1", text: "Then run the full test suite and fix anything that fails.", attachments: []),
+            QueuedSend(id: "queue-2", text: "Summarize what changed for the release notes.", attachments: [Attachment(url: URL(fileURLWithPath: "/tmp/notes.md"))])]
+        model.draft = ""
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-queue-actions", output: output)
+        model.draft = "Keep the public API unchanged."
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-queue-actions-draft", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-queue-actions-draft", output: output)
+        // A finished turn in Plan: Plan ready as the field's first row, and on the unread row.
+        model.sessions[0].queuedSends = []
+        model.sessions[0].parentTurnComplete = true
+        model.sessions[0].state = .finished
+        model.sessions[0].permissionMode = .plan
+        model.sessions[0].prePlanPermissionMode = .autoEdit
+        model.sessions[0].turnOutcome["turn"] = .finished
+        model.showPermissionModes = true
+        model.draft = ""
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-plan-ready", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-plan-ready", output: output)
+        model.page = .sessions
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-plan-ready-sessions", output: output)
+        model.page = .session
+        model.showPermissionModes = false
+        (model.sessions[0].permissionMode, model.sessions[0].prePlanPermissionMode) = (nil, nil)
+        model.sessions[0].turnOutcome = [:]
+        model.sessions[0].state = .working
+        model.sessions[0].runtime = busyRuntime
+        model.draft = busyDraft
+        // A working turn's tool calls in order around its commentary: older calls fold
+        // away, the newest run's latest three stay live.
         let (toolMessages, savedTools) = (model.sessions[0].messages, model.sessions[0].tools)
         let toolStart = Date().addingTimeInterval(-40)
-        model.sessions[0].messages = [ChatMessage(id: "tools-turn", role: "user", text: "Run the tests and fix what fails.", turnID: "tools-turn")]
+        model.sessions[0].messages = [ChatMessage(id: "tools-turn", role: "user", text: "Run the tests and fix what fails.", createdAt: toolStart, turnID: "tools-turn"),
+            ChatMessage(role: "assistant", text: "The build is clean. One control test fails; fixing the edit and rerunning it.",
+                        createdAt: toolStart.addingTimeInterval(26.5), turnID: "tools-turn")]
         model.sessions[0].tools = [
             ToolActivity(id: "read", name: "read_file", detail: "Sources/NotchCompanion/Views.swift", state: .finished,
                          startedAt: toolStart, finishedAt: toolStart.addingTimeInterval(0.4), turnID: "tools-turn"),
@@ -721,9 +882,9 @@ import ImageIO
         (model.sessions[0].messages, model.sessions[0].tools) = (toolMessages, savedTools)
         model.sessions[0].state = .finished
         try render(ModelControlsView(model: model, showingContext: true).padding(20)
-            .frame(width: 560, height: 170, alignment: .bottom).background(CompanionStyle.background)
+            .frame(width: 560, height: 200, alignment: .bottom).background(CompanionStyle.background)
             .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
-            size: NSSize(width: 560, height: 170), name: "context-details", output: output)
+            size: NSSize(width: 560, height: 200), name: "context-details", output: output)
         model.showModelPicker = false
         let contextSamples: [(String, RuntimeContextUsage?)] = [
             ("example", RuntimeContextUsage(used: 20000, limit: 828000)),
@@ -745,15 +906,12 @@ import ImageIO
                 .frame(width: 220, height: 44).background(CompanionStyle.background)
                 .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
                 size: NSSize(width: 220, height: 44), name: "context-gauge-\(name)", output: output)
+            // Wide enough for the fixed 264-point bubble anchored at the trailing edge.
             try render(ModelControlsView(model: model, showingContext: true).padding(20)
-                .frame(width: 260, height: 170, alignment: .bottom).background(CompanionStyle.background)
+                .frame(width: 340, height: 200, alignment: .bottom).background(CompanionStyle.background)
                 .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
-                size: NSSize(width: 260, height: 170), name: "context-details-\(name)", output: output)
+                size: NSSize(width: 340, height: 200), name: "context-details-\(name)", output: output)
         }
-        try render(ModelControlsView(model: model, showingContext: true).padding(20)
-            .frame(width: 260, height: 200, alignment: .bottom).background(CompanionStyle.background)
-            .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
-            size: NSSize(width: 260, height: 200), name: "context-details-unavailable", output: output)
         model.showModelPicker = true
         model.sessions[0].runtimeInfo?.context = RuntimeContextUsage(used: 42000, limit: 200000, estimated: true)
         model.sessions[0].modelOverride = RuntimeModelChoice(model: "fixture-long-context-model", provider: "fixture-provider")
@@ -771,6 +929,14 @@ import ImageIO
         model.sessions[0].permissionMode = .fullAccess
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-full-access", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-full-access", output: output)
+        // A tight composer bar: the model label truncates first, then the folder; the gauge and Send stay.
+        let fixtureFolder = model.sessions[0].workspacePath
+        model.sessions[0].permissionMode = .autoEdit
+        model.sessions[0].modelOverride = RuntimeModelChoice(model: "fixture-long-context-model-for-tight-bars", provider: "fixture-provider")
+        model.sessions[0].workspacePath = "/tmp/A deliberately long project folder name"
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-composer-tight", output: output)
+        model.sessions[0].workspacePath = fixtureFolder
+        model.sessions[0].modelOverride = nil
         model.sessions[0].permissionMode = nil
         model.sessions[0].runtime = fixtureRuntime
         model.showPermissionModes = false
@@ -779,9 +945,12 @@ import ImageIO
         model.receive("runtime.rateLimits", payload: ["runtime": "codex", "limits": [
             RuntimeRateLimit(name: "5-hour", usedPercent: 42, resetsAt: Date().addingTimeInterval(7_200)),
             RuntimeRateLimit(name: "Weekly", usedPercent: 81, resetsAt: Date().addingTimeInterval(4 * 86_400))]])
+        // Out of display order on purpose; Weekly · Opus reports no percentage.
         model.receive("runtime.rateLimits", payload: ["runtime": "claude", "limits": [
+            RuntimeRateLimit(name: "Extra usage", usedPercent: 12),
             RuntimeRateLimit(name: "5-hour", resetsAt: Date().addingTimeInterval(3_600), reached: true),
-            RuntimeRateLimit(name: "Weekly", usedPercent: 63)]])
+            RuntimeRateLimit(name: "Weekly · Opus", resetsAt: Date().addingTimeInterval(3 * 86_400)),
+            RuntimeRateLimit(name: "Weekly", usedPercent: 63, resetsAt: Date().addingTimeInterval(3 * 86_400))]])
         let unreported = model.sessions.map(\.turnTokens)
         for index in model.sessions.indices where index % 2 == 0 {
             for message in model.sessions[index].messages where message.role == "user" {
@@ -800,10 +969,21 @@ import ImageIO
         for runtime in [RuntimeKind.codex, .claude] {
             model.sessions[0].runtime = runtime
             try render(ModelControlsView(model: model, showingContext: true).padding(20)
-                .frame(width: 560, height: 260, alignment: .bottom).background(CompanionStyle.background)
+                .frame(width: 560, height: 420, alignment: .bottom).background(CompanionStyle.background)
                 .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
-                size: NSSize(width: 560, height: 260), name: "context-details-limits-\(runtime.rawValue)", output: output)
+                size: NSSize(width: 560, height: 420), name: "context-details-limits-\(runtime.rawValue)", output: output)
         }
+        // Claude reports only during turns: a day-old report, its 5-hour window reset since.
+        let dayOld = Date().addingTimeInterval(-26 * 3_600)
+        model.receive("runtime.rateLimits", payload: ["runtime": "claude", "limits": [
+            RuntimeRateLimit(name: "Extra usage", usedPercent: 12, reportedAt: dayOld),
+            RuntimeRateLimit(name: "5-hour", resetsAt: dayOld.addingTimeInterval(3_600), reached: true, reportedAt: dayOld),
+            RuntimeRateLimit(name: "Weekly · Opus", resetsAt: Date().addingTimeInterval(2 * 86_400), reportedAt: dayOld),
+            RuntimeRateLimit(name: "Weekly", usedPercent: 58, resetsAt: Date().addingTimeInterval(2 * 86_400), reportedAt: dayOld)]])
+        try render(ModelControlsView(model: model, showingContext: true).padding(20)
+            .frame(width: 560, height: 420, alignment: .bottom).background(CompanionStyle.background)
+            .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
+            size: NSSize(width: 560, height: 420), name: "context-details-limits-claude-old", output: output)
         model.sessions[0].runtime = fixtureRuntime
         model.page = .session
         for index in model.sessions.indices { model.sessions[index].turnTokens = unreported[index] }
@@ -862,6 +1042,17 @@ import ImageIO
         model.endFileDrop()
         model.eating = false
         model.page = .sessions
+        // Snoozed sessions leave the list for a Snoozed row above Archived; one has a result waiting.
+        let snoozedIDs = ["snoozed", "snoozed-unread"]
+        model.sessions += [
+            CompanionSession(id: "snoozed", title: "Draft the launch post", state: .finished,
+                             messages: [ChatMessage(role: "user", text: "Draft the launch post."), ChatMessage(role: "assistant", text: "Here is a first draft for review.")],
+                             workspacePath: "/tmp/Website", completionID: "snoozed-result", acknowledgedCompletionID: "snoozed-result",
+                             snoozedUntil: Date().addingTimeInterval(3 * 3_600 - 30)),
+            CompanionSession(id: "snoozed-unread", title: "Quarterly metrics summary", state: .finished,
+                             messages: [ChatMessage(role: "user", text: "Summarize the quarter's metrics."), ChatMessage(role: "assistant", text: "Revenue grew 12%.")],
+                             completionID: "metrics-result", snoozedUntil: Date().addingTimeInterval(2 * 86_400 - 30))
+        ]
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions", output: output)
         let unreadSessions = model.sessions
         // Projects: sessions group under their working folders.
@@ -878,19 +1069,47 @@ import ImageIO
         model.setSessionVisibility(notchVisible: false)
         model.sessions = unreadSessions
         model.currentID = "review"
-        // Inline row actions; the legacy row has all three, which stack in the sidebar.
+        // Inline row actions; the legacy row has all four, which wrap in the sidebar.
         model.sessionActionsID = "failure"
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-session-actions", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-session-actions", output: output)
         model.sessionActionsID = nil
-        model.sessionFilter = .needsYou
+        // A search covers archived and snoozed sessions too and marks them.
+        model.sessionSearch = "review"
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-filtered", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-sessions-filtered", output: output)
+        model.sessionSearch = ""
+        model.sessionFilter = .archived
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-archived", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-sessions-archived", output: output)
+        model.sessionFilter = .snoozed
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-snoozed", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-sessions-snoozed", output: output)
+        // A snoozed row offers Wake now.
+        model.sessionActionsID = "snoozed"
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-session-wake", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-session-wake", output: output)
+        model.sessionFilter = .all
+        // Snooze's choices take an open row's actions' place, wrapping in the sidebar.
+        model.sessionActionsID = "review"
+        model.snoozeChoicesShown = true
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-session-snooze", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-session-snooze", output: output)
+        model.sessionActionsID = nil
+        model.sessions.removeAll { snoozedIDs.contains($0.id) }
+        // Nothing active: the default list says so and links to Archived.
+        let caughtUp = AppModel(storageURL: temporary.appendingPathComponent("caught-up.json"), playsSounds: false,
+                                client: PreviewTransport(), preferences: preferences)
+        defer { caughtUp.shutdown() }
+        caughtUp.sessions = model.sessions.filter { ["archive", "dormant"].contains($0.id) }
+        caughtUp.currentID = "archive"
+        (caughtUp.geometry, caughtUp.notchPresentation) = (model.geometry, model.notchPresentation)
+        (caughtUp.expanded, caughtUp.reducedMotion, caughtUp.connection, caughtUp.page) = (true, true, true, .sessions)
+        try render(UnifiedNotchView(model: caughtUp), size: compact, name: "compact-sessions-caught-up", output: output)
         model.sessionSearch = "A longer session search with no matching results"
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-search", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-sessions-search", output: output)
         model.sessionSearch = ""
-        model.sessionFilter = .all
         model.page = .runtimeChooser(defaultSelection: true)
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-runtime-chooser", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-runtime-chooser", output: output)
@@ -954,9 +1173,19 @@ import ImageIO
         model.sessions[model.sessions.count - 1].runtime = .hermes
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-runtime-draft", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-runtime-draft", output: output)
+        // The longest harness name, selected, is the tightest row in the menu.
+        let menuSuite = "notch-harness-menu-\(UUID().uuidString)"
+        let menuPreferences = UserDefaults(suiteName: menuSuite)!
+        menuPreferences.set(Dictionary(uniqueKeysWithValues: [RuntimeKind.hermes, .codex, .pi, .deepseek].map {
+            ($0.rawValue, RuntimeRoute.defaultProfile($0, defaults: menuPreferences))
+        }), forKey: "runtime.configuredProfiles")
+        let menuModel = AppModel(storageURL: temporary.appendingPathComponent("harness-menu.json"), playsSounds: false,
+                                 client: PreviewTransport(), preferences: menuPreferences)
+        defer { menuModel.shutdown(); menuPreferences.removePersistentDomain(forName: menuSuite) }
+        menuModel.sessions[0].runtime = .deepseek
         try render(VStack {
             Spacer()
-            HStack { SessionRuntimeControl(model: model, session: model.current!, choosingRuntime: true); Spacer() }
+            HStack { SessionRuntimeControl(model: menuModel, session: menuModel.sessions[0], choosingRuntime: true); Spacer() }
         }.padding(20).frame(width: 560, height: 300)
             .background(CompanionStyle.background).foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
             size: NSSize(width: 560, height: 300), name: "ready-harness-dropdown", output: output)
@@ -998,7 +1227,12 @@ import ImageIO
         model.sessions[0].runtime = .hermes
         model.sessions[0].isLegacyPrivate = true
         model.connectionMessage = "Legacy Hermes connected"
+        // Default controls plus SnapShot: the bar's widest legacy case still keeps the field on its margins.
+        (model.showModelPicker, model.showContextUsage, model.showSnapShot) = (true, true, true)
+        model.snapShotSource = SnapShotSource(processID: 1, appName: "Safari", windowID: 1, title: "Release notes")
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-legacy-conversation", output: output)
+        (model.showModelPicker, model.showContextUsage, model.showSnapShot) = (false, false, false)
+        model.snapShotSource = nil
         model.sessions[0].isLegacyPrivate = false
         model.connectionMessage = "Hermes connected"
         model.page = .session
@@ -1198,9 +1432,21 @@ import ImageIO
         working.runtime = .codex
         working.updatedAt = now.addingTimeInterval(-3)
         var finished = CompanionSession(id: "review", title: "Website accessibility review", state: .finished,
-                                        messages: [ChatMessage(role: "user", text: "Review the plan."),
+                                        messages: [ChatMessage(id: "review-turn", role: "user", text: "Review the plan.",
+                                                               createdAt: now.addingTimeInterval(-134)),
                                                    ChatMessage(role: "assistant", text: "## Ready for review\nKeyboard focus now follows the reading order, and every control has a visible label.")])
         finished.updatedAt = now.addingTimeInterval(-240)
+        finished.changes = [TurnChanges(id: "review-turn", workspace: "/Users/me/Developer/site",
+                                        files: [ChangedFile(path: "Sources/Navigation.swift", additions: 84, deletions: 6),
+                                                ChangedFile(path: "Sources/Labels.swift", additions: 31, deletions: 2),
+                                                ChangedFile(path: "Sources/FocusOrder.swift", additions: 3, deletions: 0),
+                                                ChangedFile(path: "Tests/AccessibilityTests.swift", additions: 2, deletions: 0)])]
+        // The compare run, after its tests failed: a real failed session with the runtime's reason.
+        var failed = working
+        failed.state = .failed
+        failed.tools = [ToolActivity(id: "t1", name: "terminal", detail: "swift test --filter NotchGlanceTests", state: .failed)]
+        failed.messages.append(ChatMessage(role: "assistant", text: "Running the glance tests before comparing both options."))
+        let failure = "swift test exited with code 1: 3 tests failed in NotchGlanceTests (row height, stop button, timer)."
         var read = CompanionSession(id: "sounds", title: "Refine the sound palette", state: .finished,
                                     messages: [ChatMessage(role: "assistant", text: "Regenerated all seven cues with balanced loudness.")])
         read.runtime = .claude
@@ -1258,11 +1504,8 @@ import ImageIO
             try render(scene(geometry, model.notchPresentation, height: 90), size: NSSize(width: sceneWidth, height: 90),
                        name: "island-resting-\(name)", output: output)
             for kind in NotchAnnouncement.Kind.allCases {
-                let session = kind == .finished ? finished : kind == .failed ? working : waiting
-                let announcement = kind == .hello
-                    ? NotchAnnouncement(kind: .hello, sessionID: AppModel.helloAnnouncementID, title: "Hover here to begin")
-                    : NotchAnnouncement(kind: kind, sessionID: session.id, title: session.title)
-                model.setAnnouncementForPreview(announcement)
+                model.sessions = [finished, working, waiting, read]
+                let announcement = try announce(model, kind, failed: failed, failure: failure)
                 geometry.announcing = true
                 geometry.announcementWidth = announcement.labelWidth
                 model.geometry = geometry
@@ -1274,6 +1517,7 @@ import ImageIO
                            name: "island-announce-\(kind)-\(name)", output: output)
                 geometry.announcing = false
             }
+            model.sessions = [finished, working, waiting, read]
             model.setAnnouncementForPreview(nil)
             model.geometry = geometry
         }
@@ -1435,7 +1679,8 @@ import ImageIO
         model.notchPresentation = .expanded(external)
         model.page = .session
         model.currentID = "review"
-        model.panelToast = NotchAnnouncement(kind: .finished, sessionID: "compare", title: "Compare the implementation options")
+        model.panelToast = NotchAnnouncement(kind: .finished, sessionID: "compare", title: "Compare the implementation options",
+                                             detail: "Option B keeps one presentation clock and needs no second window.")
         try render(UnifiedNotchView(model: model), size: external.expandedFrame.size, name: "island-panel-toast", output: output)
         model.panelToast = nil
         model.expanded = false
@@ -1451,7 +1696,8 @@ import ImageIO
         try render(scene(quiet, model.notchPresentation, height: 150), size: NSSize(width: sceneWidth, height: 150),
                    name: "island-glance-empty", output: output)
         model.glancing = false
-        try renderMascot(model: model, sessions: allSessions, requests: allRequests, external: external, notched: notched,
+        try renderMascot(model: model, sessions: allSessions, requests: allRequests, failed: failed, failure: failure,
+                         external: external, notched: notched,
                          scene: {
                              // Compact appearances trim the sheets; load each endpoint before its offscreen capture.
                              model.mascotLibrary.prepare(Array(model.mascotLibrary.clips.keys), synchronously: true)
@@ -1461,10 +1707,28 @@ import ImageIO
                          output: output)
     }
 
+    /// Announces a fixture moment the way runtime events do, so the band and
+    /// stage show the snapshotted message: the review's answer, the failed
+    /// compare run's reason, the release plan's question, or the hello.
+    @MainActor static func announce(_ model: AppModel, _ kind: NotchAnnouncement.Kind,
+                                    failed: CompanionSession, failure: String) throws -> NotchAnnouncement {
+        switch kind {
+        case .hello: model.setAnnouncementForPreview(AppModel.helloAnnouncement)
+        case .finished: model.announce(.finished, sessionID: "review")
+        case .needsInput: model.announce(.needsInput, sessionID: "plan")
+        case .failed:
+            model.sessions = model.sessions.map { $0.id == failed.id ? failed : $0 }
+            model.announce(.failed, sessionID: failed.id, failure: failure)
+        }
+        guard let announcement = model.announcement else { throw CocoaError(.featureUnsupported) }
+        return announcement
+    }
+
     /// Each rendered mascot (characters without assets are skipped): the stage
     /// for each moment, the open panel's header, and every clip with the live
     /// eyes on the face (checks the anchors), stage clips on their island edge.
     @MainActor static func renderMascot(model: AppModel, sessions: [CompanionSession], requests: [PendingRequest],
+                                        failed: CompanionSession, failure: String,
                                         external: NotchGeometry, notched: NotchGeometry,
                                         scene: (NotchGeometry, NotchPresentation, CGFloat, (NotchAnnouncement.Kind, AuraSample)?, String) throws -> Void,
                                         output: URL) throws {
@@ -1484,7 +1748,7 @@ import ImageIO
         model.sessions = sessions
         model.requests = requests
         let approval = PendingRequest(id: "approve", kind: .approval, title: "Hermes needs permission",
-                                      detail: "Run swift test --filter NotchGlanceTests", choices: ["once", "session", "deny"],
+                                      detail: "swift test --filter NotchGlanceTests --parallel --num-workers 4", choices: ["once", "session", "deny"],
                                       sessionID: "live-plan")
         let choice = PendingRequest(id: "pick", kind: .clarification, title: "Claude Code", detail: "Which milestone should ship first?",
                                     choices: ["The glance", "The aura", "Both together in one release"], sessionID: "live-plan")
@@ -1495,17 +1759,16 @@ import ImageIO
             for look in looks {
                 model.companionAppearance = look.0
                 if let mascot = look.1 { model.mascotCharacter = mascot }
-                for (variant, kind, session) in [("finished", NotchAnnouncement.Kind.finished, "review"), ("failed", .failed, "compare"),
-                                                 ("question", .needsInput, "plan"), ("choice", .needsInput, "plan"),
-                                                 ("approval", .needsInput, "plan"), ("hello", .hello, "")]
+                for (variant, kind) in [("finished", NotchAnnouncement.Kind.finished), ("failed", .failed),
+                                        ("question", .needsInput), ("choice", .needsInput),
+                                        ("approval", .needsInput), ("hello", .hello)]
                     where name == "physical" || variant == "finished" {
                     model.requests = variant == "approval" ? [approval] : variant == "choice" ? [choice] : requests
-                    let title = sessions.first { $0.id == session }?.title ?? "Hover here to begin"
-                    model.setAnnouncementForPreview(NotchAnnouncement(kind: kind, sessionID: kind == .hello ? AppModel.helloAnnouncementID : session,
-                                                                      title: title))
+                    model.sessions = sessions
+                    _ = try announce(model, kind, failed: failed, failure: failure)
                     model.staging = true
                     var geometry = base
-                    geometry.stageAnswerRows = model.stageAnswerRows
+                    geometry.stageBodyHeight = model.stageBodyHeight
                     model.geometry = geometry
                     model.notchPresentation = .stage(geometry)
                     let sample = NotchAuraTimeline.sample(kind, elapsed: kind == .failed ? 0.3 : 0.9, reducedMotion: false)
@@ -1514,8 +1777,8 @@ import ImageIO
                 }
                 model.updateStyle = .compact
                 model.staging = false
-                let announcement = NotchAnnouncement(kind: .finished, sessionID: "review", title: "Website accessibility review")
-                model.setAnnouncementForPreview(announcement)
+                model.sessions = sessions
+                let announcement = try announce(model, .finished, failed: failed, failure: failure)
                 var geometry = base
                 geometry.announcing = true
                 geometry.announcementWidth = announcement.labelWidth

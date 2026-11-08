@@ -47,12 +47,12 @@ project invalidates it.
 | Hermes | Authenticated headless frontend; selected native Hermes profile | Read-only authentication and source/config protections ([Shared Hermes](#shared-hermes)). |
 | Codex | `codex app-server`; selected `CODEX_HOME` | See [Codex](#codex). |
 | OpenCode | Owned `opencode serve`, native V1/V2 HTTP/SSE; `OPENCODE_CONFIG_DIR`, project `cwd` | Version/schema-guarded 1.18.34–1.18.x and 2.0.30–2.0.x. Paginated history, exact resume, tools, permissions/questions, session models, owned parent/child status. Saved protections from the older ACP frontend stay intact. |
-| DeepSeek Harness | `dsh --profile <existing-name>` with original `$DSH_HOME/profiles/<name>` | Experimental ACP. Never creates or patches an `acp`/`sdk` replacement profile. Resume, tools, approvals, negotiated model/image/context support. |
+| DeepSeek Harness | `dsh --profile <existing-name>` with original `$DSH_HOME/profiles/<name>` | ACP. Never creates or patches an `acp`/`sdk` replacement profile. Resume, tools, approvals, negotiated model/image/context support. |
 | Pi | `pi --mode rpc`; `PI_CODING_AGENT_DIR`, native session file | Native extensions/dialogs, tools, per-session models, images, settled lifecycle. Context from `get_session_stats.contextUsage` only. Bundled process-only extension provides `notch_ask_user`. Terminal-rendered extension UI and built-in tool approvals are unavailable. |
-| OpenClaw | Authenticated WebSocket to the existing loopback Gateway; selected agent | Protocol 4 pairing, sessions/history, chat, approvals/questions, models, tool/child activity. Never starts/stops the Gateway. Remote/TLS unsupported. |
+| OpenClaw | Authenticated WebSocket to the existing loopback Gateway; selected agent | Protocol 4 pairing, sessions/history, chat, approvals/questions, models, tool/child activity, delegation tools through a second role-`node` connection. Never starts/stops the Gateway. Remote/TLS unsupported. |
 | Claude Code | Installed unmodified `claude --print` stream-json; `CLAUDE_CONFIG_DIR`, trusted `cwd` | Native hooks/memory, exact UUID resume, models, permissions/questions, child events. Context = latest parent request's input/cache counts against the reported window. Never `--bare`, an SDK replacement or copied credentials; bypass only for confirmed [Full access](#permission-modes). |
-| Antigravity CLI | Installed `agy` streaming I/O; original `~/.gemini/antigravity-cli` | Conversation IDs/resume, file references, tools, model discovery and exact-ID switching. Context estimate from latest parent-response counts; window unknown. Native `ask_question` is opaque, so questions, approvals and images are unsupported; it shows a limitation notice. Native policy can soft-deny tools on a successful turn. |
-| Cursor CLI | Installed `cursor-agent acp` after `authenticate` with `cursor_login`; native `~/.cursor`, trusted `cwd` | Experimental, not yet run against an installed CLI. Shared ACP adapter. `cursor/ask_question` → question card, `cursor/create_plan` → plan approval, answered in the documented `outcome` shape; requests without `sessionId` are attributed by `toolCallId` or the sole active session, else declined. Sign-in stays with `cursor-agent login`; no profile override. |
+| Antigravity CLI | Installed [`agy acp`](https://antigravity.google/docs/ide/extensions/acp/) (ACP v1, shared ACP adapter) with its cached sign-in, never `authenticate`; original `~/.gemini/antigravity-cli`, trusted `cwd` | Exact conversation IDs and resume, file references, tools, approvals, native questions, Auto-edit/Plan modes, model discovery and exact-ID switching, delegation hosting. Context only from ACP `usage_update`. No images. Native permission rules still decide which actions ask. |
+| Cursor CLI | Installed `cursor-agent acp` after `authenticate` with `cursor_login`; native `~/.cursor`, trusted `cwd` | Shared ACP adapter. `cursor/ask_question` → question card, `cursor/create_plan` → plan approval, answered in the documented `outcome` shape; requests without `sessionId` are attributed by `toolCallId` or the sole active session, else declined. Sign-in stays with `cursor-agent login`; no profile override. |
 
 ### Installed harness compatibility
 
@@ -61,10 +61,17 @@ FIFO final-frame delivery, stale-generation filtering and EOF-first cleanup;
 stderr is drained, never stored raw. Reopening waits for retiring owned processes
 to release native persistence. Each protocol owns its correlation, deadlines and
 terminal semantics: Pi waits for settled lifecycle, OpenClaw uses run/sequence
-identities, Claude keeps active children beyond a parent result. A process exit
-or lost acknowledgement never implies a successful turn. Native provider/tool
-environment is kept; inherited host-chat session IDs, frontend IPC and unrelated
-runtime identity are removed (`RuntimeEnvironment.native`). Finder launches get
+identities, Claude keeps active children beyond a parent result. ACP Stop
+answers the session's open requests as cancelled after `session/cancel`. A
+turn's 30-minute deadline restarts while it waits on the user and after each
+answer. Expiry sends `session/cancel` for that turn only, with a notice, and
+keeps it busy for a 45-second grace: the agent's answer, a result or an
+error, settles it as failed and never as a definitive rejection (an error
+before any output leaves the send unconfirmed); only a missing answer restarts
+the shared process, also leaving the send unconfirmed. A process exit or lost acknowledgement never implies a successful
+turn. Native provider/tool environment is kept; inherited host-chat session
+IDs, frontend IPC and unrelated runtime identity are removed
+(`RuntimeEnvironment.native`). Finder launches get
 user/Homebrew search paths, never shell rc evaluation or another app's login.
 Claude's default profile leaves `CLAUDE_CONFIG_DIR` unset (setting even the
 default path changes its login lookup); a matching inherited override keeps its
@@ -96,11 +103,24 @@ failure. Context refreshes after responses, compaction and settlement from
 `--extension` without editing the profile or replacing existing extensions.
 Question choices include a written answer.
 
-**Antigravity.** Models come from `agy --output-format json models` and
-`--print /model`. A model change restarts only an idle owned frontend with the
-exact saved `--conversation` and `--model`, and the native init must confirm both
-before a prompt. The global model setting is never changed. Checkpoint and
-cumulative result usage never enter the gauge.
+**Antigravity.** One owned `agy acp` process serves every session of the native
+profile. Before a session opens, models come from `agy --output-format json
+models` and `--print /model`, which start no turn and save no conversation. An
+open session's catalog is its ACP `models` state, which uses the same IDs; its
+`model` config option names only the family (the thinking level is separate), so
+it never replaces the exact model. A change on an idle session uses
+`session/set_model`; agy keeps it per session and its empty reply is the only
+readback. A cold resume reports the native default, so the saved choice is
+applied again before the next send. The global model setting is never changed.
+agy's load accepts an ID it never saved, so a resume first pages
+`session/list` and refuses an ID agy does not list, unless nothing was ever sent
+to that conversation (an unprompted conversation is not listed yet). Resume
+replays no history, so history stays incomplete. Questions arrive as
+`session/request_permission` with `interaction_` tool-call IDs, because the
+companion advertises no elicitation form to agy; their options are answers (one
+choice, no written answer), never approvals, and an ambiguous one is cancelled
+with a notice. Tool titles drop agy's `Running ` prefix, so the companion's own
+tools get their labels.
 
 **OpenClaw.** The companion reads only the selected Gateway/agent configuration
 and connects to loopback. It owns a separate device identity and scoped Gateway
@@ -150,7 +170,7 @@ owned children as well as the parent.
 | OpenCode 1 HTTP | Queue only | No delivery distinction. |
 | Claude Code | Text/files/images | User input with `priority: now`, `origin: {kind: human}` ([SDK changelog](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md#03286)). Enabled only when `system/init` reports CLI 2.x ≥ 2.1.286. |
 | DeepSeek and Cursor ACP v1 | Queue only | Standard [`session/prompt`](https://agentclientprotocol.com/protocol/v1/prompt-turn) has no same-turn steering. |
-| Antigravity | Queue only | No steering operation in its [headless interface](https://www.antigravity.google/docs/cli/headless/). |
+| Antigravity ACP v1 | Queue only | agy [steers](https://antigravity.google/docs/ide/extensions/acp/) with a second `session/prompt` during a turn; the shared ACP adapter allows one prompt per session, so it queues. |
 | OpenClaw Gateway | Queue only | Upstream [`/steer`](https://docs.openclaw.ai/tools/steer) can fall back to a normal turn and has no verified receipt/run mapping here. |
 | Legacy Hermes | Queue only | Protected bridge. |
 
@@ -160,7 +180,11 @@ preserving changes and child ownership. Ordinary turn events cannot confirm it:
 only its correlated receipt or the explicit native-history check clears the
 intent. Definitive rejection restores the draft beside newer typing; ambiguous
 delivery blocks retries. Steering never silently becomes a new turn or an
-interrupt.
+interrupt. **Steer now** on a queued message takes the same path with that
+entry's ID, text and files: it leaves the queue in the save that stages it, a
+definitive refusal returns it to its place in the queue (the draft is
+untouched), and ambiguous delivery keeps the intent protected. **Edit** moves
+an entry back into an empty composer in one save.
 
 Claude: only human composer input takes the priority path with `origin: human`;
 delegation messages are never labeled human. The adapter waits for the exact
@@ -175,7 +199,13 @@ Queue entries' attachment and pause fields are optional for older registries.
 Stop, failure, disconnect and restart pause the queue (with resume/cancel
 controls); a failed head blocks later entries. Delivery uses the ordinary
 staged/pending protections without overwriting the current draft; after restart
-a staged entry is kept once, not also restored into the editor. Paused queues do
+a staged entry is kept once, not also restored into the editor. After a quit
+during delivery, an entry already in the transcript is dropped on load, and so
+is the unconfirmed send when its staged copy holds the text for Check last send.
+An unconfirmed send without staged text (an agent's message, a notice, or an
+older registry's user entry) stays queued: it waits for Check last send, which
+drops it once delivery is confirmed or lets it be delivered when the send proves absent.
+Edit and Steer refuse an ID that is the unconfirmed send or in the transcript. Paused queues do
 not keep the app busy. Approval and question cards stay authoritative; sending
 cannot bypass them.
 
@@ -187,9 +217,12 @@ cannot bypass them.
 ## Session identity and ownership
 
 Each registry entry stores runtime, canonical profile path, native `storedID`,
-working folder, local conversation ID, drafts, attachment references and read
-receipts. `runtimeID` is a connection-local alias cleared on restart. Native IDs
-are never rewritten into another profile's IDs. The router isolates identical
+working folder, local conversation ID, drafts, attachment references, read
+receipts, `lastSeenAt` (optional; older entries decode without it), which
+only drives the derived auto-archive, and `snoozedUntil` (optional, likewise),
+which only hides the entry from the active list until it wakes. Neither reaches
+a runtime. `runtimeID` is a connection-local alias cleared on restart. Native IDs are never rewritten
+into another profile's IDs. The router isolates identical
 live and request IDs across runtimes/profiles; a connection failure interrupts
 only that route, and an unavailable installation does not disable others.
 Projects derive from each entry's working folder; there is no project field.
@@ -237,11 +270,14 @@ inserts rows or copies memory.
 The launcher adds a process-local platform hint describing the notch's Markdown
 and asking for files as `MEDIA:/absolute/path` lines. Nothing is written; a
 user's `platform_hints.notch_companion` overrides it, and an incompatible Hermes
-keeps no hint.
+keeps no hint. Once a session asks for delegation, the hint also carries the
+delegation instructions and the launcher adds the companion's tools
+([Delegation](#delegation)).
 
 Hermes builds with typed wire contracts reject unknown params (error 4000), so
 the adapter strips companion-only fields (`project_trusted`,
-`activity_unverified`, `pending_turn_id`, `turn_id`) and resume's `cwd`. Those
+`activity_unverified`, `pending_turn_id`, `turn_id`, `delegation`,
+`native_submission_attempted`) and resume's `cwd`. Those
 builds also use JSON-RPC server→client requests (`srq-…` ids): after
 `gateway.ready` the adapter sends `client.capabilities {server_requests: true}`,
 ignoring rejection from builds without it, which keep `*.request`/`*.respond`.
@@ -276,7 +312,8 @@ protected, including symlink targets and missing directories. Named profiles
 also protect root identity/auth/shared stores and sibling profiles. Native
 session databases, logs and memory stay writable. The worker never sets
 `HERMES_DESKTOP`, removes inherited Hermes/Codex frontend identity, and uses a
-parent ownership pipe so a dead companion leaves no frontend. Only its own
+parent ownership pipe so a dead companion leaves no frontend; the same pipe
+carries the delegation tools and per-session bindings. Only its own
 process is terminated; the messaging gateway is never restarted or stopped. The
 launcher refuses to run with automatic session archiving, managed local-model
 service ownership or dashboard turn isolation enabled, without changing those
@@ -429,8 +466,13 @@ Context usage is the latest native occupancy/request snapshot (`context_used`
 or `last.totalTokens`; Hermes `session.info`/`session.usage`/completion usage,
 Codex `thread/tokenUsage/updated` and reroute events), never cumulative usage
 and never guessed. The composer shows a monochrome gauge; hover and a click
-overlay show percentage and abbreviated counts (`20k/828k tokens used`), with
-`≈` for estimates, `—` and a dashed ring for unknown values. Samples may drop
+overlay show percentage and abbreviated counts (`20k / 828k`; without a window
+the overlay heads with `42k used` and draws no bar), with `≈` for estimates,
+`—` and a dashed ring for unknown values.
+The percentage is not clamped (`110%` over the window) while the gauge and bar
+are; the overlay's bar takes the warning color from 90 %, and its caption names
+an estimate, an unreported window or an over-limit report before the report
+time ([wording](interaction-design.md#composer-model-controls)). Samples may drop
 after compaction, survive restart as a last report, and clear when the reported
 model changes. Children never overwrite their parent's context. A late Codex
 final usage event counts for the latest turn; old-turn and unowned-thread events
@@ -448,7 +490,17 @@ mode, or without one to return to Inherit after an override was sent this run.
 Nothing reaches the runtime on selection, and native configuration is never
 written. A failed or unverified change leaves the message unsent with the draft
 restored. Mode changes the agent makes itself are not tracked; the saved mode
-is reapplied on the next send. The persistent `always` approval is never
+is reapplied on the next send. A turn sent in Plan saves its ID as
+`planTurnID`. Choosing Plan saves the mode it replaced as
+`prePlanPermissionMode` (none = Inherit) and marks the latest turn as having
+no plan unless it is the `planTurnID` turn; **Plan ready**'s Implement restores that mode, then sends “Implement
+the plan.” through the ordinary `submit`. Keep planning saves
+`planReadyDismissedTurnID`, and so does a successful `approval.respond` to a
+native plan approval: the Claude (`ExitPlanMode`) and Cursor
+(`cursor/create_plan`) adapters mark that `approval.request` with `plan: true`.
+These fields are optional for older registries (without `planTurnID`, choosing
+Plan again sets the latest turn aside as before); an unknown saved mode decodes as
+none. The persistent `always` approval is never
 exposed.
 
 | Harness | Mapping |
@@ -457,7 +509,8 @@ exposed.
 | Claude Code | `set_permission_mode` (`default`, `acceptEdits`, `plan`, `bypassPermissions`), verified against the echo. Before the first override the profile mode is read from `get_settings` (`effective.permissions.defaultMode`, `manual` = `default`); Inherit restores it once. `--allow-dangerously-skip-permissions` is passed only to a session opened with Full access or an idle session switched to it, which reopens its process (resuming if history exists). The reopen rechecks ownership after the old process exits; a disconnect during it cancels the launch. |
 | ACP (DeepSeek) | Advertised `modes.availableModes` matching a known name (`default`/`ask`, `acceptEdits`/`auto-edit`, `plan`, `bypassPermissions`/`full-access`/`yolo`) are offered via `session/set_mode`; Inherit restores the opening `currentModeId` once. |
 | ACP (Cursor) | Only `plan` (Cursor's `ask` is read-only Q&A, not Ask); Inherit restores the opening mode. |
-| Others | Hermes, Pi, OpenClaw, OpenCode and Antigravity map none. OpenCode V2 prompts have no agent/permission field; Antigravity's `--mode` and `--dangerously-skip-permissions` are launch-only. |
+| ACP (Antigravity) | Advertised `accept-edits` → Auto-edit and `plan` → Plan (agy 1.5). Its `default` mode follows the native permission rules, which may never ask, so it is Inherit, not Ask; Inherit restores it once. 1.4 advertises no modes. |
+| Others | Hermes, Pi, OpenClaw and OpenCode map none. OpenCode V2 prompts have no agent/permission field. |
 
 ## Usage
 
@@ -466,6 +519,10 @@ exposed.
 time, reached flag and report time; missing values stay nil. AppModel keeps the
 latest per runtime in preferences, merged by window name, cleared when the
 profile location changes. The router forwards `runtime.rateLimits` by route.
+Views order windows by the duration in their names (`RuntimeRateLimit.sorted`,
+the inverse of `label(minutes:)`), extra usage last; a bar's fraction is 1 when
+reached, nil when unknown; a reset time already past makes the window unknown
+until the next report.
 
 - **Codex:** `account/rateLimits/read` (`rateLimitsByLimitId` or single
   `rateLimits`; `primary`/`secondary` with `usedPercent`, `windowDurationMins`,
@@ -494,12 +551,16 @@ this adds app-owned children.
 `/mcp`, server name `notch`: minimal MCP Streamable HTTP (`initialize`, `ping`,
 `tools/list`, `tools/call` as JSON-RPC `POST`, single or batch; notifications
 get 202; `GET`/`DELETE` get 405). `initialize` returns the delegation
-instructions. Each native session gets one token (32 random bytes, base64url);
+instructions (empty for OpenCode, whose session instruction entry carries them).
+Each native session gets one token (32 random bytes, base64url);
 only its SHA-256 is kept, in memory, scoped to the companion session, harness
-and a `subagent` flag. Missing/unknown bearer: 401. Tokens expire after 24 hours
+and a `subagent` flag. Missing/unknown bearer: 401. A `tools/call` whose
+`_meta["ai.opencode/sessionID"]` is neither the caller's native session nor one
+of its native subagents is `capability_denied`. Tokens expire after 24 hours
 unused unless the session is busy, and are revoked when the session's process is
-released (`session.disconnected`, route/app disconnect, deletion) or its launch
-fails. Reopening reuses a live token. **Cross-agent delegation** in Settings
+released (`session.disconnected`, route/app disconnect, deletion), its launch
+fails, or its installation reports it cannot host (`hosts_delegation: false`,
+OpenCode 1.x). Reopening reuses a live token. **Cross-agent delegation** in Settings
 (default on) controls injection for new launches; while off, calls fail with
 `capability_denied`.
 
@@ -523,8 +584,10 @@ fails. Reopening reuses a live token. **Cross-agent delegation** in Settings
 `status` is `queued`, `running`, `waiting`, `completed`, `failed`, `cancelled` or
 `interrupted`; `workState` is `working`, `waiting_for_children` or
 `result_available`. `summary` is the latest answer once settled. Errors are T3
-codes in an `isError` result. `wait` defaults to 10 minutes, max 60, and a
-timeout never cancels the child; there is no depth, count or concurrency limit.
+codes in an `isError` result. `wait` defaults to 10 minutes, max 60 (OpenClaw
+callers: at most 110 seconds, inside the Gateway's 120-second node call),
+counted from the call so creating the child is included, and a timeout never
+cancels the child; there is no depth, count or concurrency limit.
 Task, send and creation IDs derive from caller + operation + `clientRequestId`
 (SHA-256, UUID-formatted), so retries (even concurrent) reach the same work and
 are checked against the target's messages, saved intent and queue; without a
@@ -605,17 +668,22 @@ sends a child (created worktrees remain). A client closing its connection
 cancels its tool call; an abandoned `wait` never acknowledges a result. An ACP
 session reloaded while live keeps the bridge it was opened with.
 
-**Injection** (`hostsDelegation`: Claude, Codex, DeepSeek, Pi; version-specific,
-rerun native acceptance before release):
+**Injection** (`hostsDelegation`: Claude, Codex, OpenCode 2, DeepSeek, Pi,
+Cursor, Antigravity, Hermes, OpenClaw; version-specific, rerun native acceptance before release). An adapter
+may report `hosts_delegation` with a session or model catalog; `false` drops
+that route from hosting until it reports otherwise, and `orchestrator_capabilities`
+then says its children cannot delegate:
 
 | Harness | Mechanism |
 | --- | --- |
 | Claude Code 2.1.287 | `--allowedTools mcp__notch__*` (Plan: only `orchestrator_capabilities`, `notch_session_list`, `notch_session_wait`, `pending_request_list`, `pending_request_read`); instructions as `appendSystemPrompt` in `initialize`; then the server, bearer header and 65-minute `timeout` via `mcp_set_servers`, so the token never enters argv. No `--mcp-config`/`--strict-mcp-config`: user servers stay. A failed registration leaves the session usable with a notice. |
 | Codex 0.162.1 | Per-thread `config` on `thread/start`/`thread/resume` with only `mcp_servers.notch` (`url`, `http_headers.Authorization`, `tool_timeout_sec: 3900`), keeping user servers. Instructions as `additionalContext` `notch_delegation` (`kind: application`) on the thread's first turn in this process; `developerInstructions` untouched. |
-| ACP (DeepSeek) | A stdio MCP server in `session/new`/`session/load` `mcpServers`: the companion executable with `--notch-delegation-bridge`, endpoint and token in its `env`. It relays JSON-RPC lines concurrently (65-minute timeout) and answers a revoked token with an error. Instructions come from the server's `initialize`. Without delegation `mcpServers` is `[]`. |
+| ACP (DeepSeek, Cursor) | A stdio MCP server in `session/new`/`session/load` `mcpServers`: the companion executable with `--notch-delegation-bridge`, endpoint and token in its `env`. It relays JSON-RPC lines concurrently (65-minute timeout) and answers a revoked token with an error. Instructions come from the server's `initialize`. Without delegation `mcpServers` is `[]`. |
+| Antigravity CLI 1.5.2 | The same stdio bridge in `session/new`/`session/resume` `mcpServers`; agy starts it when the session opens and caches the tool descriptors and server instructions (never the endpoint or token) under its app data `mcp/notch/`. Instructions also go in `_meta.antigravity.systemPrompt.append` on every open when `initialize` advertises it, since agy keeps them only for its process. Nothing is written to its configuration (`agy mcp add` would). |
 | Pi 1.3.0 | Bundled `pi_delegation.mjs` via `--extension`, endpoint and token in the process environment (deleted before the agent runs commands). Registers tools as `mcp__notch__<tool>`; `before_agent_start` appends instructions. Uses `node:http`, not `fetch`, so hour-long waits are not cut. Nothing written to the Pi home. |
-| OpenCode | Not hosting: its runtime MCP option (`PUT /api/experimental/mcp/{server}`) is folder-scoped and shared by all sessions there, which would share one session's token. |
-| Hermes, OpenClaw, Antigravity, Cursor | Not hosting (Hermes/OpenClaw/Antigravity have no per-run MCP option; `agy mcp add` writes configuration). All can be children. |
+| OpenCode 2.0.30 | One runtime server per session, `notch-<first 16 hex of SHA-256(native ID)>`, added with `PUT /api/experimental/mcp/{server}?location[directory]=<session folder>` (`type: remote`, bearer header, `oauth: false`); runtime-only, so it ends with the owned server and nothing is written to configuration. Added when the session opens and again before each prompt, because an idle folder drops runtime servers. Every server at a folder is visible there, so each session's rules (`PATCH /api/session/{id}` `permissions`, its other rules kept) end with deny `notch-????????????????_*` (one `?` per hex digit, so a user's own `notch-…` server stays usable), then allow its own `<server>_*`; earlier companion rules, the old `notch-*` deny included, are replaced. A session opened without delegation gets the deny alone and loses a stale `notch` instruction entry. Instructions as session instruction entry `notch`. A failure leaves the session usable with a notice. OpenCode 1.x reports `hosts_delegation: false`. |
+| Hermes 0.22.3 | No per-session MCP option on `hermes serve`, so the companion's `hermes_frontend.py` registers native tools `mcp__notch__<tool>` in a `notch` toolset (`execution_timeout` 3900). Before a frontend's first delegating `session.create`/`session.resume`, the client writes the tools and instructions as a JSON line on the ownership pipe and waits for `NOTCH_DELEGATION {"ready": true}`; after each reply it writes `{"bind": <live session id>, url, token}`. Tokens stay in the frontend's memory, out of argv, environment, disk and `session.*` params. A call finds its live session by the agent's stored key (also after a compression rotation) and posts `tools/call` with that session's bearer; unbound callers, Hermes subagents and revoked tokens (401 forgets the binding) get `capability_denied`; Stop closes the request. `notch` joins an explicit toolset list (`tui_gateway.server._load_enabled_toolsets`); `None` already means all, `[]` stays empty. Instructions extend the `notch_companion` platform hint; tool search may defer the tools as it does MCP tools. Changed internals or a name clash (a user MCP server called `notch`) fail closed with a notice; the session stays usable. Nothing is written to the profile. Legacy Hermes does not host. |
+| OpenClaw (Gateway protocol 4) | A second Gateway connection with role and client mode `node`, the same Keychain device, no operator scopes and its own per-role device token in Keychain. Every agent profile of one Gateway shares that device, so their connections share one node link: it opens with the first session launched with delegation, serves the delegating sessions of every profile, and closes when the last operator connection that launched a delegating session disconnects, so the Gateway withdraws the tools. It declares only `mcp.tools.call.v1` and publishes every tool with `node.pluginTools.update` as `notch_<tool>` (`pluginId: node-mcp`, `mcp {server: notch, tool}`). A `node.invoke.request` runs only for a companion-owned session key that was launched with delegation, as that session through the loopback server with its own token; any other caller gets `capability_denied`. The Gateway's invoke deadline bounds the call, and a cancelled invoke cancels it. Instructions come in the `orchestrator_capabilities` result. Node pairing and command approval stay with OpenClaw (silent for a local Gateway by default). A required pairing, filtered tools (unapproved commands or `gateway.nodes.pluginTools.enabled: false`) or a dropped link become notices; chat keeps working and the next session launch retries. The Gateway lists the tools for every agent while the node is connected. Nothing in the OpenClaw configuration is written. |
 
 ## Capability boundaries
 
@@ -747,6 +815,33 @@ omits it). Images are implicit pending attachments, so removing one must call
 | `approval.request` | `request_id`, redacted `command`, allowed `choices` (`once`, `session`, `always`, `deny`) |
 | `clarify.request` | `request_id`, `question`, `choices`, optional `multi_select`; or `questions: [{qid,question,choices,multi_select}]` |
 | `clarify.expire` | `request_id` to dismiss |
+
+**Reply segments.** The app keeps a turn's text in the order it was written,
+adapter-agnostically. Once a `tool.start` follows text or non-blocking
+questions in the current assistant message, the next text (delta, interim,
+completion or non-blocking questions) starts a new assistant message, dated
+when its first text arrives; a leading blank-line separator is dropped. `message.interim` and `message.complete` text
+that the turn's segments already hold (compared without whitespace: all of them
+joined, as Codex, ACP and OpenCode report, or a suffix, as Claude and Hermes
+report only the final message) keeps them; other text replaces the current
+segment's, or starts a new one after a tool call. Calls still running at
+completion are finished with an end time. The latest visible user row's
+`turnEndedAt` is saved when the turn completes, fails (`error`), or is
+interrupted by a disconnect, so a steer or wake keys its own block; its
+`turnOutcome` saves how the turn itself ended (a failed delegated child leaves
+it finished). A turn the runtime never reports ending (a relaunch while busy,
+the client disconnecting, a Stop it never confirms) records `interrupted` unless
+an outcome is already saved, and loading an older save records its latest
+turn's stop or own failure the same way; a turn without an outcome reads as
+finished, so the session's later state never relabels it. The final segment is the session's latest answer
+(`latestResponse`, delegation summaries and results). Native history splits replies at the same boundaries, keeping
+per-role counts aligned with saved messages: Codex rows end at tool items (a
+turn's first reply keeps the turn ID, later ones `turn:item`), OpenCode joins
+consecutive assistant messages and splits at tool parts (a refresh delivers text
+written before a tool part it has not seen yet, then the poll's tools, then
+later text), and ACP load replay joins agent chunks until a
+tool call. A restored reply without a native time or saved match takes the
+previous row's time instead of the restore time.
 
 Native delegated work emits `subagent.start`, `subagent.thinking`,
 `subagent.tool` and `subagent.complete` on the parent session, identified by

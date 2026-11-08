@@ -402,6 +402,9 @@ final class SessionIndicatorTests: XCTestCase {
         XCTAssertEqual(model.unreadResultCount, 3)
         model.markAllAsRead()
         XCTAssertEqual(model.unreadResultCount, 0)
+        // Reading restarts each acknowledged session's auto-archive clock.
+        XCTAssertEqual(model.sessions.map { $0.lastSeenAt != nil }, expected.map { $0.lastSeenAt != nil })
+        for index in expected.indices { expected[index].lastSeenAt = model.sessions[index].lastSeenAt }
         XCTAssertEqual(model.sessions, expected)
         XCTAssertEqual(model.currentID, "running")
         XCTAssertEqual(model.page, .sessions)

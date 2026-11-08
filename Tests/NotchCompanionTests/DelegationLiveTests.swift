@@ -3,11 +3,12 @@ import XCTest
 
 /// Opt-in checks against the installed harnesses. The connection checks send
 /// no prompt: Codex opens an ephemeral thread, Claude a session without
-/// persistence, each in a temporary folder with the existing profile.
+/// persistence, Antigravity an empty conversation, each in a temporary folder
+/// with the existing profile.
 @MainActor final class DelegationLiveTests: XCTestCase {
     private func requireLive() throws {
         guard ProcessInfo.processInfo.environment["NOTCH_RUN_LIVE_DELEGATION_TEST"] == "1" else {
-            throw XCTSkip("Set NOTCH_RUN_LIVE_DELEGATION_TEST=1 to check the installed Claude Code and Codex.")
+            throw XCTSkip("Set NOTCH_RUN_LIVE_DELEGATION_TEST=1 to check the installed Claude Code, Codex and Antigravity CLI.")
         }
     }
 
@@ -85,6 +86,57 @@ import XCTest
         XCTAssertTrue(session.messages.contains(where: \.isDelegationResult), "The result woke the parent")
         XCTAssertTrue(session.latestResponse.contains("\(marker)-CHILD"), session.latestResponse)
         XCTAssertFalse(model.hasActiveWork)
+    }
+
+    /// No prompt: an owned OpenCode 2 server opens one session in a temporary
+    /// folder. Its data, state and cache live in that folder, so the disposable
+    /// session stays out of the user's history; the native configuration is
+    /// only read.
+    func testInstalledOpenCodeConnectsTheSessionsOwnServer() async throws {
+        try requireLive()
+        let supervisor = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".build/debug/NotchCompanion")
+        guard FileManager.default.isExecutableFile(atPath: supervisor.path) else { throw XCTSkip("Build the app product first.") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("notch-live-opencode-\(UUID().uuidString)")
+        let project = folder.appendingPathComponent("project")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let profile = RuntimeRoute.defaultProfile(.opencode)
+        func configuration() -> [String] {
+            (FileManager.default.subpaths(atPath: profile) ?? []).sorted().map { path in
+                let values = try? FileManager.default.attributesOfItem(atPath: profile + "/" + path)
+                return "\(path) \((values?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0) \(values?[.size] ?? 0)"
+            }
+        }
+        let before = configuration()
+        let keys = ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]
+        let saved = keys.map { ProcessInfo.processInfo.environment[$0] }
+        for key in keys { setenv(key, folder.appendingPathComponent(key).path, 1) }
+        defer { for (key, value) in zip(keys, saved) { if let value { setenv(key, value, 1) } else { unsetenv(key) } } }
+
+        let server = DelegationServer()
+        defer { server.stop() }
+        let caller = DelegationCaller(sessionID: "live-opencode", runtime: .opencode, subagent: false)
+        var listedBy: [DelegationCaller] = []
+        server.tools = { listedBy.append($0); return Delegation.tools }
+        server.instructions = Delegation.instructions
+        let url = try await server.start()
+        let client = OpenCodeClient(profileID: profile, supervisorURL: supervisor)
+        var notices: [String] = []
+        client.onEvent = { name, payload in if name == "runtime.notice" { notices.append(payload["message"] as? String ?? "") } }
+        defer { client.disconnect() }
+        try await client.connect()
+        let result = try await client.request("session.create", params: [
+            "cwd": project.path, "title": "Notch Companion delegation check",
+            "delegation": ["url": url.absoluteString, "token": server.issueToken(for: caller), "instructions": Delegation.instructions]])
+        guard result["hosts_delegation"] as? Bool == true else { throw XCTSkip("The installed OpenCode cannot host delegation (1.x).") }
+        let deadline = Date().addingTimeInterval(20)
+        while listedBy.isEmpty, Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertEqual(listedBy.first, caller, "OpenCode connected the session's own server with its token")
+        XCTAssertEqual(notices, [], "Rules, instructions and the server were all accepted")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("XDG_DATA_HOME").path), "The session stayed in the temporary data folder")
+        client.disconnect()
+        XCTAssertEqual(configuration(), before, "The native configuration is unchanged")
     }
 
     func testInstalledPiLoadsTheExtensionAndListsTheTools() async throws {
@@ -179,5 +231,34 @@ import XCTest
         let status = ((result["status"] as? [String: Any])?["response"] as? [String: Any])?["mcpServers"] as? [[String: Any]] ?? []
         let notch = try XCTUnwrap(status.first { $0["name"] as? String == "notch" }, "\(result)")
         XCTAssertEqual(notch["status"] as? String, "connected", "\(notch)")
+    }
+
+    /// No prompt: `agy acp` opens one empty conversation in a temporary folder, starts
+    /// the companion's stdio bridge from `session/new` and lists the tools with the session's token.
+    func testInstalledAntigravityStartsTheBridgeFromItsACPSession() async throws {
+        try requireLive()
+        let bridge = ProcessInfo.processInfo.environment["NOTCH_TEST_APP_EXECUTABLE"].map { URL(fileURLWithPath: $0) }
+            ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent(".build/debug/NotchCompanion")
+        guard FileManager.default.isExecutableFile(atPath: bridge.path) else { throw XCTSkip("Build the app product first.") }
+        let server = DelegationServer()
+        defer { server.stop() }
+        var listed: [DelegationCaller] = []
+        server.tools = { caller in listed.append(caller); return Delegation.tools }
+        server.instructions = Delegation.instructions
+        let url = try await server.start()
+        let caller = DelegationCaller(sessionID: "live-antigravity", runtime: .antigravity, subagent: false)
+        let delegation: [String: Any] = ["url": url.absoluteString, "token": server.issueToken(for: caller), "bridge": bridge.path,
+                                         "instructions": Delegation.instructions]
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("notch-live-antigravity-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let client = ACPRuntimeClient(runtime: .antigravity, profileID: RuntimeRoute.defaultProfile(.antigravity))
+        defer { client.disconnect() }
+        try await client.connect()
+        let opened = try await client.request("session.create", params: ["cwd": folder.path, "project_trusted": true, "delegation": delegation])
+        XCTAssertNotNil(opened["session_id"] as? String)
+        for _ in 0..<150 where listed.isEmpty { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertEqual(listed.first, caller, "agy started the bridge with this session's token and listed the tools")
     }
 }

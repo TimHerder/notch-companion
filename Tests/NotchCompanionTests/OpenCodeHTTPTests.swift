@@ -225,6 +225,61 @@ final class OpenCodeHTTPTests: XCTestCase {
         try await eventually { events.contains("message.complete") }
     }
 
+    @MainActor
+    func testTextBeforeANewCallStreamsAheadOfItAndLaterTextAfterIt() async throws {
+        let fixture = try peer()
+        defer { try? FileManager.default.removeItem(at: fixture.home) }
+        let client = OpenCodeClient(profileID: fixture.home.path, executableURL: fixture.executable, supervisorURL: supervisor)
+        defer { client.disconnect() }
+        var events: [(String, [String: Any])] = []
+        client.onEvent = { events.append(($0, $1)) }
+        try await client.connect()
+        let opened = try await client.request("session.create", params: ["cwd": fixture.home.path])
+        let id = try XCTUnwrap(opened["session_id"] as? String)
+        _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "split-tail", "turn_id": "split-tail"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        func first(_ name: String, _ match: ([String: Any]) -> Bool) throws -> Int { try XCTUnwrap(events.firstIndex { $0.0 == name && match($0.1) }) }
+        let tail = try first("message.delta") { ($0["text"] as? String)?.contains("now.") == true }
+        let bash = try first("tool.start") { $0["name"] as? String == "bash" }
+        let read = try first("tool.start") { $0["name"] as? String == "read" }
+        let later = try first("message.delta") { ($0["text"] as? String)?.contains("Found it.") == true }
+        XCTAssertLessThan(tail, bash, "A text tail polled with a new call stays before the call")
+        XCTAssertLessThan(read, later, "Text written after a new call follows it")
+        let text = events.filter { $0.0 == "message.delta" }.compactMap { $0.1["text"] as? String }.joined()
+        XCTAssertEqual(text, "I'll run the tests now.\n\nFound it.")
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["text"] as? String, text)
+    }
+
+    @MainActor
+    func testNativeFailureReasonReachesTheFailedCompletion() async throws {
+        let fixture = try peer()
+        defer { try? FileManager.default.removeItem(at: fixture.home) }
+        let client = OpenCodeClient(profileID: fixture.home.path, executableURL: fixture.executable, supervisorURL: supervisor)
+        defer { client.disconnect() }
+        var events: [(String, [String: Any])] = []
+        client.onEvent = { events.append(($0, $1)) }
+        try await client.connect()
+        let opened = try await client.request("session.create", params: ["cwd": fixture.home.path])
+        let id = try XCTUnwrap(opened["session_id"] as? String)
+        _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "session-error", "turn_id": "session-error"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        let complete = try XCTUnwrap(events.last { $0.0 == "message.complete" }?.1)
+        XCTAssertEqual(complete["status"] as? String, "error")
+        XCTAssertEqual(complete["error"] as? String, "Native provider credentials expired", "The runtime's reason, not the progress notice or raw JSON")
+
+        // No session.error frame: the terminal message's own error is the reason.
+        events.removeAll()
+        let other = try await client.request("session.create", params: ["cwd": fixture.home.path])
+        let otherID = try XCTUnwrap(other["session_id"] as? String)
+        _ = try await client.request("prompt.submit", params: ["session_id": otherID, "text": "terminal-error", "turn_id": "terminal-error"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        let terminal = try XCTUnwrap(events.last { $0.0 == "message.complete" }?.1)
+        XCTAssertEqual(terminal["status"] as? String, "error")
+        XCTAssertEqual(terminal["error"] as? String, "Provider rejected the request")
+        XCTAssertEqual(OpenCodeClient.failureReason(["name": "APIError", "message": "Top-level", "data": ["message": "Nested"]]), "Top-level")
+        XCTAssertEqual(OpenCodeClient.failureReason(["name": "NativeTurnError", "data": ["message": ""]]), "NativeTurnError")
+    }
+
     private var supervisor: URL {
         URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".build/debug/NotchCompanion")
     }

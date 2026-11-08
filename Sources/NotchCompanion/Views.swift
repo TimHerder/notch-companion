@@ -94,7 +94,7 @@ struct MascotView: View {
 
     private var indicatorSummary: String {
         if let announcement = model.announcement, model.notchPresentation.announce > 0.5 {
-            return "\(announcement.kind.verb): \(announcement.title)"
+            return announcement.spoken
         }
         let indicators = model.sessionIndicators
         return indicators.isEmpty ? "Ready." : indicators.map { "\($0.title): \($0.status.label)" }.joined(separator: ". ")
@@ -193,40 +193,7 @@ struct StateLabel: View {
                 LED(color: showsDot ? dotColor ?? CompanionStyle.color(state) : CompanionStyle.faint,
                     lit: showsDot, pulsing: showsDot && state == .working, size: 5)
                 Text(label ?? CompanionStyle.label(state)).microLabel(9.5, tracking: 0.7)
-            }.foregroundStyle(attention ? CompanionStyle.signal : CompanionStyle.secondary)
-        }
-    }
-}
-
-/// Result text remains visible after check-in; green/red dots mean unread.
-struct SessionStateLabel: View {
-    var session: CompanionSession
-
-    var body: some View {
-        let status = CollapsedStatus.resolve(session: session)
-        let state = displayState(status)
-        let isResult = state == .finished || state == .failed
-        let label = state == .failed
-            ? (session.pendingSubmission != nil ? "Send unconfirmed" : status == .none ? "Failed" : "Needs attention")
-            : CompanionStyle.label(state)
-        StateLabel(state: state, showsDot: !isResult || status != .none,
-                   dotColor: status == .none ? nil : PanelTheme.current == .refined
-                    ? CompanionStyle.statusColor(status) : CompanionStyle.indicatorColor(status), label: label)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(isResult
-                                ? "\(label), \(status == .none ? "read" : "unread")"
-                                : label)
-            .help(isResult
-                  ? (status == .none ? "Response read" : "Unread response")
-                  : label)
-    }
-
-    private func displayState(_ status: CollapsedStatus) -> WorkState {
-        switch status {
-        case .waiting: return .waiting
-        case .running: return .working
-        case .failed: return .failed
-        default: return session.displayState
+            }.foregroundStyle(attention ? CompanionStyle.color(state) : CompanionStyle.secondary)
         }
     }
 }
@@ -243,17 +210,18 @@ struct MarkAllAsReadButton: View {
 }
 
 /// The merged header. Its top row is the notch band: MascotView draws the eyes
-/// at the left with the live status beside them, and icon controls sit at the
-/// right, all on the resting eyes' centerline. The page title row follows below,
-/// on the 20-point content margin, so no text ever sits behind a camera.
+/// at the left and icon controls sit at the right, on the resting eyes'
+/// centerline, with no text a camera could split. The page title row follows
+/// below on the 20-point content margin, the session's status dot after its title.
 struct NotchHeaderView: View {
     /// Control circles leave 6 points above them in the top row (the eyes have about 8).
     static let control: CGFloat = 24
+    /// 16 points after the eyes' right edge: where text starts beside a mascot.
+    static let mascotColumn: CGFloat = 20 + 18 * EyesDrawing.expandedScale + 16
     @ObservedObject var model: AppModel
 
     var body: some View {
-        // The status starts 16 points after the eyes' right edge.
-        let statusX = 20 + 18 * EyesDrawing.expandedScale + 16
+        let statusX = Self.mascotColumn
         let theme = PanelTheme.current
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
@@ -267,9 +235,6 @@ struct NotchHeaderView: View {
                             .help("Keep the defaults and close")
                     }
                 } else {
-                    statusText
-                        .frame(maxWidth: model.geometry?.expandedCameraMinX.map { max(0, $0 - 8 - statusX) } ?? .infinity,
-                               alignment: .leading)
                     Spacer(minLength: 0)
                     if model.page == .sessions { MarkAllAsReadButton(model: model, size: Self.control, filled: true) }
                     QuietIconButton(symbol: "plus", label: "New session", size: Self.control, filled: true) {
@@ -303,7 +268,7 @@ struct NotchHeaderView: View {
         .foregroundStyle(CompanionStyle.text)
         .background(alignment: .topLeading) {
             if theme == .refined { eyeBloom }
-            // Instrument: a viewfinder frames the eyes, the one living thing on the grid.
+            // Instrument: a viewfinder frames the eyes, its one decoration besides the ruled scale.
             if theme == .instrument && !model.mascotEnabled {
                 // Centered where the open eyes rest: they look a little right and down, toward the content.
                 Reticle()
@@ -315,7 +280,7 @@ struct NotchHeaderView: View {
             if theme == .instrument && !model.page.isWelcome {
                 HeaderRule().padding(.horizontal, 20)
                     // A mascot stands in the header's left column, over the rule's start.
-                    .padding(.leading, model.mascotEnabled ? 20 + 18 * EyesDrawing.expandedScale + 16 - 20 : 0)
+                    .padding(.leading, model.mascotEnabled ? statusX - 20 : 0)
             }
         }
     }
@@ -348,6 +313,8 @@ struct NotchHeaderView: View {
                 else if case .runtimeChooser(let defaults) = model.page { model.page = defaults ? .settings : .session }
                 else if model.page.isRuntimeSetup { model.page = .settings }
                 else if model.page == .usage { model.page = .sessions }
+                // Archived and Snoozed step back to the active list before leaving the page.
+                else if model.page == .sessions && model.sessionFilter != .all { model.sessionFilter = .all }
                 else { model.page = .session }
             }.padding(.leading, -7)
         }
@@ -359,12 +326,16 @@ struct NotchHeaderView: View {
                 let title = Text(headerTitle).font(.system(size: 15, weight: .semibold))
                 (PanelTheme.current == .instrument ? title.tracking(-0.2) : title).lineLimit(1)
                 if model.page == .session {
+                    statusDot
                     Image(systemName: "chevron.down")
                         .font(.system(size: PanelTheme.pick(10, 10, 8.5), weight: PanelTheme.pick(.semibold, .bold, .bold)))
                         .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.faint))
                 }
             }
-        }.buttonStyle(NotchTextButtonStyle())
+        }
+        .buttonStyle(NotchTextButtonStyle())
+        // The word the status dot stands for is spoken with the title.
+        .accessibilityValue(sessionStatus?.text ?? "")
     }
 
     /// Refined: a faint light the open eyes cast on the black, so they read as
@@ -372,7 +343,8 @@ struct NotchHeaderView: View {
     @ViewBuilder private var eyeBloom: some View {
         if !model.mascotEnabled {
             // An ellipse that hugs the pair of eyes rather than a round smudge.
-            EllipticalGradient(colors: [Color.white.opacity(0.09), Color.white.opacity(0)], center: .center,
+            // Softened (was 9%) now that no status word sits beside the eyes.
+            EllipticalGradient(colors: [Color.white.opacity(0.065), Color.white.opacity(0)], center: .center,
                                startRadiusFraction: 0.12, endRadiusFraction: 0.5)
                 .frame(width: 84, height: 52)
                 .position(x: NotchGeometry.expandedEyeX, y: (model.geometry?.expandedTopRowHeight ?? 36) / 2)
@@ -381,36 +353,36 @@ struct NotchHeaderView: View {
         }
     }
 
-    private var statusText: some View {
-        let state = model.page == .session ? (model.current?.displayState ?? .idle) : model.overallState
-        let session = model.page == .session ? model.current : nil
-        let status = Self.status(state: state, session: session, waitingOnChild: session.map { model.delegationWaits[$0.id] != nil } ?? false)
+    /// The open session's status word and color, and whether its work is live.
+    private var sessionStatus: (text: String, color: Color, working: Bool)? {
+        guard model.page == .session, let session = model.current else { return nil }
+        let state = session.displayState
+        let status = Self.status(state: state, session: session, waitingOnChild: model.delegationWaits[session.id] != nil)
         let working = [.thinking, .working, .answering].contains(CompanionMood.resolve(overall: state, current: session))
-        let lit = working || status.color != CompanionStyle.secondary
-        // Status changes resolve through a blur rather than snapping.
-        return HStack(spacing: 7) {
-            if PanelTheme.current == .instrument {
-                LED(color: status.color == CompanionStyle.secondary ? (lit ? CompanionStyle.text : CompanionStyle.faint) : status.color,
-                    lit: lit, pulsing: working, size: 6)
-            }
-            ZStack(alignment: .leading) {
-                Group {
-                    switch PanelTheme.current {
-                    case .refined: Text(status.text).font(.system(size: 12, weight: .medium))
-                    case .tahoe: Text(status.text).font(.system(size: 12.5, weight: .semibold))
-                    case .instrument: Text(status.text).microLabel(10.5, tracking: 1)
-                    }
-                }
-                    .foregroundStyle(status.color).lineLimit(1)
-                    .workingShimmer(working, reducedMotion: model.reducedMotion)
-                    .id(status.text)
-                    .transition(model.reducedMotion ? AnyTransition.opacity : AnyTransition(.blurReplace))
-            }
-        }
-        .animation(model.reducedMotion ? nil : .smooth(duration: 0.32), value: status.text)
+        return (status.text, status.color, working)
     }
 
-    /// Live status in words, colored like the session's indicator dot.
+    /// A dot after the title (a lit LED in Instrument) in the session's status
+    /// color: it breathes while work runs and hides when nothing is live or
+    /// unread. Its word is the tooltip and the title's spoken value.
+    @ViewBuilder private var statusDot: some View {
+        if let status = sessionStatus, status.working || status.color != CompanionStyle.secondary {
+            let instrument = PanelTheme.current == .instrument
+            LED(color: status.color == CompanionStyle.secondary ? CompanionStyle.text : status.color,
+                pulsing: status.working && !model.reducedMotion, size: instrument ? 6 : 6.5, glows: instrument)
+                .help(status.text)
+        }
+    }
+
+    /// States the user has to act on keep their word, as a subtitle under the title.
+    static func actionWord(_ session: CompanionSession?) -> String? {
+        guard let session else { return nil }
+        if session.nativeActivityUnverified != nil { return "Check native work" }
+        if session.pendingSubmission != nil && !session.isBusy { return "Send unconfirmed" }
+        return nil
+    }
+
+    /// The status dot's word (its tooltip and spoken value) and color, like the session's indicator dot.
     static func status(state: WorkState, session: CompanionSession?, waitingOnChild: Bool = false) -> (text: String, color: Color) {
         if session?.nativeActivityUnverified != nil { return ("Check native work", CompanionStyle.amber) }
         let collapsed = session.map { CollapsedStatus.resolve(session: $0) } ?? .none
@@ -432,7 +404,7 @@ struct NotchHeaderView: View {
     }
 
     private var headerTitle: String {
-        switch model.page { case .sessions: return "Your sessions"; case .team: return "Delegated work"; case .agent: return "Agent details"; case .activity: return "Activity"; case .settings: return "Settings"; case .usage: return "Usage"; case .runtimeSetup(let runtime): return "Set up \(runtime.title)"; case .runtimeChooser(let defaults): return defaults ? "Default agent" : "Choose agent"; case .welcome: return "Welcome"; case .session: return model.current?.title ?? "New session" }
+        switch model.page { case .sessions: return model.sessionFilter == .all ? "Your sessions" : model.sessionFilter.title; case .team: return "Delegated work"; case .agent: return "Agent details"; case .activity: return "Activity"; case .settings: return "Settings"; case .usage: return "Usage"; case .runtimeSetup(let runtime): return "Set up \(runtime.title)"; case .runtimeChooser(let defaults): return defaults ? "Default agent" : "Choose agent"; case .welcome: return "Welcome"; case .session: return model.current?.title ?? "New session" }
     }
 
     private func teamButton(_ session: CompanionSession) -> some View {
@@ -446,7 +418,7 @@ struct NotchHeaderView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "person.2")
                     Text("Team")
-                    Text(String(format: "%02d", session.agents.count)).foregroundStyle(CompanionStyle.secondary)
+                    Text("\(session.agents.count)").foregroundStyle(CompanionStyle.secondary)
                     Image(systemName: "chevron.right").font(.system(size: 7.5, weight: .bold))
                 }
             }
@@ -455,14 +427,10 @@ struct NotchHeaderView: View {
 
 }
 
-/// The welcome's Skip: plain text (Refined, Tahoe) or a micro-label (Instrument).
+/// The welcome's Skip: plain secondary text.
 private struct SkipLabelStyle: ViewModifier {
     func body(content: Content) -> some View {
-        switch PanelTheme.current {
-        case .refined: content.font(.system(size: 12, weight: .medium)).foregroundStyle(CompanionStyle.secondary)
-        case .tahoe: content.font(.system(size: 12.5, weight: .medium)).foregroundStyle(CompanionStyle.secondary)
-        case .instrument: content.microLabel(10.5, tracking: 0.8).foregroundStyle(CompanionStyle.secondary)
-        }
+        content.font(.system(size: PanelTheme.pick(12, 12.5, 12), weight: .medium)).foregroundStyle(CompanionStyle.secondary)
     }
 }
 
@@ -485,6 +453,14 @@ struct CompactPanelView: View {
     var body: some View {
         let theme = PanelTheme.current
         VStack(spacing: 0) {
+            if model.page == .session, let word = NotchHeaderView.actionWord(model.current) {
+                // A subtitle under the title, beside a mascot when one stands in the header.
+                Text(word).font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(CompanionStyle.amber).lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, model.mascotEnabled ? NotchHeaderView.mascotColumn - 20 : 0)
+                    .padding(.bottom, 2)
+            }
             if !model.connection && model.connectionMessage != "Connects when you send a message." && !model.page.isRuntimeSetup
                 && model.current.map({ model.canChangeRuntime($0.id) }) != true {
                 connectionNotice
@@ -509,26 +485,17 @@ struct CompactPanelView: View {
                     RequestView(model: model, request: request, compact: true)
                         .frame(height: request.kind == .approval ? nil : 190).padding(.top, 8)
                 }
-            } else if model.page != .settings && !model.page.isRuntimeSetup && !model.page.isWelcome {
-                if theme == .refined {
-                    ComposerView(model: model, focused: $focused, showsTitle: model.page != .session)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 8)
-                        .zIndex(1)
-                } else {
-                    ComposerDestinationView(model: model, showsTitle: model.page != .session)
-                        .padding(.top, 8).padding(.bottom, 5).zIndex(0.5)
-                    if model.current?.attachments.isEmpty == false {
-                        AttachmentStrip(model: model).frame(height: 28).padding(.bottom, 4)
-                    }
-                    ComposerView(model: model, focused: $focused).fixedSize(horizontal: false, vertical: true)
-                        .zIndex(1)
-                }
+            } else if model.page != .settings && model.page != .sessions && !model.page.isRuntimeSetup && !model.page.isWelcome {
+                ComposerView(model: model, focused: $focused, showsTitle: model.page != .session)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
+                    .zIndex(1)
             }
         }
-        .padding(.horizontal, 20).padding(.top, theme == .refined ? 4 : 6).padding(.bottom, theme == .refined ? 12 : 14)
+        // Content starts right under the title row (Instrument: just clear of its ruled scale);
+        // the transcript's own inset and fade give it air.
+        .padding(.horizontal, 20).padding(.top, theme == .instrument ? 4 : 0).padding(.bottom, theme == .refined ? 12 : 14)
         .frame(width: model.geometry?.panelWidth ?? 560, height: model.geometry?.bodyHeight ?? 480, alignment: .top)
-        .background { if theme == .instrument && !model.page.isWelcome { InstrumentGrid() } }
         .foregroundStyle(CompanionStyle.text)
         .environment(\.colorScheme, .dark)
         .onChange(of: model.composerFocusRequest) { _, _ in
@@ -560,11 +527,11 @@ struct CompactPanelView: View {
             }.padding(.vertical, 7)
         case .instrument:
             HStack(spacing: 10) {
-                LED(color: CompanionStyle.signal, size: 5)
+                LED(color: CompanionStyle.amber, size: 5)
                 Text(model.connectionMessage).font(.system(size: 11.5)).foregroundStyle(CompanionStyle.secondary).lineLimit(2)
                 Spacer()
                 buttons
-            }.padding(.vertical, 7)
+            }.padding(.vertical, 7).instrumentBanner()
         }
     }
 
@@ -587,14 +554,15 @@ struct CompactPanelView: View {
             }.foregroundStyle(CompanionStyle.amber).padding(.vertical, 8)
         case .instrument:
             HStack(alignment: .top, spacing: 8) {
-                // The tag and rule carry the signal; the message itself stays readable white.
-                Text("ERR").microLabel(9.5, weight: .semibold).foregroundStyle(CompanionStyle.signal).padding(.top, 2)
+                // The tag and rule carry the color; the message itself stays readable white.
+                Text("ERR").microLabel(9.5, weight: .semibold).foregroundStyle(CompanionStyle.error).padding(.top, 2)
                 Text(error).font(.system(size: 12)).foregroundStyle(CompanionStyle.text).lineLimit(3).help(error)
                 Spacer(minLength: 0)
                 dismiss.padding(.top, -3)
             }
             .padding(.vertical, 7).padding(.leading, 10)
-            .overlay(alignment: .leading) { Rectangle().fill(CompanionStyle.signal).frame(width: 2) }
+            .overlay(alignment: .leading) { Rectangle().fill(CompanionStyle.error).frame(width: 2) }
+            .instrumentBanner()
         }
     }
 
@@ -628,48 +596,56 @@ struct ToolRow: View {
         let status = tool.state == .working ? "Running" : (tool.state == .failed ? "Failed" : (tool.state == .interrupted ? "Stopped" : "Done"))
         switch PanelTheme.current {
         case .refined:
-            // Only work that needs a look carries colour; finished calls stay quiet.
+            // One line; only work that needs a look carries colour, finished calls stay quiet.
             let tint = tool.state == .working || tool.state == .failed ? CompanionStyle.color(tool.state) : CompanionStyle.tertiary
             HStack(spacing: 8) {
-                Image(systemName: tool.state == .working ? "ellipsis" : (tool.state == .failed ? "exclamationmark.circle" : "checkmark"))
-                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(tint).frame(width: 16)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(tool.displayName).font(CompanionStyle.callout).lineLimit(1)
-                    if !tool.detail.isEmpty { Text(tool.detail).font(CompanionStyle.caption).foregroundStyle(CompanionStyle.tertiary).lineLimit(1) }
+                Image(systemName: tool.state == .working ? "ellipsis" : tool.state == .failed ? "exclamationmark.circle" : tool.state == .interrupted ? "minus" : "checkmark")
+                    .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(tint).frame(width: 14)
+                Text(tool.displayName).font(CompanionStyle.callout)
+                    .foregroundStyle(tool.state == .failed ? tint : tool.state == .working ? CompanionStyle.text : CompanionStyle.secondary)
+                    .lineLimit(1).layoutPriority(1)
+                if !tool.detail.isEmpty {
+                    Text(SessionDigest.oneLine(tool.detail)).font(.system(size: 11, design: .monospaced)).foregroundStyle(CompanionStyle.tertiary)
+                        .lineLimit(1).truncationMode(.middle)
                 }
-                Spacer(minLength: 8)
-                Text(status).font(CompanionStyle.caption).foregroundStyle(CompanionStyle.tertiary)
-            }.frame(minHeight: 32).help(tool.detail.isEmpty ? tool.displayName : tool.detail)
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: 24).help(tool.detail.isEmpty ? tool.displayName : tool.detail)
+            .accessibilityElement(children: .combine).accessibilityValue(status)
         case .tahoe:
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Group {
                     if tool.state == .working { ProgressView().controlSize(.mini) }
                     else {
                         Image(systemName: tool.state == .failed ? "exclamationmark.circle.fill" : tool.state == .interrupted ? "stop.circle" : "checkmark.circle.fill")
-                            .font(.system(size: 13)).symbolRenderingMode(.hierarchical)
+                            .font(.system(size: 12)).symbolRenderingMode(.hierarchical)
                             .foregroundStyle(tool.state == .interrupted ? CompanionStyle.secondary : CompanionStyle.color(tool.state))
                     }
                 }.frame(width: 16)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(tool.displayName).font(.system(size: 12.5)).lineLimit(1)
-                    if !tool.detail.isEmpty { Text(tool.detail).font(.system(size: 11, design: .monospaced)).foregroundStyle(CompanionStyle.secondary).lineLimit(1) }
+                // A failed call's name takes the failure colour, so it reads at a glance.
+                Text(tool.displayName).font(.system(size: 12)).lineLimit(1).layoutPriority(1)
+                    .foregroundStyle(tool.state == .failed ? AnyShapeStyle(CompanionStyle.color(.failed)) : AnyShapeStyle(.primary))
+                if !tool.detail.isEmpty {
+                    Text(SessionDigest.oneLine(tool.detail)).font(.system(size: 11, design: .monospaced)).foregroundStyle(CompanionStyle.secondary)
+                        .lineLimit(1).truncationMode(.middle)
                 }
-                Spacer(minLength: 5)
-                Text(status).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
-            }.frame(minHeight: 32).help(tool.detail.isEmpty ? tool.displayName : tool.detail)
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: 24).help(tool.detail.isEmpty ? tool.displayName : tool.detail)
+            .accessibilityElement(children: .combine).accessibilityValue(status)
         case .instrument:
             let tag = tool.state == .working ? "RUN" : (tool.state == .failed ? "ERR" : (tool.state == .interrupted ? "STOP" : "OK"))
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Group {
-                    if tool.state == .working { LED(color: CompanionStyle.text, pulsing: true, size: 5).alignmentGuide(.firstTextBaseline) { $0[.bottom] } }
-                    else { Text("›").foregroundStyle(tool.state == .failed ? CompanionStyle.signal : CompanionStyle.faint) }
+                    if tool.state == .working { LED(color: CompanionStyle.signal, pulsing: true, size: 5).alignmentGuide(.firstTextBaseline) { $0[.bottom] } }
+                    else { Text("›").foregroundStyle(tool.state == .failed ? CompanionStyle.error : CompanionStyle.faint) }
                 }.frame(width: 9)
                 Text(tool.displayName).foregroundStyle(CompanionStyle.text).lineLimit(1).layoutPriority(1)
                 if !tool.detail.isEmpty { Text(tool.detail).foregroundStyle(CompanionStyle.secondary).lineLimit(1).truncationMode(.middle) }
                 Spacer(minLength: 6)
                 if let duration = Self.duration(tool) { Text(duration).foregroundStyle(CompanionStyle.faint).fixedSize() }
                 Text(tag).microLabel(9.5, weight: .semibold, tracking: 0.6)
-                    .foregroundStyle(tool.state == .failed ? CompanionStyle.signal : tool.state == .working ? CompanionStyle.text : CompanionStyle.faint)
+                    .foregroundStyle(tool.state == .failed ? CompanionStyle.error : tool.state == .working ? CompanionStyle.text : CompanionStyle.faint)
                     .frame(width: 30, alignment: .trailing)
                     .accessibilityLabel(status)
             }
@@ -743,14 +719,13 @@ struct TeamContent: View {
         case .instrument:
             ScrollView { VStack(alignment: .leading, spacing: 0) {
                 RuleLabel(summary).padding(.top, 10).padding(.bottom, 6)
-                ForEach(Array(agents.enumerated()), id: \.element.id) { index, agent in
+                ForEach(agents) { agent in
                     Button { open(agent) } label: {
                         HStack(spacing: 10) {
-                            Text(String(format: "%02d", index + 1)).font(CompanionStyle.mono(10.5)).foregroundStyle(CompanionStyle.faint)
                             Image(systemName: agent.sessionID == nil ? "person.crop.circle" : "arrow.triangle.branch").font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(agent.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                                if let detail = agent.delegationDetail { Text(detail).microLabel(9.5, weight: .regular, tracking: 0.5).foregroundStyle(CompanionStyle.secondary).lineLimit(1) }
+                                if let detail = agent.delegationDetail { Text(detail).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary).lineLimit(1) }
                             }
                             Spacer(); StateLabel(state: agent.state); Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).foregroundStyle(CompanionStyle.faint)
                         }
@@ -806,7 +781,7 @@ struct AttachmentStrip: View {
                         switch theme {
                         case .refined: Text(attachment.name).font(CompanionStyle.callout).lineLimit(1).truncationMode(.middle).frame(maxWidth: 160)
                         case .tahoe: Text(attachment.name).font(.system(size: 11.5)).lineLimit(1).frame(maxWidth: 140)
-                        case .instrument: Text(attachment.name).font(CompanionStyle.mono(10.5)).lineLimit(1).truncationMode(.middle).frame(maxWidth: 150)
+                        case .instrument: Text(attachment.name).font(.system(size: 11.5)).lineLimit(1).truncationMode(.middle).frame(maxWidth: 150)
                         }
                     }
                     Button { model.removeAttachment(attachment.id) } label: { Image(systemName: "xmark") }
@@ -860,12 +835,23 @@ struct SettingsContent: View {
     private var rows: some View {
         // Tahoe and Instrument head each group; their icon tiles are Tahoe's.
         VStack(alignment: .leading, spacing: PanelTheme.pick(12, 18, 14)) {
-            SettingsGroup(PanelTheme.pick(nil, "New sessions", "Defaults")) {
+            SettingsGroup(PanelTheme.pick(nil, "Sessions", "Defaults")) {
                 SettingsRow("Default agent for new sessions", symbol: "sparkle", tint: .purple) {
                     defaultAgentButton
                         .accessibilityLabel("Default agent for new sessions, \(model.defaultRuntime.title)")
                 }
                 SettingsRow("Default folder for new sessions", symbol: "folder.fill", tint: .blue, divider: true) { DefaultWorkspaceButton(model: model) }
+                SettingsRow("Archive read sessions after", symbol: "archivebox.fill", tint: .gray, divider: true) {
+                    // The 252-point sidebar fits only the list's own age style (1h, 12h, 3d).
+                    ViewThatFits(in: .horizontal) {
+                        NotchSegmentedControl(label: "Archive read sessions after", options: SessionAutoArchive.allCases,
+                                              title: \.label, selection: $model.autoArchiveAfter, small: true)
+                        NotchSegmentedControl(label: "Archive read sessions after", options: SessionAutoArchive.allCases,
+                                              title: { $0.interval.map(SessionDigest.compactAge) ?? $0.label },
+                                              selection: $model.autoArchiveAfter, small: true, spoken: \.label)
+                    }
+                        .help("Read, idle sessions move to Archived after this long without activity. Search and the Archived list still find them.")
+                }
             }
             SettingsGroup(PanelTheme.pick(nil, "Composer", "Composer")) {
                 SettingsRow("Show model picker", symbol: "cube.fill", tint: .indigo) {
@@ -890,7 +876,7 @@ struct SettingsContent: View {
                 }
                 SettingsRow("Cross-agent delegation", symbol: "arrow.triangle.branch", tint: .pink, divider: true) {
                     Toggle("Cross-agent delegation", isOn: $model.delegationEnabled).toggleStyle(NotchSwitchStyle())
-                        .help("Let Claude Code, Codex, Pi and DeepSeek Harness sessions hand a task to another harness you set up here. The child appears in the parent's team. Applies to sessions opened from now on.")
+                        .help("Let sessions of any harness (OpenCode from 2.0) hand a task to another harness you set up here. The child appears in the parent's team. Applies to sessions opened from now on.")
                 }
             }
             SettingsGroup(PanelTheme.pick(nil, "Notch", "Notch")) {
@@ -947,7 +933,7 @@ struct SettingsContent: View {
                             }
                         }
                     }
-                        .help("Refined is the quiet default; Tahoe follows macOS and its accent color; Instrument is monochrome with one orange signal.")
+                        .help("Refined is the quiet default; Tahoe follows macOS and its accent color; Instrument is monochrome with an orange signal for live work.")
                 }
                 SettingsRow("Status effects", symbol: "sparkles", tint: .yellow, divider: true) {
                     HStack(spacing: 10) {
@@ -1012,7 +998,7 @@ struct SettingsContent: View {
                     switch PanelTheme.current {
                     case .refined: footer.font(CompanionStyle.caption).foregroundStyle(CompanionStyle.tertiary).lineLimit(1)
                     case .tahoe: footer.font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary).lineLimit(1)
-                    case .instrument: footer.microLabel(9.5, weight: .regular, tracking: 0.6).foregroundStyle(CompanionStyle.faint).lineLimit(1)
+                    case .instrument: footer.font(.system(size: 11)).foregroundStyle(CompanionStyle.faint).lineLimit(1)
                     }
                 }
                 Spacer(minLength: 8)
@@ -1028,6 +1014,12 @@ struct SettingsContent: View {
                 .font(.system(size: 11))
                 .foregroundStyle(CompanionStyle.secondary)
                 .textSelection(.enabled)
+                .padding(.leading, PanelTheme.pick(4, 4, 0))
+            // The agent chooser shows these vendors' marks (docs/third-party-marks.md).
+            Text("Claude Code, Codex, OpenCode, Pi, OpenClaw, DeepSeek Harness, Antigravity, Cursor and Hermes Agent and their logos are trademarks of their respective owners. Notch Companion is not affiliated with or endorsed by them.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(PanelTheme.pick(CompanionStyle.tertiary, CompanionStyle.secondary, CompanionStyle.faint))
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, PanelTheme.pick(4, 4, 0))
         }
     }
@@ -1075,11 +1067,11 @@ struct SettingsContent: View {
         case .instrument:
             HStack(spacing: 7) {
                 // Connected is lit, ready is an unlit lamp, and setup needs you.
-                LED(color: status.connected || ready ? CompanionStyle.text : CompanionStyle.signal,
+                LED(color: status.connected ? CompanionStyle.color(.finished) : ready ? CompanionStyle.text : CompanionStyle.amber,
                     lit: status.connected || !ready, size: 5)
                 Text(text)
-                    .microLabel(9.5, tracking: 0.6)
-                    .foregroundStyle(status.connected || ready ? CompanionStyle.secondary : CompanionStyle.signal)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(status.connected || ready ? CompanionStyle.secondary : CompanionStyle.amber)
                 setUp.padding(.leading, 3)
             }
             .foregroundStyle(CompanionStyle.secondary)
@@ -1217,8 +1209,9 @@ struct SettingsRow<Control: View>: View {
                     if let icon { SettingsIcon(symbol: icon, tint: tint) }
                     Text(title).fixedSize(horizontal: true, vertical: false)
                     Spacer(minLength: 0)
-                    // Caps a long folder name so it truncates instead of stacking.
-                    control.frame(maxWidth: 220, alignment: .trailing)
+                    // Caps a long folder name so it truncates instead of stacking; wide
+                    // enough for the archive choices' full words (230 points in Instrument).
+                    control.frame(maxWidth: 240, alignment: .trailing)
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 10) {
@@ -1315,10 +1308,48 @@ struct FullSessionView: View {
         page == .settings || page == .usage ? page : nil
     }
 
+    /// The session header's real state, so it never contradicts the transcript:
+    /// what needs you, the running turn's clock, a connection problem, or when
+    /// the last turn ended. "Connects when you send" is left for a session that
+    /// has no connection and has not run a turn yet.
+    static func subtitle(_ session: CompanionSession?, needsSetup: Bool, connected: Bool,
+                         connectionMessage: String, now: Date = Date()) -> String {
+        if needsSetup { return "Connect a harness in Settings." }
+        guard let session else { return connectionMessage }
+        let runtime = session.isLegacyPrivate ? "Legacy Hermes" : session.runtime.title
+        if let word = NotchHeaderView.actionWord(session) { return "\(runtime) · \(word)" }
+        switch session.displayState {
+        case .waiting: return "\(runtime) · Needs your answer"
+        case .working:
+            let start = SessionDigest.turnStart(session) ?? session.updatedAt
+            return "\(runtime) · Working for \(SessionDigest.elapsed(now.timeIntervalSince(start)))"
+        default: break
+        }
+        let idle = "Connects when you send a message."
+        if !connected && connectionMessage != idle { return connectionMessage }
+        if let boundary = session.messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) }) {
+            let verb = switch session.turnOutcome[boundary.id] { case .failed: "Failed"; case .interrupted: "Stopped"; default: "Worked" }
+            return "\(runtime) · \(verb) \(ago(now.timeIntervalSince(session.turnEndedAt[boundary.id] ?? session.updatedAt)))"
+        }
+        return connected ? connectionMessage : idle
+    }
+
+    /// "just now", "4 min ago", "2 h ago", "3 d ago".
+    static func ago(_ interval: TimeInterval) -> String {
+        let seconds = max(0, Int(interval))
+        if seconds < 60 { return "just now" }
+        if seconds < 3_600 { return "\(seconds / 60) min ago" }
+        if seconds < 86_400 { return "\(seconds / 3_600) h ago" }
+        return "\(seconds / 86_400) d ago"
+    }
+
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 5) {
-                Text("Your sessions").font(.system(size: 14, weight: .semibold))
+                if model.sessionFilter != .all {
+                    QuietIconButton(symbol: "chevron.left", label: "Back to your sessions") { model.sessionFilter = .all }.padding(.leading, -7)
+                }
+                Text(model.sessionFilter == .all ? "Your sessions" : model.sessionFilter.title).font(.system(size: 14, weight: .semibold))
                 Spacer(minLength: 0)
                 MarkAllAsReadButton(model: model)
                 QuietIconButton(symbol: "folder.badge.plus", label: "New project") { model.addProject(showPanel: false) }
@@ -1360,10 +1391,14 @@ struct FullSessionView: View {
     }
 
     @ViewBuilder private var sessionPane: some View {
-        header(model.current?.title ?? "New session",
-               subtitle: model.currentDraftNeedsSetup ? "Connect a harness in Settings." : model.connectionMessage,
-               session: model.current) {
-            NotchSegmentedControl(label: "View", options: ["Conversation", "Activity", "Team"], title: { $0 }, selection: $selectedTab)
+        // A working turn's clock ticks each second; "Worked 2 min ago" refreshes each half minute.
+        TimelineView(.periodic(from: .now, by: model.current?.isBusy == true ? 1 : 30)) { context in
+            header(model.current?.title ?? "New session",
+                   subtitle: Self.subtitle(model.current, needsSetup: model.currentDraftNeedsSetup, connected: model.connection,
+                                           connectionMessage: model.connectionMessage, now: context.date),
+                   session: model.current, trailing: {
+                NotchSegmentedControl(label: "View", options: ["Conversation", "Activity", "Team"], title: { $0 }, selection: $selectedTab)
+            })
         }
         VStack(spacing: 0) {
             if let error = model.errorMessage {
@@ -1373,7 +1408,7 @@ struct FullSessionView: View {
             FailedAgentBanner(model: model) { selectedTab = "Team" }
         }.readable().padding(.horizontal, 22)
         Group {
-            if selectedTab == "Conversation" { ConversationHistoryView(model: model) }
+            if selectedTab == "Conversation" { ConversationHistoryView(model: model, inNotch: false) }
             else if selectedTab == "Activity" { fullActivity }
             else { fullTeam }
         }.readable().padding(.horizontal, 22).frame(maxHeight: .infinity)
@@ -1384,15 +1419,11 @@ struct FullSessionView: View {
                 // Refined and Tahoe size the card to its question; Instrument only an approval.
                 RequestView(model: model, request: request)
                     .frame(height: PanelTheme.current == .instrument && request.kind != .approval ? 210 : nil)
-            } else if PanelTheme.current == .refined {
+            } else {
                 ComposerView(model: model, focused: $focused, isCompact: false, showsTitle: selectedTab != "Conversation")
                     .fixedSize(horizontal: false, vertical: true).zIndex(1)
-            } else {
-                ComposerDestinationView(model: model, showsTitle: selectedTab != "Conversation").zIndex(0.5)
-                if model.current?.attachments.isEmpty == false { AttachmentStrip(model: model).frame(height: 28) }
-                ComposerView(model: model, focused: $focused, isCompact: false).fixedSize(horizontal: false, vertical: true).zIndex(1)
             }
-        }.readable().padding(.horizontal, 22).padding(.top, 10).padding(.bottom, 18).zIndex(1)
+        }.readable().padding(.horizontal, 22).padding(.top, 8).padding(.bottom, 18).zIndex(1)
             .layoutPriority(PanelTheme.current == .tahoe ? 1 : 0)
     }
 

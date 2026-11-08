@@ -1,0 +1,3 @@
+# Third-party agent marks ship byte-for-byte as published, or rasterized unmodified (docs/third-party-marks.md).
+Sources/NotchCompanion/Resources/AgentLogos/*.svg binary
+Sources/NotchCompanion/Resources/AgentLogos/*.png binary

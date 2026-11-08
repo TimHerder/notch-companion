@@ -5,8 +5,7 @@ struct ComposerView: View {
     @ObservedObject var model: AppModel
     var focused: FocusState<Bool>.Binding
     var isCompact = true
-    /// Refined: secondary pages name the session the message goes to. The
-    /// other designs render the destination row outside the composer.
+    /// Secondary pages name the session the message goes to, in the field's bar.
     var showsTitle = false
     @State private var editorHeight: CGFloat = ComposerTextView.minimumHeight
     @State private var submissionNotice: String?
@@ -24,6 +23,12 @@ struct ComposerView: View {
         submissionNotice ?? (checksLastSend ? "Check the last send before sending another message." : nil)
     }
     private var busyHint: String { model.current?.busyInputHint ?? "⌘↩ to queue for later" }
+    /// While working, a typed draft gets a key of its own (steer or queue) and Stop steps aside.
+    private var takesDraftWhileBusy: Bool {
+        busy && !checksLastSend && model.current?.nativeActivityUnverified == nil
+            && !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    private var queued: [QueuedSend] { model.current?.queuedSends.filter(\.isUserMessage) ?? [] }
     private var draftBinding: Binding<String> {
         let sessionID = model.currentID
         return Binding(get: { model.sessions.first { $0.id == sessionID }?.draft ?? "" },
@@ -39,8 +44,7 @@ struct ComposerView: View {
     var body: some View {
         let refined = PanelTheme.current == .refined
         VStack(alignment: .leading, spacing: refined ? 6 : 5) {
-            if let session = model.current, session.queuedSends.contains(where: \.isUserMessage) {
-                let queued = session.queuedSends.filter(\.isUserMessage)
+            if let session = model.current, !queued.isEmpty {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 5) {
                         ForEach(queued, id: \.id) { send in
@@ -49,8 +53,7 @@ struct ComposerView: View {
                                 Text("\(send.paused == true ? "Paused" : "Queued"): \(send.text)")
                                     .lineLimit(1).help(send.text + (send.attachments?.isEmpty == false ? "\nFiles: " + send.attachments!.map(\.name).joined(separator: ", ") : ""))
                                 Spacer(minLength: 0)
-                                QuietIconButton(symbol: "xmark", label: "Cancel queued message") { model.cancelQueuedSend(send.id) }
-                                    .disabled(model.isSubmitting(session.id))
+                                queueActions(send, session: session)
                             }
                         }
                     }
@@ -90,74 +93,125 @@ struct ComposerView: View {
                     notice
                 }
             }
-            switch PanelTheme.current {
-            case .refined: refinedField
-            case .tahoe, .instrument: inlineField
-            }
-            // Session settings sit in their own row under the field, as in other agent harnesses.
-            if (!isCompact || model.page == .session) && (model.showModelPicker || model.showContextUsage || model.showPermissionModes) {
-                switch PanelTheme.current {
-                case .refined: ModelControlsView(model: model).padding(.leading, 6).padding(.trailing, 10)
-                case .tahoe: ModelControlsView(model: model).padding(.horizontal, 10)
-                case .instrument: ModelControlsView(model: model).padding(.horizontal, 4)
-                }
-            }
+            field
             if let hint {
                 Text(hint).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
-                    .fixedSize(horizontal: false, vertical: true).padding(.horizontal, refined ? 14 : 5)
+                    // On the editor's inset, now that every design shares the field.
+                    .fixedSize(horizontal: false, vertical: true).padding(.horizontal, 14)
             }
         }
         .onChange(of: model.currentID) { _, _ in submissionNotice = nil }
         .onChange(of: busy) { _, _ in submissionNotice = nil }
     }
 
-    /// Refined: one field, files and the editor on top, a toolbar along its
-    /// bottom edge (attach, where the message goes, Send), all on one inset.
-    private var refinedField: some View {
-        let shape = RoundedRectangle(cornerRadius: CompanionStyle.Radius.field, style: .continuous)
+    /// Plan ready is the field's own first row, above a hairline: the plan's
+    /// name, Keep planning as quiet text (hidden for this turn) and Implement
+    /// (leaves Plan and asks for the work). Refined keeps its sage for Send, so
+    /// Implement is the neutral pill there and the accent key elsewhere
+    /// (Instrument's lit white key, like Send).
+    private func planHeader(_ session: CompanionSession) -> some View {
+        let theme = PanelTheme.current
+        let refined = theme == .refined
+        return VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                planName(session.planReadyTitle)
+                Spacer(minLength: 8)
+                Button("Keep planning") { model.keepPlanning(session.id) }
+                    .buttonStyle(NotchToolbarButtonStyle(height: theme == .instrument ? 22 : 24))
+                    .fixedSize() // A long plan name truncates first.
+                    .help("Stay in Plan; this returns with the next plan")
+                Button("Implement") { Task { await model.implementPlan(session.id) } }
+                    .buttonStyle(NotchPillButtonStyle(prominent: !refined, small: !refined, height: refined ? 24 : nil))
+                    .fixedSize()
+                    .disabled(model.submitting || !model.canAttemptSend)
+                    .help("Switch to \(session.prePlanPermissionMode?.title ?? "Default permissions") and send “\(AppModel.implementPlanMessage)”")
+            }
+            // Six points in: the 24-point capsule is concentric with the field's corner.
+            .padding(.leading, 14).padding(.trailing, 6).padding(.vertical, 6)
+            Rectangle().fill(PanelTheme.pick(CompanionStyle.hairline, CompanionStyle.separator, CompanionStyle.rule))
+                .frame(height: 0.5).padding(.horizontal, theme == .instrument ? 0 : 14)
+        }
+    }
+
+    /// `Plan · Ready for review`, from the answer's first heading; Instrument
+    /// puts a lamp before it.
+    private func planName(_ title: String?) -> some View {
+        HStack(spacing: 5) {
+            if PanelTheme.current == .instrument { LED(color: CompanionStyle.text, size: 5).padding(.trailing, 1) }
+            Text(title == nil ? "Plan ready" : "Plan").fontWeight(title == nil ? .medium : .regular)
+                .foregroundStyle(title == nil ? CompanionStyle.text : CompanionStyle.secondary)
+            if let title {
+                Text("·").foregroundStyle(CompanionStyle.faint)
+                Text(title).foregroundStyle(CompanionStyle.text)
+            }
+        }
+        .font(.system(size: 12, weight: .medium))
+        .lineLimit(1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title.map { "Plan ready: \($0)" } ?? "Plan ready")
+    }
+
+    /// Steer now (when the running turn can take it), Edit (into an empty
+    /// composer) and Cancel.
+    @ViewBuilder private func queueActions(_ send: QueuedSend, session: CompanionSession) -> some View {
+        let sending = model.isSubmitting(session.id)
+        if session.canSteer(send.attachments ?? []) {
+            QuietIconButton(symbol: "arrow.turn.up.right", label: "Steer now") { Task { await model.steerQueuedSend(send.id) } }
+                .disabled(sending || model.submitting)
+        }
+        let free = model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && session.attachments.isEmpty
+        Button { model.editQueuedSend(send.id) } label: { Image(systemName: "pencil") }
+            .buttonStyle(NotchIconButtonStyle(size: 28))
+            .disabled(!free || sending)
+            .help(free ? "Edit queued message" : "Send or clear your draft first")
+            .accessibilityLabel("Edit queued message")
+            .accessibilityHint(free ? "" : "Send or clear your draft first")
+        QuietIconButton(symbol: "xmark", label: "Cancel queued message") { model.cancelQueuedSend(send.id) }
+            .disabled(sending)
+    }
+
+    /// One field in every design: a ready plan's row, files and the editor on
+    /// top, one bar along its bottom edge with attach, SnapShot, where the
+    /// message goes, the session's model, permissions and context, and Send.
+    /// Nothing sits outside it, so a tall draft or a banner can never push a
+    /// control out of view.
+    private var field: some View {
+        let theme = PanelTheme.current
         let lit = focused.wrappedValue
         return VStack(alignment: .leading, spacing: 0) {
+            if let session = model.current, session.planReadyTurnID != nil { planHeader(session) }
             if model.current?.attachments.isEmpty == false {
                 AttachmentStrip(model: model).padding(.horizontal, 10).padding(.top, 10)
             }
-            editor
-                .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 2)
-                .textCursor()
-            HStack(spacing: 2) {
-                QuietIconButton(symbol: "plus", label: "Attach files") { model.pickFiles(showPanel: isCompact) }
-                // The notch remembers the window in front when it opened; the full window is in front itself.
-                if isCompact && model.showSnapShot && model.current?.capabilities.images == true {
-                    QuietIconButton(symbol: "camera.viewfinder",
-                                    label: model.snapShotSource.map { "Attach a picture of \($0.name)" } ?? "Open the notch from a window to attach it") {
-                        Task { await model.attachSnapShot() }
+            Group {
+                if theme == .instrument {
+                    HStack(alignment: .top, spacing: 8) {
+                        // The prompt glyph sits on the first line: it is yours to write.
+                        Image(systemName: "chevron.right").font(.system(size: 9.5, weight: .heavy))
+                            .foregroundStyle(lit ? CompanionStyle.signal : CompanionStyle.secondary)
+                            .frame(width: 10, height: ComposerTextView.minimumHeight).accessibilityHidden(true)
+                        editor
                     }
-                    .disabled(model.snapShotSource == nil)
+                } else {
+                    editor
                 }
-                ComposerDestinationView(model: model, showsTitle: showsTitle)
-                Spacer(minLength: 8)
-                sendButton
             }
-            .padding(.horizontal, 7).padding(.bottom, 7)
+            .padding(.horizontal, 14).padding(.top, 10).padding(.bottom, 2)
+            .textCursor()
+            bar.padding(.horizontal, 7).padding(.bottom, 7)
         }
-        .background(bodyStyle == nil ? CompanionStyle.surface.opacity(0.8) : Color.white.opacity(0.06), in: shape)
-        .overlay(shape.strokeBorder(LinearGradient(colors: [Color.white.opacity(lit ? 0.24 : 0.13), Color.white.opacity(lit ? 0.14 : 0.06)],
-                                                   startPoint: .top, endPoint: .bottom), lineWidth: 0.75))
+        // The surface is a background layer, so the bar's choosers float above its edge.
+        .background { fieldSurface(lit: lit) }
         .animation(.easeOut(duration: 0.15), value: lit)
     }
 
-    /// Tahoe and Instrument: attach keys, the editor and Send on one row.
-    private var inlineField: some View {
-        let instrument = PanelTheme.current == .instrument
-        // Tahoe: a single line is a capsule, the 28-point buttons 5 points inside
-        // a 38-point field so their circles share its corner centers.
-        // Instrument: a square-cornered inset readout; the 28-point keys sit 5 points inside it.
-        let shape = RoundedRectangle(cornerRadius: instrument ? CompanionStyle.cardRadius : 19, style: .continuous)
-        // Instrument: attach keys stay on the first line with the prompt glyph; Send stays at the last.
-        let firstLine = instrument ? max(0, editorHeight - ComposerTextView.minimumHeight) : 0
-        let row = HStack(alignment: .bottom, spacing: 6) {
+    /// `[+] [SnapShot] [destination, folder] … [model] [permissions] [context] [Send]`.
+    /// When it is tight the model label truncates first (the destination has
+    /// priority), then the session name, then the harness label and folder; the
+    /// gauge, permission mode and Send keep their size.
+    private var bar: some View {
+        HStack(spacing: 2) {
             QuietIconButton(symbol: "plus", label: "Attach files") { model.pickFiles(showPanel: isCompact) }
-                .padding(.bottom, 5)
-                .alignmentGuide(.bottom) { $0[.bottom] + firstLine }
             // The notch remembers the window in front when it opened; the full window is in front itself.
             if isCompact && model.showSnapShot && model.current?.capabilities.images == true {
                 QuietIconButton(symbol: "camera.viewfinder",
@@ -165,41 +219,43 @@ struct ComposerView: View {
                     Task { await model.attachSnapShot() }
                 }
                 .disabled(model.snapShotSource == nil)
-                .padding(.bottom, 5).padding(.leading, -6)
-                .alignmentGuide(.bottom) { $0[.bottom] + firstLine }
             }
-            if instrument {
-                HStack(alignment: .top, spacing: 8) {
-                    // The prompt glyph sits on the first line: it is yours to write.
-                    Image(systemName: "chevron.right").font(.system(size: 9.5, weight: .heavy))
-                        .foregroundStyle(focused.wrappedValue ? CompanionStyle.signal : CompanionStyle.secondary)
-                        .frame(width: 10, height: ComposerTextView.minimumHeight).accessibilityHidden(true)
-                    editor.textCursor()
-                }
-                .padding(.vertical, 8)
-            } else {
-                editor
-                    .padding(.vertical, 8)
-                    .textCursor()
+            ComposerDestinationView(model: model, showsTitle: showsTitle).layoutPriority(1)
+            Spacer(minLength: 8)
+            if (!isCompact || model.page == .session) && (model.showModelPicker || model.showContextUsage || model.showPermissionModes) {
+                ModelControlsView(model: model).padding(.trailing, 4)
+            }
+            if takesDraftWhileBusy {
+                Button { Task { await model.interrupt() } } label: { Image(systemName: "stop.fill").font(.system(size: 9, weight: .bold)) }
+                    .buttonStyle(NotchIconButtonStyle(size: 28))
+                    .help("Stop this session; keep your draft").accessibilityLabel("Stop this session")
             }
             sendButton
-                .padding(.bottom, 5)
         }
-        .padding(.horizontal, 5)
-        return Group {
-            if instrument {
-                row
-                    .background(CompanionStyle.inset, in: shape)
-                    .overlay(shape.strokeBorder(focused.wrappedValue ? Color.white.opacity(0.34) : CompanionStyle.ruleStrong, lineWidth: 0.75))
-            } else {
-                row
-                    // Glass over the black body reads as a hole; a gray fill makes it a field.
-                    .background(bodyStyle == .black ? CompanionStyle.fill : .clear, in: shape)
-                    .notchControlBackground(shape, fallback: CompanionStyle.surface)
-                    // A focused field wears the accent ring, as native text fields do.
-                    .overlay(shape.strokeBorder(focused.wrappedValue ? AnyShapeStyle(CompanionStyle.accent.opacity(0.7)) : AnyShapeStyle(GlassEdge.gradient(0.16)),
-                                                lineWidth: focused.wrappedValue ? 1.5 : 0.5))
-            }
+    }
+
+    /// Refined: a solid white-6% field. Tahoe: Apple's gray fill under Liquid
+    /// Glass (on Black) with an accent ring when focused. Instrument: a dark
+    /// square-cornered inset readout on a hairline.
+    @ViewBuilder private func fieldSurface(lit: Bool) -> some View {
+        switch PanelTheme.current {
+        case .refined:
+            let shape = RoundedRectangle(cornerRadius: CompanionStyle.Radius.field, style: .continuous)
+            shape.fill(bodyStyle == nil ? CompanionStyle.surface.opacity(0.8) : Color.white.opacity(0.06))
+                .overlay(shape.strokeBorder(LinearGradient(colors: [Color.white.opacity(lit ? 0.24 : 0.13), Color.white.opacity(lit ? 0.14 : 0.06)],
+                                                           startPoint: .top, endPoint: .bottom), lineWidth: 0.75))
+        case .tahoe:
+            let shape = RoundedRectangle(cornerRadius: CompanionStyle.Radius.field, style: .continuous)
+            // Glass over the black body reads as a hole; a gray fill makes it a field.
+            shape.fill(bodyStyle == .black ? CompanionStyle.fill : .clear)
+                .notchControlBackground(shape, fallback: CompanionStyle.surface)
+                // A focused field wears the accent ring, as native text fields do.
+                .overlay(shape.strokeBorder(lit ? AnyShapeStyle(CompanionStyle.accent.opacity(0.7)) : AnyShapeStyle(GlassEdge.gradient(0.16)),
+                                            lineWidth: lit ? 1.5 : 0.5))
+        case .instrument:
+            let shape = RoundedRectangle(cornerRadius: CompanionStyle.cardRadius, style: .continuous)
+            shape.fill(CompanionStyle.inset)
+                .overlay(shape.strokeBorder(lit ? Color.white.opacity(0.34) : CompanionStyle.ruleStrong, lineWidth: 0.75))
         }
     }
 
@@ -214,7 +270,13 @@ struct ComposerView: View {
             }
             NativeComposerEditor(text: draftBinding, focused: focused, height: $editorHeight,
                                  accessibilityLabel: "Message \(runtimeTitle)",
-                                 accessibilityHint: busy ? busyHint : hint ?? "", onSubmit: { submit() }, onQueue: { submit(queue: true) })
+                                 accessibilityHint: busy ? busyHint : hint ?? "", onSubmit: { submit() }, onQueue: { submit(queue: true) },
+                                 onEditQueued: { queued.last.map { model.editQueuedSend($0.id) } ?? false },
+                                 onSteerQueued: {
+                                     guard let first = queued.first, model.current?.canSteer(first.attachments ?? []) == true else { return false }
+                                     Task { await model.steerQueuedSend(first.id) }
+                                     return true
+                                 })
                 .id(model.currentID)
                 .frame(height: editorHeight)
           }
@@ -225,26 +287,34 @@ struct ComposerView: View {
         }
     }
 
-    /// Send turns into Stop in place while the session works; Instrument lights
-    /// Stop as a white key instead of the signal.
+    /// Send turns into Stop in place while the session works (Instrument lights
+    /// both as a white key). A draft typed meanwhile turns it into the key for
+    /// what Return does: Steer message or Queue message.
     private var sendButton: some View {
-        let stopKey = PanelTheme.current == .instrument && busy
+        let draftKey = takesDraftWhileBusy
+        let stops = busy && !draftKey
+        let steers = model.current?.canSteer == true
+        let queues = draftKey && !steers
+        let symbol = stops ? "stop.fill" : draftKey ? (steers ? "arrow.turn.up.right" : "text.append")
+            : checksLastSend ? "magnifyingglass" : "arrow.up"
         return Button {
-            if busy { Task { await model.interrupt() } } else { submit() }
+            if stops { Task { await model.interrupt() } } else { submit(queue: queues) }
         } label: {
             if model.submitting && !busy { ProgressView().controlSize(.mini) }
             else {
-                Image(systemName: busy ? "stop.fill" : checksLastSend ? "magnifyingglass" : "arrow.up")
-                    .font(.system(size: busy ? 10 : PanelTheme.pick(13, 13.5, 13), weight: .bold))
+                Image(systemName: symbol)
+                    .font(.system(size: stops ? 10 : queues ? 11.5 : PanelTheme.pick(13, 13.5, 13), weight: .bold))
                     .contentTransition(.symbolEffect(.replace))
-                    .animation(model.reducedMotion ? nil : .smooth(duration: 0.25), value: busy)
+                    .animation(model.reducedMotion ? nil : .smooth(duration: 0.25), value: symbol)
             }
         }
-        .buttonStyle(NotchIconButtonStyle(size: 28, selected: stopKey, prominent: !stopKey))
+        .buttonStyle(NotchIconButtonStyle(size: 28, prominent: true))
         .disabled(!busy && !canSend)
-        .help(busy ? "Stop this session; keep your draft"
+        .help(stops ? "Stop this session; keep your draft"
+              : draftKey ? (steers ? "Steer message · Return" : "Queue message · Command-Return")
               : checksLastSend ? "Check the last send in \(runtimeTitle) history" : "Send · Return or Command-Return")
-        .accessibilityLabel(busy ? "Stop this session" : checksLastSend ? "Check last send" : "Send message")
+        .accessibilityLabel(stops ? "Stop this session" : draftKey ? (model.current?.busySendLabel ?? "Queue message")
+                            : checksLastSend ? "Check last send" : "Send message")
     }
 
     private func submit(queue: Bool = false) {
@@ -271,6 +341,10 @@ struct NativeComposerEditor: NSViewRepresentable {
     var accessibilityHint: String
     var onSubmit: () -> Void
     var onQueue: (() -> Void)? = nil
+    /// In an empty composer: Option–Up edits the newest queued message, Command–Shift–Return
+    /// steers the oldest. Each returns whether it acted.
+    var onEditQueued: (() -> Bool)? = nil
+    var onSteerQueued: (() -> Bool)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -315,6 +389,8 @@ struct NativeComposerEditor: NSViewRepresentable {
             guard let parent = coordinator?.parent else { return }
             (parent.onQueue ?? parent.onSubmit)()
         }
+        editor.onEditQueued = { [weak coordinator = context.coordinator] in coordinator?.parent.onEditQueued?() ?? false }
+        editor.onSteerQueued = { [weak coordinator = context.coordinator] in coordinator?.parent.onSteerQueued?() ?? false }
         editor.onFocusChanged = { [weak coordinator = context.coordinator] value in
             DispatchQueue.main.async { coordinator?.parent.focused.wrappedValue = value }
         }
@@ -332,9 +408,10 @@ struct NativeComposerEditor: NSViewRepresentable {
         editor.setAccessibilityHelp(accessibilityHint)
         // Do not destroy marked text while an input method is composing.
         if !editor.hasMarkedText(), editor.string != text {
-            let selection = editor.selectedRange()
+            // Text restored into an empty composer (a queued message's Edit) keeps typing after it.
+            let location = editor.string.isEmpty ? (text as NSString).length : min(editor.selectedRange().location, (text as NSString).length)
             editor.string = text
-            editor.setSelectedRange(NSRange(location: min(selection.location, (text as NSString).length), length: 0))
+            editor.setSelectedRange(NSRange(location: location, length: 0))
         }
         context.coordinator.updateHeight()
         if focused.wrappedValue, editor.window?.firstResponder !== editor {
@@ -376,6 +453,8 @@ final class ComposerTextView: NSTextView {
     static let maximumLines = 4
     var onSubmit: (() -> Void)?
     var onQueue: (() -> Void)?
+    var onEditQueued: (() -> Bool)?
+    var onSteerQueued: (() -> Bool)?
     var onFocusChanged: ((Bool) -> Void)?
     var onLayoutChanged: (() -> Void)?
 
@@ -402,6 +481,11 @@ final class ComposerTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        // Only an empty composer reaches the queue; otherwise these keys keep their usual meaning.
+        if string.isEmpty, !hasMarkedText(),
+           (event.keyCode == 126 && modifiers == .option && onEditQueued?() == true)
+            || ([UInt16(36), UInt16(76)].contains(event.keyCode) && modifiers == [.command, .shift] && onSteerQueued?() == true) { return }
         if [UInt16(36), UInt16(76)].contains(event.keyCode), !hasMarkedText() {
             if event.modifierFlags.contains(.shift), !event.modifierFlags.contains(.command) {
                 insertNewline(nil)

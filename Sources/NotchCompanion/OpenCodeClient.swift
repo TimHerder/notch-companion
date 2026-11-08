@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 struct OpenCodeHTTPRejection: LocalizedError, RuntimeDefinitiveRejection {
     let status: Int
@@ -29,6 +30,10 @@ final class OpenCodeClient: RuntimeTransport {
     private var generation = UUID()
     private var ready = false
     private var isV2 = false
+    /// OpenCode 2 can add a runtime MCP server per session; 1.x cannot.
+    private var hostsMCP = false
+    /// Hosting sessions: their native folder and delegation launch.
+    private var delegations: [String: (location: String, launch: [String: Any])] = [:]
     private var opening: CheckedContinuation<URL, Error>?
     private var deadline: Task<Void, Never>?
     private var streams: [String: Task<Void, Never>] = [:]
@@ -128,6 +133,7 @@ final class OpenCodeClient: RuntimeTransport {
             let paths = doc["paths"] as? [String: Any] ?? [:]
             let required = isV2 ? OpenCodeV2.requiredPaths : ["/session", "/session/status", "/session/{sessionID}", "/session/{sessionID}/children", "/session/{sessionID}/message", "/session/{sessionID}/prompt_async", "/session/{sessionID}/abort", "/event", "/permission", "/permission/{requestID}/reply", "/question", "/question/{requestID}/reply", "/question/{requestID}/reject", "/provider", "/config"]
             guard required.allSatisfy({ paths[$0] != nil }) else { throw AppError("OpenCode's native HTTP schema is missing required conversation, model, or interaction endpoints.") }
+            hostsMCP = isV2 && Self.delegationPaths.allSatisfy { paths[$0] != nil }
             guard generation == run else { throw AppError("The OpenCode connection changed during initialization.") }
             ready = true; onConnectionChange?(true, "OpenCode \(version) native HTTP server connected. Provider authentication is checked on Send.")
         } catch { if generation == run { fail(error) }; throw error }
@@ -155,7 +161,7 @@ final class OpenCodeClient: RuntimeTransport {
         let operation = generation
         if method == "runtime.models" {
             let cwd = try directory(params["cwd"] as? String)
-            return ["catalog": try await catalog(cwd)]
+            return ["catalog": try await catalog(cwd), "hosts_delegation": hostsMCP]
         }
         if method == "session.create" || method == "session.resume" {
             let cwd = try directory(params["cwd"] as? String)
@@ -179,6 +185,12 @@ final class OpenCodeClient: RuntimeTransport {
             try requireGeneration(operation)
             roots[sid] = cwd
             if let agent = info["agent"] as? String { nativeAgents[sid] = agent }
+            if hostsMCP {
+                // A reopen without a new launch keeps the server it was opened with.
+                if let launch = params["delegation"] as? [String: Any] { delegations[sid] = (nativeDirectory, launch) }
+                await openDelegation(sid, permissions: info["permissions"] as? [[String: Any]] ?? [])
+                try requireGeneration(operation)
+            }
             let models = try await catalog(cwd)
             // Initialization can emit late idle/diff events. Re-read a fenced
             // snapshot rather than strand an empty session as apparent work.
@@ -197,6 +209,7 @@ final class OpenCodeClient: RuntimeTransport {
             var result = snapshot
             result["session_id"] = sid; result["stored_session_id"] = sid; result["profile_id"] = profileID
             result["cwd"] = cwd; result["info"] = sessionInfo; result["catalog"] = models; result["activity_verified"] = true
+            result["hosts_delegation"] = hostsMCP
             return result
         }
         let sid = params["session_id"] as? String ?? ""
@@ -245,6 +258,10 @@ final class OpenCodeClient: RuntimeTransport {
             return ["steered": true, "turn_id": id]
         case "prompt.submit":
             guard !isBusy(sid) else { throw OpenCodeLocalRejection(message: "This OpenCode session or a delegated child is still active.") }
+            // An idle folder drops runtime servers; re-adding an unchanged one keeps its connection.
+            if delegations[sid] != nil, (try? await registerDelegation(sid)) == nil {
+                event("runtime.notice", sid: sid, ["message": Self.delegationNotice])
+            }
             // Reconcile just before sending, including background descendants.
             var checked: [String: Any]
             do {
@@ -472,7 +489,10 @@ final class OpenCodeClient: RuntimeTransport {
         let sid = props["sessionID"] as? String ?? info["sessionID"] as? String ?? (props["part"] as? [String: Any])?["sessionID"] as? String ?? ""
         guard let owner = root(sid), roots[owner] == cwd else { return }
         revisions[owner, default: 0] += 1
-        if type == "session.error" { failures[sid] = CodexProtocolState.describe(props["error"]); event("runtime.notice", sid: sid, ["message": "OpenCode reported a native turn error. Checking its final state."]) }
+        if type == "session.error" {
+            failures[sid] = Self.failureReason(props["error"]) ?? CodexProtocolState.describe(props["error"])
+            event("runtime.notice", sid: sid, ["message": "OpenCode reported a native turn error. Checking its final state."])
+        }
         if type == "session.status", let status = props["status"] as? [String: Any] {
             awaitingChildStart.remove(sid)
             if status["type"] as? String != "idle" { finished.remove(sid); start(sid) }
@@ -585,12 +605,20 @@ final class OpenCodeClient: RuntimeTransport {
                 } }
             }
             else {
-                let previous = delivered[id] ?? ""
-                if currentText.hasPrefix(previous), currentText.count > previous.count {
-                    event(id == sid ? "message.delta" : "subagent.text", sid: id, ["text": String(currentText.dropFirst(previous.count))])
+                let deliver = { (text: String) in
+                    let previous = self.delivered[id] ?? ""
+                    guard text.hasPrefix(previous), text.count > previous.count else { return }
+                    self.event(id == sid ? "message.delta" : "subagent.text", sid: id, ["text": String(text.dropFirst(previous.count))])
+                    self.delivered[id] = text
                 }
+                // Text written before a call first seen in this poll goes out ahead
+                // of it; text after the call then starts a new segment.
+                if observedPrompt {
+                    if let head = textBeforeNewTool(rows, sid: id) { deliver(head) }
+                    projectTools(rows, sid: id)
+                }
+                deliver(currentText)
                 delivered[id] = currentText
-                if observedPrompt { projectTools(rows, sid: id) }
             }
             if id != sid {
                 let status = active ? (waiting ? "waiting" : "working") : Self.terminal(last, cancelled: cancelled.contains(id))
@@ -620,7 +648,10 @@ final class OpenCodeClient: RuntimeTransport {
             if confirmed {
                 pendingPrompts.remove(sid)
                 let last = messages[sid]?.last?["info"] as? [String: Any] ?? [:]
-                event("message.complete", sid: sid, ["text": delivered[sid] ?? "", "status": failures[sid] != nil ? "error" : Self.terminal(last, cancelled: cancelled.remove(sid) != nil)])
+                let status = failures[sid] != nil ? "error" : Self.terminal(last, cancelled: cancelled.remove(sid) != nil)
+                // Without a session.error frame, the terminal message's own error is the reason (an abort is not "error").
+                let reason = failures[sid] ?? (status == "error" ? Self.failureReason(last["error"]) : nil)
+                event("message.complete", sid: sid, ["text": delivered[sid] ?? "", "status": status, "error": reason ?? ""])
             }
         }
         return ["messages": Self.history(messages[sid] ?? []), "history_complete": true, "running": !allIdle, "parent_complete": stable && !busy.contains(sid), "subagents": snapshots, "activity_verified": stable, "info": contextInfo]
@@ -637,6 +668,19 @@ final class OpenCodeClient: RuntimeTransport {
                 if ["completed", "error"].contains(state["status"] as? String ?? "") { event("tool.complete", sid: sid, ["tool_id": key, "is_error": state["status"] as? String == "error", "result": state["output"] ?? state["error"] ?? ""]) }
             }
         }
+    }
+    /// The current turn's text up to the first tool part not projected yet.
+    private func textBeforeNewTool(_ rows: [[String: Any]], sid: String) -> String? {
+        let lastUser = rows.lastIndex { ($0["info"] as? [String: Any])?["role"] as? String == "user" } ?? -1
+        for index in rows.indices.dropFirst(lastUser + 1) {
+            let parts = rows[index]["parts"] as? [[String: Any]] ?? []
+            guard let cut = parts.firstIndex(where: { part in
+                part["type"] as? String == "tool" && (part["id"] as? String).map { !tools.contains(sid + ":" + $0) } == true
+            }) else { continue }
+            var row = rows[index]; row["parts"] = Array(parts[..<cut])
+            return Self.currentText(Array(rows[..<index]) + [row])
+        }
+        return nil
     }
     private func list(_ path: String, cwd: String) async throws -> [[String: Any]] {
         guard let value = try await get(path, cwd: cwd) as? [[String: Any]] else { throw AppError("OpenCode returned an invalid native list. Saved history and work were preserved.") }
@@ -691,7 +735,8 @@ final class OpenCodeClient: RuntimeTransport {
         requests.removeValue(forKey: id); answers.removeValue(forKey: id); scheduleRefresh(sid)
         return ["resolved": true]
     }
-    nonisolated static func history(_ rows: [[String: Any]]) -> [[String: Any]] {
+    /// One row per native message.
+    nonisolated static func messageRows(_ rows: [[String: Any]]) -> [[String: Any]] {
         rows.compactMap { row in
             guard let info = row["info"] as? [String: Any], let role = info["role"] as? String, let id = info["id"] as? String else { return nil }
             let text = (row["parts"] as? [[String: Any]] ?? []).filter { $0["type"] as? String == "text" && $0["synthetic"] as? Bool != true }.compactMap { $0["text"] as? String }.joined(separator: "\n\n")
@@ -700,9 +745,37 @@ final class OpenCodeClient: RuntimeTransport {
             return result
         }
     }
+    /// Replies split where they streamed: consecutive assistant messages join, and a
+    /// tool call starts a new reply.
+    nonisolated static func history(_ rows: [[String: Any]]) -> [[String: Any]] {
+        var result: [[String: Any]] = []
+        var open = false // the last row is a reply that later text continues
+        for row in rows {
+            guard let info = row["info"] as? [String: Any], let id = info["id"] as? String else { continue }
+            guard info["role"] as? String == "assistant" else { result += messageRows([row]); open = false; continue }
+            for (offset, part) in (row["parts"] as? [[String: Any]] ?? []).enumerated() {
+                if part["type"] as? String == "tool" { open = false; continue }
+                guard part["type"] as? String == "text", part["synthetic"] as? Bool != true,
+                      let text = part["text"] as? String, !text.isEmpty else { continue }
+                if open, let last = result.indices.last {
+                    result[last]["text"] = (result[last]["text"] as? String ?? "") + "\n\n" + text
+                } else {
+                    // A message's first reply keeps the message's ID.
+                    let rowID = result.contains { $0["row_id"] as? String == id } ? id + ":" + String(offset) : id
+                    result.append(["role": "assistant", "text": text, "row_id": rowID]); open = true
+                }
+            }
+        }
+        return result
+    }
     nonisolated static func currentText(_ rows: [[String: Any]]) -> String {
         let lastUser = rows.lastIndex { ($0["info"] as? [String: Any])?["role"] as? String == "user" } ?? -1
-        return history(Array(rows.dropFirst(lastUser + 1))).filter { $0["role"] as? String == "assistant" }.compactMap { $0["text"] as? String }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        return messageRows(Array(rows.dropFirst(lastUser + 1))).filter { $0["role"] as? String == "assistant" }.compactMap { $0["text"] as? String }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+    /// A native turn error's reason: its `message`, `data.message`, else its name.
+    nonisolated static func failureReason(_ error: Any?) -> String? {
+        guard let error = error as? [String: Any] else { return nil }
+        return [error["message"], (error["data"] as? [String: Any])?["message"], error["name"]].compactMap { $0 as? String }.first { !$0.isEmpty }
     }
     nonisolated static func terminal(_ info: [String: Any], cancelled: Bool) -> String {
         if cancelled { return "interrupted" }
@@ -728,8 +801,8 @@ final class OpenCodeClient: RuntimeTransport {
             // including when the original companion process died unexpectedly.
             child.terminationHandler = nil; Self.retiring.append(child)
         }
-        process = nil; address = nil; launchBuffer.removeAll(); password = ""; isV2 = false
-        roots.removeAll(); parent.removeAll(); busy.removeAll(); started.removeAll(); finished.removeAll(); pendingPrompts.removeAll()
+        process = nil; address = nil; launchBuffer.removeAll(); password = ""; isV2 = false; hostsMCP = false
+        delegations.removeAll(); roots.removeAll(); parent.removeAll(); busy.removeAll(); started.removeAll(); finished.removeAll(); pendingPrompts.removeAll()
         promptIDs.removeAll(); failures.removeAll()
         revisions.removeAll(); awaitingChildStart.removeAll()
         delivered.removeAll(); messages.removeAll(); requests.removeAll(); answers.removeAll(); models.removeAll(); images.removeAll(); tools.removeAll()
@@ -843,6 +916,64 @@ extension OpenCodeClient {
             return [:]
         default: throw AppError("This OpenCode V2 session operation is unsupported.")
         }
+    }
+}
+
+/// Delegation on OpenCode 2, as T3 Code's adapter hosts it: a runtime MCP server
+/// per session at its folder (gone when the owned server stops), session rules
+/// that deny every companion server but the session's own, and a session
+/// instruction entry. Nothing is written to OpenCode's configuration.
+extension OpenCodeClient {
+    nonisolated static let delegationPaths = ["/api/experimental/mcp/{server}", "/api/experimental/session/{sessionID}/instructions/entries",
+                                              "/api/experimental/session/{sessionID}/instructions/entries/{key}"]
+    nonisolated static let delegationNotice = "OpenCode did not add Notch Companion's delegation tools to this session."
+
+    /// Short and per session: OpenCode hides tools whose names pass 64 characters.
+    nonisolated static func delegationServerName(_ sid: String) -> String {
+        DelegationServer.name + "-" + SHA256.hash(data: Data(sid.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The session's own rules, then the companion's (last match wins): every
+    /// session's server denied, then this session's allowed.
+    nonisolated static func delegationRules(_ existing: [[String: Any]], server: String?) -> [[String: Any]] {
+        // `?` matches one character, so the deny covers only `notch-<16 hex>` servers, not a user's
+        // `notch-…` server; the old `notch-*` deny is still stripped from saved sessions.
+        existing.filter { ($0["action"] as? String)?.wholeMatch(of: #/notch-(\*|\?{16}_\*|[0-9a-f]{16}_\*)/#) == nil }
+            + [["action": "notch-????????????????_*", "resource": "*", "effect": "deny"]]
+            + (server.map { [["action": $0 + "_*", "resource": "*", "effect": "allow"]] } ?? [])
+    }
+
+    /// Runtime-only, at the session's folder; the token goes only in the header.
+    nonisolated static func delegationRegistration(_ launch: [String: Any], server: String, location: String) -> (path: String, body: [String: Any])? {
+        guard let url = launch["url"] as? String, let token = launch["token"] as? String else { return nil }
+        return ("/api/experimental/mcp/\(server)?location%5Bdirectory%5D=" + (location.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""),
+                ["config": ["type": "remote", "url": url, "headers": ["Authorization": "Bearer " + token], "oauth": false]])
+    }
+
+    /// Rules for every session; the server and instructions for a hosting one.
+    /// A failure leaves the session usable with a notice.
+    private func openDelegation(_ sid: String, permissions: [[String: Any]]) async {
+        let launch = delegations[sid]?.launch
+        let entry = "/api/experimental/session/\(component(sid))/instructions/entries"
+        do {
+            let rules = Self.delegationRules(permissions, server: launch.map { _ in Self.delegationServerName(sid) })
+            if !(rules as NSArray).isEqual(to: permissions) { _ = try await rawCall("PATCH", "/api/session/\(component(sid))", body: ["permissions": rules]) }
+            if let launch {
+                _ = try await rawCall("PUT", entry + "/notch", body: ["value": launch["instructions"] as? String ?? Delegation.instructions])
+                try await registerDelegation(sid)
+            } else if try await v2List(entry).contains(where: { $0["key"] as? String == "notch" }) {
+                // Delegation was turned off since; the entry would point at missing tools.
+                _ = try await rawCall("DELETE", entry + "/notch")
+            }
+        } catch {
+            if launch != nil { event("runtime.notice", sid: sid, ["message": Self.delegationNotice]) }
+        }
+    }
+
+    private func registerDelegation(_ sid: String) async throws {
+        guard let delegation = delegations[sid], let request = Self.delegationRegistration(
+            delegation.launch, server: Self.delegationServerName(sid), location: delegation.location) else { return }
+        _ = try await rawCall("PUT", request.path, body: request.body)
     }
 }
 

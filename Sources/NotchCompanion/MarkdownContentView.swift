@@ -41,13 +41,19 @@ private struct MarkdownBlocksView: View {
     }
 }
 
+extension EnvironmentValues {
+    /// Prose size: 13 for answers, a step smaller for commentary between tool calls.
+    @Entry var markdownBodySize: CGFloat = 13
+}
+
 private struct MarkdownBlockView: View {
     let block: MarkdownBlock
+    @Environment(\.markdownBodySize) private var bodySize
 
     var body: some View {
         switch block.content {
         case .paragraph(let text):
-            inline(text).font(.system(size: 13)).lineSpacing(4)
+            inline(text).font(.system(size: bodySize)).lineSpacing(bodySize < 13 ? 3 : 4)
                 .fixedSize(horizontal: false, vertical: true)
         case .heading(let level, let text):
             inline(text).font(.system(size: headingSize(level), weight: PanelTheme.pick(.semibold, .bold, .semibold))).lineSpacing(3)
@@ -61,14 +67,8 @@ private struct MarkdownBlockView: View {
                     HStack(alignment: .top, spacing: PanelTheme.pick(8, 7, 7)) {
                         Group {
                             if ordered {
-                                if PanelTheme.current == .instrument {
-                                    Text(String(format: "%02d", item.number ?? 1))
-                                        .font(CompanionStyle.mono(11).monospacedDigit())
-                                        .padding(.top, 1.5)
-                                } else {
-                                    Text("\(item.number ?? 1).")
-                                        .font(.system(size: 13).monospacedDigit())
-                                }
+                                Text("\(item.number ?? 1).")
+                                    .font(.system(size: bodySize).monospacedDigit())
                             } else {
                                 switch PanelTheme.current {
                                 case .refined:
@@ -160,7 +160,7 @@ private struct MarkdownCodeBlock: View {
             case .instrument:
                 HStack(spacing: 8) {
                     Text(language ?? "Code").microLabel(10, weight: .semibold).foregroundStyle(CompanionStyle.text).lineLimit(1)
-                    Text("\(lines) \(lines == 1 ? "line" : "lines")").microLabel(9.5, weight: .regular, tracking: 0.6).foregroundStyle(CompanionStyle.faint)
+                    Text("\(lines) \(lines == 1 ? "line" : "lines")").font(.system(size: 11)).foregroundStyle(CompanionStyle.faint)
                     Spacer(minLength: 8)
                     copyButton.buttonStyle(NotchPillButtonStyle(small: true)).padding(.vertical, 2)
                 }
@@ -171,8 +171,8 @@ private struct MarkdownCodeBlock: View {
             if theme == .instrument {
                 HStack(alignment: .top, spacing: 0) {
                     // Line numbers share the code's font and spacing, so they stay level with it.
-                    Text((1...lines).map { String(format: "%02d", $0) }.joined(separator: "\n"))
-                        .font(.system(size: 12, design: .monospaced)).lineSpacing(4)
+                    Text((1...lines).map(String.init).joined(separator: "\n"))
+                        .font(.system(size: 12, design: .monospaced)).lineSpacing(4).multilineTextAlignment(.trailing)
                         .foregroundStyle(CompanionStyle.faint.opacity(0.8))
                         .fixedSize()
                         .padding(.leading, 11).padding(.trailing, 4).padding(.vertical, 10)

@@ -114,10 +114,12 @@ struct RuntimeContextUsage: Codable, Equatable {
     var estimated: Bool = false
     var reportedAt = Date()
 
-    var fraction: Double? {
+    /// Used over the window, unclamped, so an over-limit report reads as one.
+    var ratio: Double? {
         guard let used, let limit, limit > 0 else { return nil }
-        return min(1, max(0, Double(used) / Double(limit)))
+        return Double(used) / Double(limit)
     }
+    var fraction: Double? { ratio.map { min(1, max(0, $0)) } }
     var label: String {
         let prefix = estimated ? "≈" : ""
         if let used, let limit { return "\(prefix)\(Self.tokens(used)) / \(Self.tokens(limit))" }
@@ -128,7 +130,7 @@ struct RuntimeContextUsage: Codable, Equatable {
     var detail: String {
         let count = used.map { "\($0.formatted()) tokens used" } ?? "Usage not reported"
         let maximum = limit.map { " of \($0.formatted())" } ?? "; context window not reported"
-        return (estimated ? "Runtime estimate: " : "Last runtime report: ") + count + maximum + ". Updated \(reportedAt.formatted(date: .omitted, time: .shortened))."
+        return (estimated ? "Runtime estimate: " : "Last runtime report: ") + count + maximum + ". Updated \(reportedAt.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: .app)))."
     }
     static func tokens(_ value: Int) -> String {
         if value >= 1_000_000 { return String(format: "%.1fM", Double(value) / 1_000_000).replacingOccurrences(of: ".0M", with: "M") }

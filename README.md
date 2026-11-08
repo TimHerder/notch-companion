@@ -18,8 +18,8 @@ draws a small one.
   delegated agents run under their parent in **Team**. The parent picks up their
   results when they finish. Their questions and approvals come to you, and their
   file changes appear in the parent's change summary. A delegated agent can keep
-  or narrow its parent's permissions, never widen them. Claude Code, Codex, Pi and
-  DeepSeek Harness sessions can delegate, to any agent that's ready on your Mac.
+  or narrow its parent's permissions, never widen them. Every harness can
+  delegate (OpenCode from 2.0), to any agent that's ready on your Mac.
 - **Glance, don't switch.** Hover to see what's happening, click to open the
   conversation. Each session has its own working and unread state, and closing
   the panel leaves the work running.
@@ -45,13 +45,18 @@ Companion doesn't bundle agents, sell model access or sign in for you.
 | OpenCode | Local HTTP server | Supported |
 | Pi | RPC frontend | Supported |
 | OpenClaw | Local Gateway | Supported |
-| Antigravity CLI | Streaming CLI | Supported. Can't ask questions, request approvals or take images |
-| DeepSeek Harness | ACP | Experimental |
-| Cursor CLI | `cursor-agent acp` | Experimental |
+| Antigravity CLI | `agy acp` | Supported. Can't take images |
+| DeepSeek Harness | ACP | Supported |
+| Cursor CLI | `cursor-agent acp` | Supported |
 
 What each agent can do depends on that agent. See the
 [runtime contract](docs/backend-runtime.md) and [verification record](docs/verification.md)
 for details.
+
+Claude Code, Codex, OpenCode, Pi, OpenClaw, DeepSeek Harness, Antigravity,
+Cursor and Hermes Agent and their logos are trademarks of their respective
+owners. Notch Companion is not affiliated with or endorsed by them. See
+[third-party marks](docs/third-party-marks.md).
 
 ## Install
 

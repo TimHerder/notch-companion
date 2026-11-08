@@ -17,10 +17,6 @@ struct WelcomeView: View {
             // Each step is one composition, centred a little above the middle.
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
-                if PanelTheme.current == .instrument {
-                    Text(String(format: "%02d / %02d", step + 1, Self.steps)).microLabel(10, tracking: 1.2)
-                        .foregroundStyle(CompanionStyle.faint).padding(.bottom, 10)
-                }
                 Text(title).font(.system(size: PanelTheme.pick(20, 22, 22), weight: PanelTheme.pick(Font.Weight.semibold, .bold, .semibold)))
                     .tracking(PanelTheme.pick(-0.2, -0.3, -0.4))
                 Text(subtitle).font(.system(size: PanelTheme.pick(13, 13, 12.5))).foregroundStyle(CompanionStyle.secondary)
@@ -108,7 +104,7 @@ struct WelcomeView: View {
                     ForEach(Array(rows.enumerated()), id: \.element.runtime) { index, row in
                         if index > 0 {
                             Rectangle().fill(PanelTheme.pick(Color.white.opacity(0.06), CompanionStyle.separator, Color.white.opacity(0.08)))
-                                .frame(height: 0.5).padding(.leading, PanelTheme.pick(44, 44, 0))
+                                .frame(height: 0.5).padding(.leading, PanelTheme.pick(72, 72, 0))
                         }
                         agentRow(row.runtime, path: row.path)
                     }
@@ -146,22 +142,9 @@ struct WelcomeView: View {
                     }
                     .frame(width: 18, height: 18)
                 }
+                AgentLogo(runtime: runtime)
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(runtime.title).font(.system(size: 13, weight: .medium)).foregroundStyle(CompanionStyle.text)
-                        if runtime.isExperimental {
-                            if PanelTheme.current == .instrument {
-                                Text("Experimental").microLabel(8.5, tracking: 0.6).foregroundStyle(CompanionStyle.secondary)
-                                    .padding(.horizontal, 5).padding(.vertical, 2)
-                                    .overlay(RoundedRectangle(cornerRadius: 2).strokeBorder(CompanionStyle.ruleStrong, lineWidth: 0.5))
-                            } else {
-                                Text("Experimental").font(.system(size: PanelTheme.pick(11, 9.5, 9.5), weight: .medium))
-                                    .foregroundStyle(CompanionStyle.secondary)
-                                    .padding(.horizontal, 6).padding(.vertical, PanelTheme.pick(1, 1.5, 1.5))
-                                    .background(Color.white.opacity(0.07), in: Capsule())
-                            }
-                        }
-                    }
+                    Text(runtime.title).font(.system(size: 13, weight: .medium)).foregroundStyle(CompanionStyle.text)
                     Text((path as NSString).abbreviatingWithTildeInPath)
                         .font(PanelTheme.current == .instrument ? CompanionStyle.mono(10.5) : .system(size: 11))
                         .foregroundStyle(PanelTheme.current == .instrument ? CompanionStyle.secondary : CompanionStyle.secondary.opacity(0.85))
@@ -256,11 +239,7 @@ struct WelcomeView: View {
                 art().frame(maxWidth: .infinity).frame(height: artHeight).clipped()
                 VStack(spacing: PanelTheme.pick(2, 2, 4)) {
                     Text(name).font(.system(size: 13, weight: .semibold)).foregroundStyle(CompanionStyle.text)
-                    if PanelTheme.current == .instrument {
-                        Text(detail).microLabel(8.5, weight: .regular, tracking: 0.5).foregroundStyle(CompanionStyle.secondary).lineLimit(1)
-                    } else {
-                        Text(detail).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary).lineLimit(1)
-                    }
+                    Text(detail).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary).lineLimit(1)
                 }
                 .padding(.vertical, 10)
             }
@@ -291,18 +270,10 @@ struct WelcomeView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Step \(step + 1) of \(Self.steps)")
             Spacer(minLength: 0)
-            Group {
-                if PanelTheme.current == .instrument {
-                    Button("Back") { model.page = .welcome(step: step - 1) }
-                        .buttonStyle(NotchTextButtonStyle())
-                        .microLabel(10.5, tracking: 0.8)
-                } else {
-                    Button("Back") { model.page = .welcome(step: step - 1) }
-                        .buttonStyle(NotchTextButtonStyle())
-                        .font(.system(size: 13, weight: .medium))
-                }
-            }
-            .foregroundStyle(CompanionStyle.secondary)
+            Button("Back") { model.page = .welcome(step: step - 1) }
+                .buttonStyle(NotchTextButtonStyle())
+                .font(.system(size: PanelTheme.pick(13, 13, 12.5), weight: .medium))
+                .foregroundStyle(CompanionStyle.secondary)
             .opacity(step > 0 ? 1 : 0).disabled(step == 0)
             Button { next() } label: { Text(step == Self.steps - 1 ? "Done" : "Continue").frame(minWidth: PanelTheme.pick(72, 84, 72)) }
                 .buttonStyle(NotchPillButtonStyle(prominent: true, height: PanelTheme.pick(30, 32, 30)))
@@ -360,7 +331,6 @@ private struct WelcomeTileBody: View {
                         .padding(-4)
                 }
             }
-            .overlay(alignment: .topLeading) { if selected && theme == .instrument { Reticle(arm: 7).padding(6).opacity(0.9) } }
             .contentShape(shape)
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .animation(reduceMotion ? nil : CompanionStyle.press, value: configuration.isPressed)

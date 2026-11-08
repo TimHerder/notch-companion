@@ -73,7 +73,7 @@ extension View {
 /// visible disc for floating header controls; otherwise the disc appears on
 /// hover. `selected` raises the disc (Refined), fills it with the accent
 /// (Tahoe) or lights it white (Instrument); `prominent` is the primary
-/// action (Send, Stop).
+/// action (Send, Stop), a lit white key in Instrument.
 struct NotchIconButtonStyle: ButtonStyle {
     var size: CGFloat = 28
     var filled = false
@@ -175,8 +175,8 @@ private struct NotchIconButtonBody: View {
                 if style.selected {
                     shape.fill(CompanionStyle.text)
                 } else if style.prominent {
-                    shape.fill(primary ? CompanionStyle.signal : Color.clear)
-                        .brightness(primary ? (pressed ? -0.1 : hot ? 0.06 : 0) : 0)
+                    shape.fill(primary ? CompanionStyle.accent : Color.clear)
+                        .brightness(primary ? (pressed ? -0.12 : hot ? -0.05 : 0) : 0)
                         .overlay { if !primary { shape.strokeBorder(CompanionStyle.rule, lineWidth: 1) } }
                 } else {
                     shape.fill(Color.white.opacity(pressed ? 0.16 : hot ? 0.08 : style.filled ? 0.02 : 0))
@@ -189,7 +189,7 @@ private struct NotchIconButtonBody: View {
 }
 
 /// Text buttons: capsules (Refined), capsules with a glass edge (Tahoe) or
-/// square-cornered keys with tracked SF Mono capitals (Instrument).
+/// square-cornered hairline keys (Instrument), all in sentence-case SF.
 /// `prominent` is the primary action; `selected` is a chosen filter chip.
 struct NotchPillButtonStyle: ButtonStyle {
     var prominent = false
@@ -280,7 +280,7 @@ private struct NotchPillButtonBody: View {
         let lit = style.selected && enabled
         let shape = RoundedRectangle(cornerRadius: CompanionStyle.radius, style: .continuous)
         return configuration.label
-            .microLabel(style.small ? 10 : 10.5, tracking: 0.6)
+            .font(.system(size: style.small ? 11 : 12, weight: .medium))
             .labelStyle(PillLabelStyle())
             .lineLimit(1)
             .foregroundStyle(lit || primary ? CompanionStyle.onAccent
@@ -290,10 +290,9 @@ private struct NotchPillButtonBody: View {
             .frame(height: style.height ?? (style.small ? 22 : 26))
             .background {
                 shape.fill(lit ? CompanionStyle.text
-                           : primary ? CompanionStyle.signal
+                           : primary ? CompanionStyle.accent
                            : Color.white.opacity(pressed ? 0.14 : hot ? 0.08 : 0.025))
-                    .brightness(lit ? (pressed ? -0.12 : hot ? -0.05 : 0)
-                                : primary ? (pressed ? -0.1 : hot ? 0.06 : 0) : 0)
+                    .brightness(lit || primary ? (pressed ? -0.12 : hot ? -0.05 : 0) : 0)
             }
             .overlay { shape.strokeBorder(primary || lit ? Color.clear : hot ? CompanionStyle.ruleStrong : CompanionStyle.rule, lineWidth: 0.5) }
             .contentShape(shape)
@@ -495,6 +494,8 @@ struct NotchSegmentedControl<Value: Hashable>: View {
     var title: (Value) -> String
     @Binding var selection: Value
     var small = false
+    /// What VoiceOver reads when the visible titles are abbreviated.
+    var spoken: ((Value) -> String)? = nil
     @Namespace private var thumb
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -511,7 +512,7 @@ struct NotchSegmentedControl<Value: Hashable>: View {
         .fixedSize()
         .accessibilityRepresentation {
             Picker(label, selection: $selection) {
-                ForEach(options, id: \.self) { Text(title($0)).tag($0) }
+                ForEach(options, id: \.self) { Text((spoken ?? title)($0)).tag($0) }
             }.pickerStyle(.segmented)
         }
     }
@@ -555,7 +556,7 @@ private struct SegmentBody: View {
             if PanelTheme.current == .instrument {
                 let shape = RoundedRectangle(cornerRadius: 2, style: .continuous)
                 configuration.label
-                    .microLabel(style.small ? 9.5 : 10, tracking: 0.6)
+                    .font(.system(size: style.small ? 11 : 11.5, weight: .medium))
                     .lineLimit(1)
                     .foregroundStyle(style.selected ? CompanionStyle.onAccent
                                      : hot ? CompanionStyle.text : CompanionStyle.secondary)
