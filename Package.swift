@@ -14,7 +14,8 @@ let package = Package(
         .executableTarget(name: "NotchCompanion",
                           dependencies: [.product(name: "FluidAudio", package: "FluidAudio")],
                           resources: [.process("Resources")]),
-        .testTarget(name: "NotchCompanionTests", dependencies: ["NotchCompanion"])
+        .testTarget(name: "NotchCompanionTests",
+                    dependencies: ["NotchCompanion", .product(name: "FluidAudio", package: "FluidAudio")])
     ],
     swiftLanguageModes: [.v5]
 )

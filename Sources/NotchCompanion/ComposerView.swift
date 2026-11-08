@@ -15,7 +15,8 @@ struct ComposerView: View {
     private var runtimeTitle: String { (model.current?.runtime ?? model.defaultRuntime).title }
     private var checksLastSend: Bool { model.current?.pendingSubmission != nil }
     private var canSend: Bool {
-        (checksLastSend || !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        (checksLastSend || !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || model.dictatingSessionID == model.currentID)
             && !model.submitting && model.canAttemptSend && !busy
             && !model.currentDraftNeedsSetup
     }
@@ -327,15 +328,25 @@ struct ComposerView: View {
     private func submit(queue: Bool = false) {
         if model.submitting { submissionNotice = "Sending your message…"; return }
         if model.currentDraftNeedsSetup { submissionNotice = "Connect a harness in Settings before sending."; return }
+        let id = model.currentID
+        if model.dictation.isActive, model.dictation.sessionID == id {
+            // Parakeet writes only when it stops, macOS at each pause: stop, then send the last words too.
+            submissionNotice = "Adding your last words…"
+            model.dictation.stop()
+            Task {
+                await model.dictation.finished()
+                guard model.currentID == id else { return }
+                submissionNotice = nil
+                submit(queue: queue)
+            }
+            return
+        }
         if !checksLastSend && model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             submissionNotice = "Add a message before sending."; return
         }
         if !model.canAttemptSend { submissionNotice = "Reconnect to \(runtimeTitle) before sending."; return }
         if busy && !queue && model.current?.canSteer != true { submissionNotice = "Use Command–Return to queue this message."; return }
         submissionNotice = nil
-        let id = model.currentID
-        // Words still being heard land in the emptied draft rather than being lost.
-        if model.dictation.sessionID == id { model.dictation.stop() }
         Task { guard model.currentID == id else { return }; await model.send(queue: queue) }
     }
 }

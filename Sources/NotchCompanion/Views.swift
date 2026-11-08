@@ -872,7 +872,7 @@ struct SettingsContent: View {
                 if Dictation.isAvailable {
                     SettingsRow("Show dictation", symbol: "mic.fill", tint: .red, divider: true) {
                         Toggle("Show dictation", isOn: $model.showDictation).toggleStyle(NotchSwitchStyle())
-                            .help("Add a composer button that types what you say into the draft. Speech is transcribed on this Mac by macOS; nothing is sent until you press Send.")
+                            .help("Add a composer button that types what you say into the draft. Speech is transcribed on this Mac; nothing is sent until you press Send.")
                     }
                     if ParakeetModel.isSupported {
                         SettingsRow("Dictation engine", symbol: "waveform", tint: .pink, divider: true) {
@@ -1220,13 +1220,6 @@ struct ShortcutRecorder: View {
 struct ParakeetSettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var parakeet: ParakeetModel
-    @ObservedObject private var dictation: Dictation
-
-    init(model: AppModel, parakeet: ParakeetModel) {
-        self.model = model
-        self.parakeet = parakeet
-        dictation = model.dictation
-    }
 
     var body: some View {
         let chosen = model.dictationEngine == .parakeet
@@ -1247,16 +1240,17 @@ struct ParakeetSettingsView: View {
                     }
                     Spacer(minLength: 0)
                     switch parakeet.state {
-                    case .missing, .failed:
-                        Button(parakeet.state == .missing ? "Download" : "Try again") { parakeet.download() }
-                            .buttonStyle(NotchPillButtonStyle(small: true))
-                    case .ready:
-                        // The model is in use while Parakeet dictation runs.
+                    case .missing: Button("Download") { parakeet.download() }.buttonStyle(NotchPillButtonStyle(small: true))
+                    case .failed: Button("Try again") { parakeet.retry() }.buttonStyle(NotchPillButtonStyle(small: true))
+                    case .downloading, .preparing, .ready: EmptyView()
+                    }
+                    // Also after a failure, so a model that will not load can be removed and fetched again.
+                    if parakeet.state != .preparing, !parakeet.isBusy, parakeet.isDownloaded {
                         Button("Delete") { Task { await parakeet.delete() } }
                             .buttonStyle(NotchPillButtonStyle(small: true))
-                            .disabled(dictation.isActive && chosen)
-                            .help("Remove the downloaded Parakeet model (\(ParakeetModel.downloadSize)).")
-                    case .downloading, .preparing: EmptyView()
+                            .disabled(parakeet.inUse)
+                            .help(parakeet.inUse ? "Parakeet is transcribing; stop dictation first."
+                                  : "Remove the downloaded Parakeet model (\(ParakeetModel.downloadSize)).")
                     }
                 }
             }

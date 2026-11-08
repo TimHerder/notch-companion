@@ -46,6 +46,11 @@ final class Dictation: ObservableObject {
 
     var isActive: Bool { phase != .idle }
 
+    /// Returns once the run has ended and its last words were delivered.
+    func finished() async {
+        for await phase in $phase.values where phase == .idle { return }
+    }
+
     func start(sessionID: String, engine: DictationEngine, language: String?, fromNotch: Bool) {
         guard phase == .idle else { return }
         let generation = UUID()
@@ -142,6 +147,9 @@ final class Dictation: ObservableObject {
     private func runParakeet(_ generation: UUID) async throws {
         let parakeet = ParakeetModel.shared
         guard ParakeetModel.isSupported else { throw DictationError("Parakeet needs a Mac with Apple silicon.") }
+        parakeet.acquire()
+        // However this run ends, the model is free afterwards.
+        defer { parakeet.release() }
         phase = .preparing(parakeet.status)
         parakeetProgress = parakeet.$state.sink { [weak self] _ in
             DispatchQueue.main.async {
@@ -150,8 +158,6 @@ final class Dictation: ObservableObject {
             }
         }
         _ = try await parakeet.recognizer()
-        // However this run ends, the loaded model is idle afterwards.
-        defer { parakeet.idle() }
         parakeetProgress = nil
         guard self.generation == generation else { return }
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!

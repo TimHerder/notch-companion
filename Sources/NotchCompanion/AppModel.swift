@@ -116,6 +116,8 @@ final class AppModel: ObservableObject {
         didSet { preferences.set(dictationEngine.rawValue, forKey: DictationEngine.key) }
     }
     let dictation = Dictation()
+    /// Mirrors `dictation.sessionID`, so the composer can offer Send while words are still coming.
+    @Published private(set) var dictatingSessionID: String?
     @Published var openShortcut: KeyShortcut? {
         didSet { ShortcutAction.openPanel.save(openShortcut, preferences); shortcutsChanged?() }
     }
@@ -345,6 +347,7 @@ final class AppModel: ObservableObject {
         showDictation = preferences.object(forKey: "notch.showDictation") as? Bool ?? true
         dictationLanguage = preferences.string(forKey: Dictation.languageKey)
         dictationEngine = DictationEngine(rawValue: preferences.string(forKey: DictationEngine.key) ?? "") ?? .system
+        dictation.$sessionID.assign(to: &$dictatingSessionID)
         openShortcut = ShortcutAction.openPanel.load(preferences)
         dictateShortcut = ShortcutAction.dictate.load(preferences)
         rateLimits = preferences.data(forKey: "usage.rateLimits").flatMap { try? JSONDecoder().decode([String: [RuntimeRateLimit]].self, from: $0) } ?? [:]

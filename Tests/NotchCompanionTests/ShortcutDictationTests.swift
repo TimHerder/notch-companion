@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import Carbon
+import FluidAudio
 import Speech
 import SwiftUI
 import XCTest
@@ -104,6 +105,26 @@ import XCTest
         XCTAssertEqual(parakeet.state, .missing)
         XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: sibling.path), "Only the model folder goes")
+
+        // A dictation using the model keeps Delete from removing it, whatever engine is chosen meanwhile.
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        parakeet.acquire()
+        XCTAssertTrue(parakeet.inUse)
+        await parakeet.delete()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.path))
+        parakeet.release()
+        XCTAssertFalse(parakeet.inUse)
+        await parakeet.delete()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path))
+    }
+
+    func testParakeetProgressReadsAsAFullDownloadAndCachedModelsAsPreparing() {
+        let state = { ParakeetModel.state(for: DownloadProgress(fractionCompleted: $0, phase: $1)) }
+        XCTAssertEqual(state(0, .listing), .downloading(0))
+        XCTAssertEqual(state(0.21, .downloading(completedFiles: 1, totalFiles: 5)), .downloading(0.42))
+        XCTAssertEqual(state(0.5, .downloading(completedFiles: 5, totalFiles: 5)), .downloading(1))
+        XCTAssertEqual(state(0.5, .downloading(completedFiles: 0, totalFiles: 0)), .preparing, "Already on disk")
+        XCTAssertEqual(state(0.7, .compiling(modelName: "Encoder")), .preparing)
     }
 
     /// The real editor coordinator bound to a session draft, as the composer wires it.

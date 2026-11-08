@@ -45,6 +45,8 @@ final class ParakeetModel: ObservableObject {
     private var manager: AsrManager?
     private var work: Task<AsrManager?, Error>?
     private var unload: Task<Void, Never>?
+    /// Dictation runs using the model; Delete waits for them, whatever engine is chosen now.
+    @Published private(set) var users = 0
     /// The loaded model holds several hundred MB; an always-running app gives it back when idle.
     static let idleUnload: Duration = .seconds(300)
 
@@ -57,6 +59,7 @@ final class ParakeetModel: ObservableObject {
     private var directory: URL { folder.appendingPathComponent("parakeet", isDirectory: true) }
     var isDownloaded: Bool { AsrModels.modelsExist(at: directory, version: .v3) }
     var isBusy: Bool { work != nil }
+    var inUse: Bool { users > 0 || work != nil }
 
     var status: String {
         switch state {
@@ -74,6 +77,12 @@ final class ParakeetModel: ObservableObject {
         run(load: false)
     }
 
+    /// Try again after a failure: fetch what is missing, or load what is there.
+    func retry() {
+        guard work == nil else { return }
+        if isDownloaded { Task { _ = try? await recognizer() } } else { run(load: false) }
+    }
+
     /// The loaded recognizer, downloading first if the model is missing.
     func recognizer() async throws -> AsrManager {
         unload?.cancel()
@@ -86,12 +95,21 @@ final class ParakeetModel: ObservableObject {
         return manager
     }
 
-    /// Dictation finished: free the loaded model unless it is used again soon.
-    func idle() {
+    /// A dictation run starts using the model.
+    func acquire() {
+        users += 1
+        unload?.cancel()
+        unload = nil
+    }
+
+    /// A dictation run finished: free the loaded model unless it is used again soon.
+    func release() {
+        users = max(0, users - 1)
+        guard users == 0 else { return }
         unload?.cancel()
         unload = Task {
             try? await Task.sleep(for: Self.idleUnload)
-            guard !Task.isCancelled, work == nil, let manager else { return }
+            guard !Task.isCancelled, work == nil, users == 0, let manager else { return }
             self.manager = nil
             await manager.cleanup()
         }
@@ -99,7 +117,7 @@ final class ParakeetModel: ObservableObject {
 
     /// Frees the memory and removes the downloaded files; refused while in use.
     func delete() async {
-        guard work == nil else { return }
+        guard !inUse else { return }
         await manager?.cleanup()
         manager = nil
         do {
@@ -144,10 +162,17 @@ final class ParakeetModel: ObservableObject {
 
     private func report(_ update: DownloadProgress) {
         guard work != nil else { return }
+        state = Self.state(for: update)
+    }
+
+    /// FluidAudio weighs the download as the first half of its progress, and
+    /// reports models already on disk as a download with no files.
+    nonisolated static func state(for update: DownloadProgress) -> State {
         switch update.phase {
-        case .listing: state = .downloading(0)
-        case .downloading: state = .downloading(update.fractionCompleted)
-        case .compiling: state = .preparing
+        case .listing: .downloading(0)
+        case .downloading(_, let files) where files == 0: .preparing
+        case .downloading: .downloading(min(1, update.fractionCompleted * 2))
+        case .compiling: .preparing
         }
     }
 

@@ -1188,9 +1188,10 @@ until the user sends.
   Parakeet is more accurate for technical terms, detects the language spoken
   (25 European languages), downloads about 480 MB once from Hugging Face and
   keeps speech on the Mac. Choosing Parakeet starts its download; the row under
-  the hint shows progress, then **Downloaded** with **Delete** (still offered
-  after switching back to macOS; disabled while Parakeet dictation runs), or a
-  failure with **Try again**. A missing model downloads on the first dictation
+  the hint shows progress, then **Downloaded**, or a failure with **Try again**
+  (which fetches what is missing or loads what is there). **Delete** shows
+  whenever the model is on disk, including after a failure and after switching
+  back to macOS, and is disabled while any dictation run uses Parakeet. A missing model downloads on the first dictation
   too, shown as “Downloading Parakeet… 42%”. The model lives in
   `~/Library/Application Support/NotchCompanion/Speech Models` and leaves
   memory after five idle minutes.
@@ -1215,7 +1216,11 @@ until the user sends.
   glance's New session does (reusing an untouched one), opens the panel for
   input and starts listening; pressing it again stops. The words stay in the
   draft for review.
-- **Stopping.** Sending from that session, the button, the shortcut,
+- **Sending while dictating.** Return or Send in the session being dictated
+  into stops listening, shows “Adding your last words…” until the engine has
+  delivered them (Parakeet writes only at the end), then sends the draft with
+  them. Send is enabled meanwhile even with an empty draft.
+- **Stopping.** The button, the shortcut,
   collapsing the notch (for dictation started there) or closing the
   full-session window (for dictation started there) stops listening; words
   still being finalized land in the draft afterwards. A microphone that is
