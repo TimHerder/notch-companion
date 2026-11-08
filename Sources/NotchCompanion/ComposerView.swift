@@ -86,7 +86,7 @@ struct ComposerView: View {
                         .font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary).fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                     Button("Reset") { Task { await model.resetSnapShotPermission() } }.buttonStyle(NotchPillButtonStyle(small: true))
-                        .help("Clear Notch Companion's Screen Recording entry so macOS asks again for this build.")
+                        .help("Clear Notch Companion's Screen Recording entry, then allow it again in the prompt or System Settings.")
                     Button("Open Settings") { model.openExternally(SnapShot.privacySettings) }.buttonStyle(NotchPillButtonStyle(small: true))
                 }
                 if refined {

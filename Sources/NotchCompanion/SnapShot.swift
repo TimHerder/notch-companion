@@ -69,7 +69,7 @@ enum SnapShot {
         return url
     }
 
-    /// Removes this app's own Screen Recording entry, so the next request prompts for the running build.
+    /// Removes this app's own Screen Recording entry, so a new grant can name the running build.
     static func resetPermission(bundleID: String? = Bundle.main.bundleIdentifier) async -> Bool {
         guard let bundleID else { return false }
         let tccutil = Process()
