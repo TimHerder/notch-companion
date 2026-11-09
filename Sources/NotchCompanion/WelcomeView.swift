@@ -149,7 +149,7 @@ struct WelcomeView: View {
         VStack(spacing: 0) {
             list {
                 engineRow(.system, symbol: "laptopcomputer",
-                          detail: "Built in, nothing to download. Listens in one language: your system’s, or one you pick in Settings.")
+                          detail: "Built into macOS. Listens in one language, your system’s or one you pick in Settings; macOS fetches its speech model on first use.")
                 rowDivider
                 engineRow(.parakeet, symbol: "waveform",
                           detail: "Far more accurate: gets technical terms right and detects the language you speak (25 European languages), which macOS can’t. Downloads \(ParakeetModel.downloadSize) once from Hugging Face.")

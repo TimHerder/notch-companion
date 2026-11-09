@@ -515,8 +515,8 @@ appearance previews, and uses neutral wording without a character voice.
   effects off.
 - **Dictation** (*Choose how to dictate*), only on Apple silicon, where
   Parakeet runs: **macOS** and **Parakeet** rows in an inset list like the
-  agent step's. macOS: built in, nothing to download, one language (the
-  system's or one picked in Settings). Parakeet: far more accurate, gets
+  agent step's. macOS: built in, one language (the system's or one picked in
+  Settings), whose speech model macOS fetches on first use. Parakeet: far more accurate, gets
   technical terms right and detects the language spoken (25 European
   languages), which macOS can't; downloads about 480 MB once from Hugging
   Face. Choosing sets **Dictation engine** as Settings does, so choosing
