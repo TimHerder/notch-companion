@@ -516,13 +516,13 @@ appearance previews, and uses neutral wording without a character voice.
 - **Dictation** (*Choose how to dictate*), only on Apple silicon, where
   Parakeet runs: **macOS** and **Parakeet** rows in an inset list like the
   agent step's. macOS: built in, one language (the system's or one picked in
-  Settings), whose speech model macOS fetches on first use. Parakeet: far more accurate, gets
-  technical terms right and detects the language spoken (25 European
-  languages), which macOS can't; downloads about 480 MB once from Hugging
-  Face. Choosing sets **Dictation engine** as Settings does, so choosing
-  Parakeet starts its download; Settings' download row (progress,
-  **Downloaded**, a failure with **Try again**, **Delete**) shows under the
-  list while Parakeet is chosen. macOS stays the default.
+  Settings), whose speech model macOS downloads on first use if needed.
+  Parakeet: far more accurate, gets technical terms right and detects the
+  language spoken (25 European languages), which macOS can't; downloads about
+  480 MB once from Hugging Face. Choosing sets **Dictation engine** as
+  Settings does, so choosing Parakeet starts its download; Settings' download
+  row (progress, **Downloaded**, a failure with **Try again**, **Delete**)
+  shows under the list while Parakeet is chosen. macOS stays the default.
 - **Start** (*Final touches*): the chosen companion above the Default folder
   and Open at login rows (the Settings controls).
 - **Done or Skip** returns the page to the session, closes the panel and plays
