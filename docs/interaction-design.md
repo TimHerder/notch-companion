@@ -513,6 +513,16 @@ appearance previews, and uses neutral wording without a character voice.
   Every press sets Notch updates and plays the Settings preview (“Sample
   update”): the panel closes, then reopens on this step. No sample with Status
   effects off.
+- **Dictation** (*Choose how to dictate*), only on Apple silicon, where
+  Parakeet runs: **macOS** and **Parakeet** rows in an inset list like the
+  agent step's. macOS: built in, one language (the system's or one picked in
+  Settings), whose speech model macOS downloads on first use if needed.
+  Parakeet: far more accurate, gets technical terms right and detects the
+  language spoken (25 European languages), which macOS can't; downloads about
+  480 MB once from Hugging Face. Choosing sets **Dictation engine** as
+  Settings does, so choosing Parakeet starts its download; Settings' download
+  row (progress, **Downloaded**, a failure with **Try again**, **Delete**)
+  shows under the list while Parakeet is chosen. macOS stays the default.
 - **Start** (*Final touches*): the chosen companion above the Default folder
   and Open at login rows (the Settings controls).
 - **Done or Skip** returns the page to the session, closes the panel and plays
@@ -1040,8 +1050,9 @@ folder whose sessions are all archived leaves the default list.
 
 The composer is **one field in every design**: a ready plan's row,
 attachments and the editor on top, and one bar along its bottom edge:
-`[+] [SnapShot] [mic] [harness · folder (started sessions) · session (secondary
-pages)] … [Send/Stop]`. A new draft's harness and folder choosers sit in its
+`[+] [SnapShot] [harness · folder (started sessions) · session (secondary
+pages)] … [mic] [Send/Stop]`; a draft typed while the session works brings a
+separate Stop before the microphone. A new draft's harness and folder choosers sit in its
 empty conversation instead (see [controls](#controls-and-window-behavior)). A
 started session keeps a plain harness label in Refined and Instrument, whose
 placeholder hides behind a draft or the busy hint; Tahoe drops it (the
@@ -1191,7 +1202,7 @@ by itself, like a [file drop](#file-drops).
 ## Dictation
 
 **Show dictation** (on by default, Settings → Composer) adds a microphone
-button after SnapShot in both surfaces' composer bar. Speech becomes text on
+button beside Send in both surfaces' composer bar. Speech becomes text on
 this Mac: no audio leaves it, no model ships with the app, and nothing is sent
 until the user sends.
 

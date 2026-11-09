@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// First-run choices inside the notch: agent, look, updates, then folder and
-/// login. One centred step at a time, each choice showing itself: the live
-/// mascots, drawings of both update styles (and a real sample on the notch),
+/// First-run choices inside the notch: agent, look, updates, dictation, then
+/// folder and login. One centred step at a time, each choice showing itself: the
+/// live mascots, drawings of both update styles (and a real sample on the notch),
 /// and where each agent is installed. Every choice is an existing setting.
 struct WelcomeView: View {
     @ObservedObject var model: AppModel
@@ -10,7 +10,8 @@ struct WelcomeView: View {
     /// Installed harnesses and where; nil until the first check.
     @State private var installed: [(runtime: RuntimeKind, path: String)]?
     @State private var checks = 0
-    static let steps = 4
+    /// The dictation engine is asked only where Parakeet can run.
+    static var steps: Int { ParakeetModel.isSupported ? 5 : 4 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -51,7 +52,8 @@ struct WelcomeView: View {
         case 0: return noAgent ? "Install an agent" : "Choose your agent"
         case 1: return "Pick a companion"
         case 2: return "How should updates appear?"
-        default: return "Final touches"
+        case Self.steps - 1: return "Final touches"
+        default: return "Choose how to dictate"
         }
     }
 
@@ -61,7 +63,8 @@ struct WelcomeView: View {
             : "Found on this Mac. You can switch any time in Settings."
         case 1: return "It rests as eyes beside the notch and comes out when it opens."
         case 2: return "Choose one to see a sample on your notch."
-        default: return "New sessions start in this folder. Both can be changed in Settings."
+        case Self.steps - 1: return "New sessions start in this folder. Both can be changed in Settings."
+        default: return "Both turn speech into text on this Mac. You can switch any time in Settings."
         }
     }
 
@@ -70,7 +73,8 @@ struct WelcomeView: View {
         case 0: agent
         case 1: look
         case 2: updates
-        default: start
+        case Self.steps - 1: start
+        default: dictation
         }
     }
 
@@ -100,19 +104,12 @@ struct WelcomeView: View {
         } else {
             let rows = installed ?? []
             ScrollView {
-                VStack(spacing: 0) {
+                list {
                     ForEach(Array(rows.enumerated()), id: \.element.runtime) { index, row in
-                        if index > 0 {
-                            Rectangle().fill(PanelTheme.pick(Color.white.opacity(0.06), CompanionStyle.separator, Color.white.opacity(0.08)))
-                                .frame(height: 0.5).padding(.leading, PanelTheme.pick(72, 72, 0))
-                        }
+                        if index > 0 { rowDivider }
                         agentRow(row.runtime, path: row.path)
                     }
                 }
-                .background(PanelTheme.pick(Color.white.opacity(0.045), CompanionStyle.fill, Color.black.opacity(0.25)))
-                .clipShape(RoundedRectangle(cornerRadius: listRadius, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: listRadius, style: .continuous)
-                    .strokeBorder(PanelTheme.pick(CompanionStyle.hairline, Color.white.opacity(0.06), CompanionStyle.rule), lineWidth: 0.5))
             }
             .scrollBounceBehavior(.basedOnSize)
             .frame(width: 420)
@@ -121,27 +118,11 @@ struct WelcomeView: View {
         }
     }
 
-    private var listRadius: CGFloat { PanelTheme.pick(CompanionStyle.Radius.card, 12, CompanionStyle.cardRadius) }
-
     private func agentRow(_ runtime: RuntimeKind, path: String) -> some View {
         let selected = model.defaultRuntime == runtime
         return Button { model.chooseWelcomeRuntime(runtime) } label: {
             HStack(spacing: 12) {
-                if PanelTheme.current == .instrument {
-                    ChoiceMark(selected: selected, round: true)
-                } else {
-                    ZStack {
-                        Circle().strokeBorder(selected ? Color.clear : PanelTheme.pick(CompanionStyle.faint, Color.white.opacity(0.28), CompanionStyle.faint),
-                                              lineWidth: PanelTheme.pick(1.2, 1, 1.2))
-                        // Refined: selection lights white like the eyes; sage stays on Continue.
-                        if selected {
-                            Circle().fill(PanelTheme.pick(CompanionStyle.text, CompanionStyle.accent, CompanionStyle.accent))
-                            Image(systemName: "checkmark").font(.system(size: 8.5, weight: .bold))
-                                .foregroundStyle(PanelTheme.pick(CompanionStyle.background, CompanionStyle.onAccent, CompanionStyle.onAccent))
-                        }
-                    }
-                    .frame(width: 18, height: 18)
-                }
+                selectionMark(selected)
                 AgentLogo(runtime: runtime)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(runtime.title).font(.system(size: 13, weight: .medium)).foregroundStyle(CompanionStyle.text)
@@ -159,6 +140,49 @@ struct WelcomeView: View {
         .buttonStyle(WelcomeRowStyle(selected: selected))
         .help(path)
         .accessibilityLabel("\(runtime.title), installed at \(path)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    // MARK: Dictation
+
+    private var dictation: some View {
+        VStack(spacing: 0) {
+            list {
+                engineRow(.system, symbol: "laptopcomputer",
+                          detail: "Built into macOS. Listens in one language, your system’s or one you pick in Settings; macOS downloads its speech model on first use if needed.")
+                rowDivider
+                engineRow(.parakeet, symbol: "waveform",
+                          detail: "Far more accurate: gets technical terms right and detects the language you speak (25 European languages), which macOS can’t. Downloads \(ParakeetModel.downloadSize) once from Hugging Face.")
+            }
+            // Choosing Parakeet starts its download; its progress shows here.
+            if model.dictationEngine == .parakeet {
+                ParakeetSettingsView(model: model, parakeet: .shared, hint: false).padding(.top, 10)
+            }
+        }
+        .frame(width: 420)
+    }
+
+    private func engineRow(_ engine: DictationEngine, symbol: String, detail: String) -> some View {
+        let selected = model.dictationEngine == engine
+        return Button {
+            withAnimation(model.reducedMotion ? nil : .smooth(duration: 0.25)) { model.chooseDictationEngine(engine) }
+        } label: {
+            HStack(spacing: 12) {
+                selectionMark(selected)
+                Image(systemName: symbol).font(.system(size: 13, weight: .medium)).foregroundStyle(CompanionStyle.secondary)
+                    .frame(width: 16, height: 16).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(engine.label).font(.system(size: 13, weight: .medium)).foregroundStyle(CompanionStyle.text)
+                    Text(detail).font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(WelcomeRowStyle(selected: selected))
+        .accessibilityLabel("\(engine.label), \(detail)")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
@@ -231,6 +255,39 @@ struct WelcomeView: View {
     }
 
     // MARK: Shared
+
+    /// An inset list of choices, as in System Settings.
+    private func list<Rows: View>(@ViewBuilder rows: () -> Rows) -> some View {
+        let shape = RoundedRectangle(cornerRadius: PanelTheme.pick(CompanionStyle.Radius.card, 12, CompanionStyle.cardRadius), style: .continuous)
+        return VStack(spacing: 0, content: rows)
+            .background(PanelTheme.pick(Color.white.opacity(0.045), CompanionStyle.fill, Color.black.opacity(0.25)))
+            .clipShape(shape)
+            .overlay(shape.strokeBorder(PanelTheme.pick(CompanionStyle.hairline, Color.white.opacity(0.06), CompanionStyle.rule), lineWidth: 0.5))
+    }
+
+    /// Starts at the row's label, past its mark and icon.
+    private var rowDivider: some View {
+        Rectangle().fill(PanelTheme.pick(Color.white.opacity(0.06), CompanionStyle.separator, Color.white.opacity(0.08)))
+            .frame(height: 0.5).padding(.leading, PanelTheme.pick(72, 72, 0))
+    }
+
+    @ViewBuilder private func selectionMark(_ selected: Bool) -> some View {
+        if PanelTheme.current == .instrument {
+            ChoiceMark(selected: selected, round: true)
+        } else {
+            ZStack {
+                Circle().strokeBorder(selected ? Color.clear : PanelTheme.pick(CompanionStyle.faint, Color.white.opacity(0.28), CompanionStyle.faint),
+                                      lineWidth: PanelTheme.pick(1.2, 1, 1.2))
+                // Refined: selection lights white like the eyes; sage stays on Continue.
+                if selected {
+                    Circle().fill(PanelTheme.pick(CompanionStyle.text, CompanionStyle.accent, CompanionStyle.accent))
+                    Image(systemName: "checkmark").font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(PanelTheme.pick(CompanionStyle.background, CompanionStyle.onAccent, CompanionStyle.onAccent))
+                }
+            }
+            .frame(width: 18, height: 18)
+        }
+    }
 
     private func tile<Art: View>(selected: Bool, name: String, detail: String, artHeight: CGFloat = 176,
                                  action: @escaping () -> Void, @ViewBuilder art: () -> Art) -> some View {

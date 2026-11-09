@@ -819,6 +819,13 @@ final class AppModel: ObservableObject {
         if action == .openPanel { openShortcut = shortcut } else { dictateShortcut = shortcut }
     }
 
+    /// From Settings or the welcome. Choosing Parakeet is the consent its hint
+    /// asks for: fetch it now.
+    func chooseDictationEngine(_ engine: DictationEngine) {
+        dictationEngine = engine
+        if engine == .parakeet { ParakeetModel.shared.download() }
+    }
+
     /// The microphone button: dictates into the current session's draft, or
     /// stops whatever dictation runs.
     func toggleDictation(fromNotch: Bool) {

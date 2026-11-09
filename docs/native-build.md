@@ -252,9 +252,9 @@ the full render includes them.
 
 Run `scripts/render-ui-fixtures.sh` to render the actual SwiftUI/AppKit views
 with a mock transport and temporary session storage. It writes PNGs under
-`build/ui-review/` for compact conversation, sessions, settings, the four
-welcome steps (`compact-welcome-0`…`3`, and `-1-mascot` with Soot chosen; the agent step lists the harnesses
-installed on the rendering Mac), clarification,
+`build/ui-review/` for compact conversation, sessions, settings, the
+welcome steps (`compact-welcome-0`…`4` on Apple silicon, whose dictation step is `3`, else `…3`;
+`-1-mascot` with Soot chosen, `-3-parakeet` with Parakeet chosen; the agent step lists the harnesses installed on the rendering Mac), clarification,
 failure, full conversation (also at 1440 × 900, `full-conversation-wide`), the
 full-session window's empty Activity and Team tabs, Settings and Usage, and
 Markdown with a long code line. The renderer supports both native SwiftPM and Swift 6.3 swiftbuild resource

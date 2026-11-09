@@ -877,11 +877,7 @@ struct SettingsContent: View {
                     if ParakeetModel.isSupported {
                         SettingsRow("Dictation engine", symbol: "waveform", tint: .pink, divider: true) {
                             NotchSegmentedControl(label: "Dictation engine", options: DictationEngine.allCases, title: \.label,
-                                                  selection: Binding(get: { model.dictationEngine }, set: { engine in
-                                // Choosing Parakeet is the consent its hint asks for: fetch it now.
-                                model.dictationEngine = engine
-                                if engine == .parakeet { ParakeetModel.shared.download() }
-                            }), small: true)
+                                                  selection: Binding(get: { model.dictationEngine }, set: model.chooseDictationEngine), small: true)
                             .help("macOS uses the system's dictation models. Parakeet downloads \(ParakeetModel.downloadSize) once and transcribes on this Mac.")
                         }
                         ParakeetSettingsView(model: model, parakeet: .shared)
@@ -1216,16 +1212,20 @@ struct ShortcutRecorder: View {
 }
 
 /// Under the engine switch: why one might choose Parakeet, what it costs, and
-/// its download. Deleting stays available after switching back to macOS.
+/// its download. Deleting stays available after switching back to macOS. The
+/// welcome shows only the download, its rows saying the rest.
 struct ParakeetSettingsView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var parakeet: ParakeetModel
+    var hint = true
 
     var body: some View {
         let chosen = model.dictationEngine == .parakeet
         VStack(alignment: .leading, spacing: 6) {
-            Text("Parakeet is more accurate for technical terms and detects the language you speak (25 European languages). It downloads \(ParakeetModel.downloadSize) once from Hugging Face; your speech stays on this Mac.")
-                .fixedSize(horizontal: false, vertical: true)
+            if hint {
+                Text("Parakeet is more accurate for technical terms and detects the language you speak (25 European languages). It downloads \(ParakeetModel.downloadSize) once from Hugging Face; your speech stays on this Mac.")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let error = parakeet.deleteError {
                 Text(error).foregroundStyle(CompanionStyle.amber).fixedSize(horizontal: false, vertical: true)
             }

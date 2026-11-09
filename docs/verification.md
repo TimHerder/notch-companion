@@ -126,10 +126,10 @@ private development hasn't been re-run against this source snapshot. Known limit
   download is 483 MB, and synthesized English and German speech, with no
   language chosen, came back word for word through the 16 kHz microphone tap.
   The engine preference and Parakeet's missing and Delete states are covered
-  offline, and the Settings rows by offscreen fixtures in all three designs
-  (`settings-parakeet-560`). Not yet checked live: speaking into a physical
+  offline, and the Settings rows and the welcome's dictation step by offscreen
+  fixtures in all three designs (`settings-parakeet-560`, `compact-welcome-3`). Not yet checked live: speaking into a physical
   microphone, the Microphone permission prompt, a model download started from
-  Settings, a Parakeet preview while speaking, the idle unload, a failed load
+  Settings or the welcome, a Parakeet preview while speaking, the idle unload, a failed load
   followed by Try again, or a shortcut another app already holds. FluidAudio
   is pinned, but it fetches the model from the Hugging Face repository's
   `main`, so a later upstream change to the weights would reach new downloads.

@@ -181,7 +181,7 @@ struct ComposerView: View {
 
     /// One field in every design: a ready plan's row, files and the editor on
     /// top, one bar along its bottom edge with attach, SnapShot, where the
-    /// message goes and Send.
+    /// message goes, dictation and Send.
     private var field: some View {
         let theme = PanelTheme.current
         let lit = focused.wrappedValue
@@ -212,7 +212,7 @@ struct ComposerView: View {
         .animation(.easeOut(duration: 0.15), value: lit)
     }
 
-    /// `[+] [SnapShot] [harness, folder, session] … [Send]`. When it is tight the
+    /// `[+] [SnapShot] [harness, folder, session] … [mic] [Send]`. When it is tight the
     /// session name truncates first, then the harness label and folder; Send keeps its size.
     private var bar: some View {
         HStack(spacing: 2) {
@@ -229,15 +229,15 @@ struct ComposerView: View {
                 }
                 .disabled(model.snapShotSource == nil)
             }
-            if model.showDictation && Dictation.isAvailable {
-                DictationButton(model: model, dictation: model.dictation, fromNotch: isCompact)
-            }
             ComposerDestinationView(model: model, showsTitle: showsTitle).layoutPriority(1)
             Spacer(minLength: 8)
             if takesDraftWhileBusy {
                 Button { Task { await model.interrupt() } } label: { Image(systemName: "stop.fill").font(.system(size: 9, weight: .bold)) }
                     .buttonStyle(NotchIconButtonStyle(size: 28))
                     .help("Stop this session; keep your draft").accessibilityLabel("Stop this session")
+            }
+            if model.showDictation && Dictation.isAvailable {
+                DictationButton(model: model, dictation: model.dictation, fromNotch: isCompact)
             }
             sendButton
         }
