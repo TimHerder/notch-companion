@@ -1161,6 +1161,13 @@ import ImageIO
         model.page = .welcome(step: 1)
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-welcome-1-mascot", output: output)
         (model.companionAppearance, model.mascotCharacter) = (appearance, character)
+        // The dictation step with Parakeet chosen: its download row under the list (set directly, so nothing downloads).
+        if WelcomeView.steps == 5 {
+            model.dictationEngine = .parakeet
+            model.page = .welcome(step: 3)
+            try render(UnifiedNotchView(model: model), size: compact, name: "compact-welcome-3-parakeet", output: output)
+            model.dictationEngine = .system
+        }
         model.page = .settings
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-settings", output: output)
         for width: CGFloat in [560, 252] {
