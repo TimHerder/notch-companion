@@ -11,11 +11,20 @@ import XCTest
     var onEvent: ((String, [String: Any]) -> Void)?
     var onConnectionChange: ((Bool, String?) -> Void)?
     var sent: [String] = []
+    /// A request for this method waits for `finish`.
+    var pausedMethod: String?
+    var pending: CheckedContinuation<[String: Any], Error>?
     func connect() async throws { onConnectionChange?(true, nil) }
-    func disconnect() { onConnectionChange?(false, nil) }
+    func disconnect() { finish(.failure(AppError("Disconnected fixture"))); onConnectionChange?(false, nil) }
     func request(_ method: String, params: [String: Any]) async throws -> [String: Any] {
         if method == "prompt.submit", let text = params["text"] as? String { sent.append(text) }
+        if method == pausedMethod { return try await withCheckedThrowingContinuation { pending = $0 } }
         return method == "session.create" ? ["session_id": "live", "stored_session_id": "saved", "messages": []] : [:]
+    }
+    func finish(_ result: Result<[String: Any], Error>) {
+        let continuation = pending
+        pending = nil
+        continuation?.resume(with: result)
     }
 }
 
@@ -317,6 +326,65 @@ private final class HeardLevel: @unchecked Sendable { var rms: Float = 0 }
         XCTAssertTrue(freshTransport.sent.isEmpty)
     }
 
+    private func waitForPausedRequest(_ transport: ShortcutTransport) async throws {
+        for _ in 0..<500 where transport.pending == nil { try await Task.sleep(for: .milliseconds(10)) }
+        _ = try XCTUnwrap(transport.pending)
+    }
+
+    func testHoldToAskStaysClosedWhenTheRuntimeAcceptedWithoutAcknowledging() async throws {
+        let (model, transport, cleanUp) = await askModel(ready: true)
+        defer { cleanUp() }
+        var opened = 0
+        model.activatePanel = { opened += 1 }
+        transport.pausedMethod = "prompt.submit"
+        let ask = Task { await model.sendQuickAsk("Is the build green?", failed: false) }
+        try await waitForPausedRequest(transport)
+        // The turn starts, then the acknowledgement of the request that started it is lost.
+        model.receive("message.start", payload: ["session_id": "live"])
+        transport.finish(.failure(HermesClientError.timedOut("prompt.submit")))
+        await ask.value
+        XCTAssertEqual(model.current?.messages.first?.text, "Is the build green?")
+        XCTAssertNil(model.current?.pendingSubmission)
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(opened, 0, "A running session stays in the background")
+    }
+
+    func testHoldToAskReturnsToItsOwnDraftWhenTheSendFailsAfterTheSelectionMoved() async throws {
+        let (model, transport, cleanUp) = await askModel(ready: true)
+        defer { cleanUp() }
+        var opened = 0
+        model.activatePanel = { opened += 1 }
+        let earlier = model.sessions[0].id
+        transport.pausedMethod = "session.create"
+        let ask = Task { await model.sendQuickAsk("Summarize today's changes", failed: false) }
+        try await waitForPausedRequest(transport)
+        let asked = try XCTUnwrap(model.currentID)
+        XCTAssertNotEqual(asked, earlier)
+        model.selectSession(earlier)
+        transport.finish(.failure(AppError("Setup failed")))
+        await ask.value
+        XCTAssertEqual(model.currentID, asked, "The panel opens on the question's own draft")
+        XCTAssertEqual(model.draft, "Summarize today's changes")
+        XCTAssertEqual(model.errorMessage?.contains("Setup failed"), true, "Its reason survives the reselection")
+        XCTAssertEqual(opened, 1)
+    }
+
+    func testAFailureDeliversTheWordsHeardButNotYetFinal() {
+        let dictation = Dictation()
+        var delivered: [String] = []
+        dictation.deliver = { delivered.append("\($0): \($1)") }
+        dictation.setListeningForPreview(volatile: "half a sentence", level: 0.4, sessionID: "draft")
+        dictation.fail(CancellationError())
+        XCTAssertEqual(delivered, ["draft: half a sentence"])
+        XCTAssertFalse(dictation.isActive)
+        XCTAssertEqual(dictation.volatileText, "")
+        XCTAssertNotNil(dictation.failure)
+        // Nothing unfinished, nothing delivered.
+        dictation.setListeningForPreview(volatile: "", level: 0, sessionID: "draft")
+        dictation.fail(CancellationError())
+        XCTAssertEqual(delivered.count, 1)
+    }
+
     func testListeningIslandGrowsWithTheWordsAndStopsAtSixLines() {
         var geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1512, height: 982), topInset: 32,
                                      leftArea: CGRect(x: 0, y: 950, width: 663.5, height: 32),
@@ -364,7 +432,7 @@ private final class HeardLevel: @unchecked Sendable { var rms: Float = 0 }
         model.dictation.setListeningForPreview(volatile: "tomorrow morning", level: 0.5)
         model.quickAsk = "What is the weather"
         XCTAssertEqual(model.askText, "What is the weather tomorrow morning")
-        // Released: the island keeps its words while it closes, and nothing is sent by a quit.
+        // Ended the way a release ends it: the closing island keeps its finalized words.
         model.dictation.cancel()
         model.setAskingForPreview(nil)
         XCTAssertFalse(model.asking)

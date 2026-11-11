@@ -904,9 +904,17 @@ final class AppModel: ObservableObject {
             return
         }
         await newSession(showPanel: false)
+        guard let id = currentID else { return }
         draft = text
         // A failed run may have lost words, and a harness that is not set up cannot take them.
-        guard !failed, !currentDraftNeedsSetup, await submit(reply: nil) else { activatePanel?(); return }
+        if !failed, !currentDraftNeedsSetup { await submit(reply: nil) }
+        // Words still in the draft, or a send the runtime never confirmed, open for review. A send
+        // accepted without its acknowledgement is running like any other and stays in the background.
+        guard let session = sessions.first(where: { $0.id == id }), !session.draft.isEmpty || session.pendingSubmission != nil else { return }
+        // Selecting clears the banner; the reason it could not go belongs with the draft.
+        let reason = errorMessage
+        if currentID != id { selectSession(id); errorMessage = reason }
+        activatePanel?()
     }
 
     private func startDictation(into sessionID: String, fromNotch: Bool) {

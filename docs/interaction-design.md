@@ -1244,7 +1244,8 @@ until the user sends (releasing Hold to ask is that send).
   final words join the end of the draft with one space, never replacing typed
   text; words that arrive while an input method is composing join once it
   commits. A failure (no microphone, unsupported language, denied access with
-  **Open Settings**) stays there until dismissed.
+  **Open Settings**) stays there until dismissed; one that ends a run keeps the
+  words heard so far, those not yet final included.
 - **Dictate a new session.** The shortcut opens a ready draft the way the
   glance's New session does (reusing an untouched one), opens the panel for
   input and starts listening; pressing it again stops. The words stay in the
@@ -1269,13 +1270,16 @@ until the user sends (releasing Hold to ask is that send).
     session would use and the default folder. It becomes the selection, plays
     the send cue and runs in the background; its live glyph, dot and
     announcement follow as for any session. Nothing heard (a tap) sends nothing.
-  - *Words that cannot be sent* stay in the new session's draft and the panel
-    opens on it: after a dictation failure (beside the failure), with no
-    harness set up, in an untrusted project, or when the send is refused
-    (with its error). A failure before any word opens a ready draft that
-    shows it.
-  - *Other tiers.* An open panel closes into the island; a hover glance
-    yields to it and hovering opens nothing meanwhile; a popup update only
+  - *Words that cannot be sent* stay in the new session's draft, which
+    becomes the selection again if it changed meanwhile, and the panel opens on
+    it: after a dictation failure (beside the failure, with the words that
+    were not yet final), with no harness set up, in an untrusted project, or
+    when the send is refused or unconfirmed (with its error). A send the
+    runtime accepted without acknowledging stays in the background. A failure
+    before any word opens a ready draft that shows it.
+  - *Other tiers.* An open panel or hover glance closes into the island, and
+    hovering opens nothing until the hold has ended and the pointer has left
+    the notch; a popup update only
     lights the edge. A panel opened during the hold takes over, and the words
     still go on release. While another dictation runs the shortcut does
     nothing; a composer's red waveform, the dictate shortcut or changing a

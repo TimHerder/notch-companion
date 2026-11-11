@@ -110,8 +110,8 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
             model.dictateNewSession()
         case .ask:
             guard !hasPresentedSheet, trackingMenus.isEmpty, !model.asking, !model.dictation.isActive else { return }
-            // The island is the whole surface while it listens: an open panel closes into it.
-            if model.expanded { hide(playSound: false) }
+            // The island is the whole surface while it listens: an open panel or glance closes into it.
+            if model.expanded || model.glancing { hide(playSound: false) }
             model.beginQuickAsk()
         }
     }

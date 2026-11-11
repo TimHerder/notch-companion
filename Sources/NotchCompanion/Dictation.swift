@@ -53,10 +53,11 @@ final class Dictation: ObservableObject {
     var isActive: Bool { phase != .idle }
 
     /// Fixtures render listening without a microphone; `cancel` ends it.
-    func setListeningForPreview(volatile: String, level: CGFloat) {
+    func setListeningForPreview(volatile: String, level: CGFloat, sessionID: String? = nil) {
         phase = .listening
         volatileText = volatile
         self.level = level
+        self.sessionID = sessionID
     }
 
     /// Returns once the run has ended and its last words were delivered.
@@ -116,9 +117,16 @@ final class Dictation: ObservableObject {
             }
         } catch {
             guard self.generation == generation else { return }
-            finish(generation)
-            failure = (error as? DictationError)?.message ?? "Dictation stopped: \(error.localizedDescription)"
+            fail(error)
         }
+    }
+
+    /// A failure ends the run and says why. Words heard but not yet final are
+    /// delivered first, so what was on screen is not lost with it.
+    func fail(_ error: Error) {
+        if let sessionID, !volatileText.isEmpty { deliver?(sessionID, volatileText) }
+        finish(generation)
+        failure = (error as? DictationError)?.message ?? "Dictation stopped: \(error.localizedDescription)"
     }
 
     private func runSystem(_ generation: UUID, language: String?) async throws {
