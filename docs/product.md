@@ -39,7 +39,8 @@ Popup updates, and panel/body appearance. Motion communicates real state and
 respects Reduce Motion. Hover is passive; clicking or a shortcut opens for
 input. File drops stage attachments, never submit a task. Dictation types
 on-device transcription (macOS's, or an optional downloaded Parakeet model)
-into the draft and never sends. Drafts
+into the draft and never sends; only Hold to ask, a shortcut held to speak and
+released to send, starts a new session from what it heard. Drafts
 survive closing, settings changes, connection errors and unavailable agents.
 
 Each session has its own work/unread indicator. Children stay under the parent.

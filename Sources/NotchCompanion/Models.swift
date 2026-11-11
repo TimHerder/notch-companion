@@ -679,6 +679,12 @@ struct NotchGeometry: Equatable {
     /// (`StageContent.bodyHeight`); the host sets it before staging.
     var stageBodyHeight: CGFloat = mascotStageBodyHeight
     var stageFrame: CGRect { islandFrame(width: Self.stageWidth, height: bandHeight + stageBodyHeight) }
+
+    /// Hold to ask: the listening island's body under the band, measured from
+    /// the words heard (`AskIsland.bodyHeight`). It is as wide as the glance.
+    var askBodyHeight: CGFloat = 0
+    var askFrame: CGRect { islandFrame(width: Self.glanceTargetWidth, height: bandHeight + askBodyHeight) }
+
     /// A physical camera's right edge in glance coordinates; band text starts after it.
     var glanceCameraMaxX: CGFloat? { hasHardware ? hardware.maxX - glanceFrame.minX : nil }
     var glanceCameraMinX: CGFloat? { hasHardware ? hardware.minX - glanceFrame.minX : nil }

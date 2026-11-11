@@ -285,6 +285,41 @@ import ImageIO
         check(model.geometry?.showsLiveActivity == false && close(panel.frame, model.geometry!.collapsedFrame),
               "the live shoulder retracts when the work stops")
 
+        // Hold to ask: the listening island opens without focus, grows with the
+        // words, and closes back to rest with them once the key is released.
+        // The window adds the flares' side margins and the pointer pull's room below the body.
+        func body() -> CGRect {
+            var frame = panel.frame.insetBy(dx: NotchPresentation.flareMargin, dy: 0)
+            frame.origin.y += NotchPull.reach + 1
+            frame.size.height -= NotchPull.reach + 1
+            return frame
+        }
+        model.setAskingForPreview("")
+        pump(0.7)
+        let listening = body()
+        check(model.asking && !model.expanded && close(listening, model.geometry!.askFrame) && listening.height > resting.height + 20,
+              "holding the shortcut opens the listening island \(model.geometry!.askFrame.size)")
+        check(!panel.isKeyWindow, "the listening island takes no keyboard focus")
+        model.quickAsk = String(repeating: "Compare both options and tell me which one ships sooner. ", count: 3)
+        pump(0.7)
+        check(close(body(), model.geometry!.askFrame) && body().height > listening.height + 10 && abs(body().maxY - listening.maxY) < 0.5,
+              "the island grows downward with the words (\(Int(listening.height)) → \(Int(body().height)))")
+        model.setAskingForPreview(nil)
+        pump(0.1)
+        check(model.quickAsk != nil, "the closing island keeps its words")
+        pump(0.6)
+        check(!model.asking && model.quickAsk == nil && close(body(), model.geometry!.collapsedFrame),
+              "releasing closes the island back to rest and clears its words")
+        host.show()
+        pump(0.7)
+        model.setAskingForPreview("")
+        pump(0.2)
+        check(model.expanded && close(body(), model.geometry!.expandedFrame), "a panel opened while it listens stays the presented tier")
+        model.setAskingForPreview(nil)
+        host.hide()
+        pump(0.6)
+        check(model.quickAsk == nil && close(body(), model.geometry!.collapsedFrame), "the panel closes back to rest")
+
         model.companionAppearance = .mascot
         // The first rendered mascot; with none rendered yet, Mascot shows the eyes.
         if let rendered = MascotCharacter.allCases.first(where: { MascotLibrary.library($0).isAvailable }) {
@@ -1637,6 +1672,28 @@ import ImageIO
                    name: "island-glance-choices-external", output: output)
         model.glancing = false
         model.requests = allRequests
+        // Hold to ask: the listening island with nothing heard yet, with two lines
+        // (the newest words lighter), and with a prompt past its six lines.
+        let question = "What is the weather like in Berlin tomorrow morning,"
+        for (variant, heard, volatile) in [("empty", "", ""), ("words", question, "and should I bring a jacket"),
+                                           ("long", String(repeating: question + " ", count: 8), "and one last thing")] {
+            for (name, base) in [("external", external), ("physical", notched)] where variant == "words" || name == "physical" {
+                model.dictation.setListeningForPreview(volatile: volatile, level: 0.7)
+                model.setAskingForPreview(heard)
+                var geometry = live(base)
+                geometry.askBodyHeight = model.askBodyHeight
+                model.geometry = geometry
+                model.notchPresentation = .ask(geometry)
+                try render(scene(geometry, model.notchPresentation, height: 190), size: NSSize(width: sceneWidth, height: 190),
+                           name: "island-ask-\(variant)-\(name)", output: output)
+            }
+        }
+        // Released: the words are settled and on their way as the island closes.
+        model.dictation.cancel()
+        model.setAskingForPreview(nil)
+        try render(scene(model.geometry!, model.notchPresentation, height: 190), size: NSSize(width: sceneWidth, height: 190),
+                   name: "island-ask-sent-physical", output: output)
+        model.quickAsk = nil
         // A filmstrip of the completion aura around the plain resting band.
         model.geometry = notched
         model.notchPresentation = .resting(notched)

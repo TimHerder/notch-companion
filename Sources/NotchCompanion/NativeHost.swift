@@ -62,6 +62,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         model.requestOpenPanel = { [weak self] in self?.show() }
         model.openFullSession = { [weak self] in self?.showFullSession() }
         model.dismissStage = { [weak self] in self?.setStaging(false) }
+        model.askingChanged = { [weak self] in self?.askingChanged() }
         // The panel never activates the app; without this the pointing-hand
         // and I-beam cursors over its controls are ignored.
         HoverCursor.allowInBackground()
@@ -80,12 +81,15 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
     /// Registers the chosen shortcuts, none while Settings records a new one.
     private func applyShortcuts() {
         guard let hotKeys, !isStopped else { return }
+        // A hold in progress would never hear its key come up once it is unregistered.
+        model.endQuickAsk()
         var unavailable = Set<ShortcutAction>()
         // Release every combination first, so swapping two never collides with itself.
         for action in ShortcutAction.allCases { hotKeys.unregister(action.hotKeyID) }
         for action in ShortcutAction.allCases {
             let shortcut = model.recordingShortcut == nil ? activeShortcut(action) : nil
-            let registered = hotKeys.register(action.hotKeyID, shortcut) { [weak self] in self?.perform(action) }
+            let registered = hotKeys.register(action.hotKeyID, shortcut, action: { [weak self] in self?.perform(action) },
+                                              released: action == .ask ? { [weak self] in self?.model.endQuickAsk() } : nil)
             if !registered { unavailable.insert(action) }
         }
         if model.recordingShortcut == nil { model.unavailableShortcuts = unavailable }
@@ -93,9 +97,9 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         statusItem?.button?.toolTip = open.map { "Notch Companion · \($0.spoken)" } ?? "Notch Companion · click to open"
     }
 
-    /// Without on-device speech the dictation shortcut (and its Settings row) is absent.
+    /// Without on-device speech the dictation shortcuts (and their Settings rows) are absent.
     private func activeShortcut(_ action: ShortcutAction) -> KeyShortcut? {
-        action == .dictate && !Dictation.isAvailable ? nil : model.shortcut(for: action)
+        action != .openPanel && !Dictation.isAvailable ? nil : model.shortcut(for: action)
     }
 
     private func perform(_ action: ShortcutAction) {
@@ -104,7 +108,21 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         case .dictate:
             guard !hasPresentedSheet, trackingMenus.isEmpty else { return }
             model.dictateNewSession()
+        case .ask:
+            guard !hasPresentedSheet, trackingMenus.isEmpty, !model.asking, !model.dictation.isActive else { return }
+            // The island is the whole surface while it listens: an open panel closes into it.
+            if model.expanded { hide(playSound: false) }
+            model.beginQuickAsk()
         }
+    }
+
+    /// Hold to ask opens the listening island and closes it again. It takes no
+    /// focus and plays no cue; a sent prompt plays the send cue.
+    private func askingChanged() {
+        guard !isStopped else { return }
+        if model.asking { notchPanel.orderFrontRegardless() }
+        updateGeometry(animated: true)
+        movePanel(animated: true)
     }
 
     /// A drop pops out of the top edge (or the camera) with the eyes in its
@@ -256,11 +274,16 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
                 self.hide()
             }
         }) { eventMonitors.append(monitor) }
-        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .rightMouseDown, .keyDown], handler: { [weak self] event in
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .rightMouseDown, .keyDown, .keyUp], handler: { [weak self] event in
             let consumed = MainActor.assumeIsolated {
                 guard let self else { return false }
                 if event.type == .leftMouseUp {
                     self.releasePress()
+                    return false
+                }
+                if event.type == .keyUp {
+                    // The hold shortcut's key came up while this app had the keyboard.
+                    if UInt32(event.keyCode) == self.activeShortcut(.ask)?.keyCode { self.model.endQuickAsk() }
                     return false
                 }
                 guard !self.hasPresentedSheet, self.trackingMenus.isEmpty else { return false }
@@ -329,6 +352,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         geometry.announcing = announcing
         if let announcement = model.announcement { geometry.announcementWidth = announcement.labelWidth }
         geometry.stageBodyHeight = model.stageBodyHeight
+        geometry.askBodyHeight = model.askBodyHeight
         guard previous != geometry else { return }
         model.geometry = geometry
         // Only retarget when the presented tier's own bounds change.
@@ -336,6 +360,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         switch target {
         case .expanded: unchanged = previous?.expandedFrame == geometry.expandedFrame
         case .glance: unchanged = previous?.glanceFrame == geometry.glanceFrame
+        case .ask: unchanged = previous?.askFrame == geometry.askFrame
         case .resting: unchanged = previous?.collapsedFrame == geometry.collapsedFrame
             && previous?.announcing == geometry.announcing
         case .stage: unchanged = previous?.stageFrame == geometry.stageFrame
@@ -373,8 +398,10 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
                              liveWidth: live.contentWidth, liveSessions: live.sessionIDs)
     }
 
-    private enum Target { case resting, glance, stage, expanded }
-    private var target: Target { model.expanded ? .expanded : model.glancing ? .glance : staging ? .stage : .resting }
+    private enum Target { case resting, glance, ask, stage, expanded }
+    private var target: Target {
+        model.expanded ? .expanded : model.asking ? .ask : model.glancing ? .glance : staging ? .stage : .resting
+    }
 
     /// Pressing the resting band or the glance's band squeezes the island a
     /// few points toward its centre, like pressing the Dynamic Island.
@@ -409,6 +436,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         switch target {
         case .expanded: destination = .expanded(geometry)
         case .glance: destination = .glance(geometry)
+        case .ask: destination = .ask(geometry)
         case .stage: destination = .stage(geometry)
         case .resting: destination = now < launchHoldsUntil ? .hello(geometry) : .resting(geometry)
         }
@@ -542,7 +570,12 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         } else if model.geometry?.stageBodyHeight != model.stageBodyHeight {
             // A question's answers, its next question or a late change summary reshape the stage.
             updateGeometry(animated: true)
+        } else if model.geometry?.askBodyHeight != model.askBodyHeight {
+            // The words being heard grow the listening island.
+            updateGeometry(animated: true)
         }
+        // The listening island closes with its words; they go once it has closed.
+        if model.quickAsk != nil, !model.asking, frameAnimation == nil { model.quickAsk = nil }
         let now = ProcessInfo.processInfo.systemUptime
         updateAnnouncement(now: now)
         if auraState.effect != nil, now >= auraEndsAt { stopAura() }
@@ -570,8 +603,10 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         updateDrowsiness(now: now)
         // While the band names a session, the eyes look over at the label.
         let lookingAtLabel = announcing && !model.expanded && !model.glancing && presentation.announce > 0.3
-        let target = lookingAtLabel
-            ? (model.reducedMotion ? .zero : CGSize(width: 3, height: 0.6))
+        // While it listens, they look down at the words.
+        let lookingAtWords = model.asking && !model.expanded
+        let target = lookingAtLabel || lookingAtWords
+            ? (model.reducedMotion ? .zero : lookingAtWords ? CGSize(width: 2, height: 2) : CGSize(width: 3, height: 0.6))
             : PointerGazeMotion.target(at: location, mascotCenter: center, screen: geometry.screen,
                                        reducedMotion: model.reducedMotion)
         let elapsed = now - (lastPointerSample ?? now - PointerGazeMotion.sampleInterval)
@@ -600,7 +635,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         if let action = interaction.update(now: now, insideTrigger: trigger.contains(location),
                                            insideRegion: region.contains(location),
                                            protected: hasPresentedSheet || !trackingMenus.isEmpty || editing || isContracting
-                                            || staging,
+                                            || staging || model.asking,
                                            openOnHover: model.openOnHover) {
             // Hover opening and closing play cues; drag entry remains silent.
             apply(action, playSound: !interaction.hasActiveDrag)
@@ -612,7 +647,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
     /// the eyes awake; otherwise they doze off after a quiet spell.
     private func updateDrowsiness(now: TimeInterval) {
         let mood = CompanionMood.resolve(overall: model.overallState, current: model.current)
-        let engaged = model.hovering || model.expanded || model.glancing || announcing || staging || model.announcement != nil
+        let engaged = model.hovering || model.expanded || model.glancing || model.asking || announcing || staging || model.announcement != nil
             || !mood.canDoze || model.receivingFile || !dragSources.isEmpty
         if engaged { lastEngagement = now }
         let drowsy = now < bootWakeAt || now - lastEngagement >= Self.dozeDelay
@@ -889,8 +924,9 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
             }
             startAura(announcement.kind)
             if model.updateStyle == .popup {
-                // An open glance already lists the session; only its edge lights.
-                if !model.glancing {
+                // An open glance already lists the session, and the listening
+                // island keeps the notch: only its edge lights.
+                if !model.glancing, !model.asking {
                     stageEndsAt = now + announcement.kind.stageDuration
                     setStaging(true)
                 }
@@ -910,7 +946,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
             // Answered from the stage (or elsewhere): a moment to see it land, then retract.
             stageEndsAt = min(stageEndsAt, now + 1.6)
         }
-        if staging, now >= stageEndsAt || model.expanded || model.glancing || model.announcement == nil {
+        if staging, now >= stageEndsAt || model.expanded || model.glancing || model.asking || model.announcement == nil {
             setStaging(false)
         }
         if !announcing, !staging, let announcement = model.announcement, announcement.id == shownAnnouncementID,

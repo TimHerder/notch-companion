@@ -1,4 +1,5 @@
 import AVFoundation
+import Accelerate
 import Combine
 import Speech
 
@@ -34,6 +35,9 @@ final class Dictation: ObservableObject {
     @Published private(set) var awaitingPermission = false
     /// Started from the notch, so collapsing the notch stops it.
     private(set) var fromNotch = false
+    /// How loud the microphone is, 0 to 1. The listening waveform samples it on
+    /// its own clock, so it is not published.
+    private(set) var level: CGFloat = 0
 
     /// Final text for a session's draft.
     var deliver: ((String, String) -> Void)?
@@ -47,6 +51,13 @@ final class Dictation: ObservableObject {
     private var preview: Task<Void, Never>?
 
     var isActive: Bool { phase != .idle }
+
+    /// Fixtures render listening without a microphone; `cancel` ends it.
+    func setListeningForPreview(volatile: String, level: CGFloat) {
+        phase = .listening
+        volatileText = volatile
+        self.level = level
+    }
 
     /// Returns once the run has ended and its last words were delivered.
     func finished() async {
@@ -207,7 +218,13 @@ final class Dictation: ObservableObject {
         guard microphone.sampleRate > 0, microphone.channelCount > 0 else { throw DictationError("No microphone is available.") }
         guard let converter = AVAudioConverter(from: microphone, to: format) else { throw DictationError("Dictation cannot read this microphone's audio.") }
         engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: microphone,
-                                    block: Self.tap(converter: converter, format: format, receive: receive))
+                                    block: Self.tap(converter: converter, format: format, level: { [weak self] rms in
+            Task { @MainActor in
+                guard let self, self.generation == generation else { return }
+                // Eased, so the bars swell and settle rather than jump between buffers.
+                self.level += (Self.loudness(rms) - self.level) * 0.6
+            }
+        }, receive: receive))
         self.engine = engine
         endInput = end
         // A microphone unplugged or switched stops the engine; keep what was heard and say why.
@@ -254,14 +271,27 @@ final class Dictation: ObservableObject {
         engine = nil
         endInput?()
         endInput = nil
+        level = 0
+    }
+
+    /// Speech at a laptop's microphone sits around -40 to -20 dBFS; -55 is quiet, -15 full.
+    nonisolated static func loudness(_ rms: Float) -> CGFloat {
+        CGFloat(min(1, max(0, (20 * log10(max(rms, 1e-7)) + 55) / 40)))
     }
 
     /// Runs on the audio thread, so it captures nothing main-actor isolated.
+    /// `level` hears each buffer's RMS as the microphone delivered it.
     nonisolated static func tap(converter: AVAudioConverter, format: AVAudioFormat,
+                                level: (@Sendable (Float) -> Void)? = nil,
                                 receive: @escaping @Sendable (AVAudioPCMBuffer) -> Void) -> AVAudioNodeTapBlock {
         // Without priming, every converted buffer starts a little late and the timeline drifts.
         converter.primeMethod = .none
         return { buffer, _ in
+            if let level, let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 {
+                var rms: Float = 0
+                vDSP_rmsqv(samples, 1, &rms, vDSP_Length(buffer.frameLength))
+                level(rms)
+            }
             let frames = AVAudioFrameCount((Double(buffer.frameLength) * format.sampleRate / buffer.format.sampleRate).rounded(.up))
             guard let converted = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: max(frames, 1)) else { return }
             var consumed = false

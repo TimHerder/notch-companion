@@ -130,7 +130,20 @@ private development hasn't been re-run against this source snapshot. Known limit
   fixtures in all three designs (`settings-parakeet-560`, `compact-welcome-3`). Not yet checked live: speaking into a physical
   microphone, the Microphone permission prompt, a model download started from
   Settings or the welcome, a Parakeet preview while speaking, the idle unload, a failed load
-  followed by Try again, or a shortcut another app already holds. FluidAudio
+  followed by Try again, or a shortcut another app already holds.
+  Hold to ask: sending the heard words as a new session with the default
+  harness and folder while the panel stays closed, keeping words that cannot be
+  sent in a draft, the island's height per line and its six-line limit, its
+  spring and close, and the microphone level are covered by offline tests; the
+  island by offscreen fixtures (`island-ask-*`); and the real host opening,
+  growing, closing and clearing it by `--island-smoke` on 2026-11-11 (a
+  notched MacBook, macOS 27), entered through a fixture hook rather than the
+  key or a microphone. In that run 29 older smoke checks fail, as they do on
+  `main`: most compare the window, which now carries the flares' margins and
+  the pointer pull's room, with the body. Not yet checked live: holding and releasing the
+  physical shortcut (Carbon's release event), speaking into the island, the
+  bars following a voice, a Parakeet preview in it, or a send to a real harness.
+  FluidAudio
   is pinned, but it fetches the model from the Hugging Face repository's
   `main`, so a later upstream change to the weights would reach new downloads.
 

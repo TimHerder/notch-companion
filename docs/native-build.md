@@ -290,8 +290,10 @@ real timelines. `scripts/render-ui-fixtures.sh --island-only` renders just
 those for faster iteration. Fixed-time stills are not a frame-rate recording.
 They also cover the live activity (working,
 waiting and alone, on both displays), the interactive glance (approval and
-choices), the first-run hello, the dozing eyes in `eyes-expressions`, and
+choices), Hold to ask's listening island (`island-ask-empty`, `-words`, `-long`
+past its six lines, `-sent`), the first-run hello, the dozing eyes in `eyes-expressions`, and
 live-shoulder and panel-spring morph sheets. `eyes-motion` samples nodding off,
 the startled wake, finishing sparkles and the writing waveform, and
 `island-working-rim` the rim comet at fixed lap positions. `--island-smoke` drives the real
-host and windows, including the launch unfurl, the failure shake and the live shoulder.
+host and windows, including the launch unfurl, the failure shake, the live shoulder
+and the listening island (opened without a microphone).
