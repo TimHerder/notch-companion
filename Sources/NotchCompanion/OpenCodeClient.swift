@@ -210,6 +210,8 @@ final class OpenCodeClient: RuntimeTransport {
             result["session_id"] = sid; result["stored_session_id"] = sid; result["profile_id"] = profileID
             result["cwd"] = cwd; result["info"] = sessionInfo; result["catalog"] = models; result["activity_verified"] = true
             result["hosts_delegation"] = hostsMCP
+            // A name generated before a restart no longer arrives as an event.
+            if let title = Self.generatedTitle(info["title"]) { result["title"] = title }
             return result
         }
         let sid = params["session_id"] as? String ?? ""
@@ -472,6 +474,13 @@ final class OpenCodeClient: RuntimeTransport {
         }
     }
 
+    /// A native title, unless it is the dated placeholder an unnamed session carries.
+    static func generatedTitle(_ value: Any?) -> String? {
+        guard let title = value as? String,
+              title.range(of: #"^(New|Child) session - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$"#, options: .regularExpression) == nil else { return nil }
+        return title
+    }
+
     private func receive(_ frame: [String: Any], cwd: String) {
         guard let type = frame["type"] as? String else { fail(AppError("OpenCode sent an invalid event.")); return }
         if type == "server.connected" { streamReady.insert(cwd); streamWaiters.removeValue(forKey: cwd)?.resume(); return }
@@ -494,8 +503,7 @@ final class OpenCodeClient: RuntimeTransport {
             event("runtime.notice", sid: sid, ["message": "OpenCode reported a native turn error. Checking its final state."])
         }
         // OpenCode names an untitled session after its first prompt: 2.x as session.renamed, 1.x in session.updated's info.
-        if sid == owner, let title = type == "session.renamed" ? props["title"] as? String : type == "session.updated" ? info["title"] as? String : nil,
-           title.range(of: #"^(New|Child) session - \d{4}-"#, options: .regularExpression) == nil {
+        if sid == owner, let title = Self.generatedTitle(type == "session.renamed" ? props["title"] : type == "session.updated" ? info["title"] : nil) {
             event("session.title", sid: sid, ["title": title])
         }
         if type == "session.status", let status = props["status"] as? [String: Any] {

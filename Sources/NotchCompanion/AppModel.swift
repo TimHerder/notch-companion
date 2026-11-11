@@ -2018,6 +2018,8 @@ final class AppModel: ObservableObject {
         }
         update(localID) { target in
             target.runtimeID = sid
+            // A name the runtime gave the session while the app was away.
+            target.adoptRuntimeTitle(result["title"])
             if let info = result["info"] as? [String: Any] {
                 var snapshot = target.runtimeInfo ?? RuntimeSessionInfo()
                 snapshot.merge(info, runtime: target.runtime)
@@ -2176,9 +2178,7 @@ final class AppModel: ObservableObject {
             // The runtime's running total for the current turn replaces any earlier report.
             if let tokens = payload["turn_tokens"] as? Int, tokens >= 0, let turnID { sessions[index].turnTokens[turnID] = tokens }
         case "session.title":
-            // A title the user or a delegator chose stays.
-            let title = (payload["title"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if sessions[index].titleIsAutomatic, !title.isEmpty { sessions[index].title = String(title.prefix(160)) }
+            sessions[index].adoptRuntimeTitle(payload["title"])
         case "runtime.notice":
             errorMessage = EventValue.string(payload["message"])
             turnNotices[localID] = errorMessage

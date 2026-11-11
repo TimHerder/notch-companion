@@ -247,12 +247,15 @@ and reports the name as `session.title`. The app applies it only while the
 title is still automatic (`titleIsAutomatic`, saved; older entries decode as
 chosen), so a rename is never replaced and stays local. Delegated children keep
 their delegator's title. The other runtimes are sent the automatic title too,
-as their native name.
+as their native name. A title that reads exactly `New session` is the
+placeholder however it got there: the next send replaces it. A create or resume
+result may carry `title` (OpenCode's, for a name generated while the app was
+away), applied by the same rule.
 
 | Runtime | Where the name comes from |
 | --- | --- |
 | Claude Code | Print mode names a session only on request: the first prompt of a session created without a title also sends the control request `generate_session_title {description: prompt, persist: true}`, which saves the name in the native transcript. It is optional: unanswered after 60 seconds or rejected by an older CLI, the prompt's opening words stay. |
-| OpenCode | A session created without a `title` gets the server's name after its first prompt: `session.renamed` (2.x) or `session.updated`'s `info.title` (1.x). The dated placeholder (`New session - <ISO time>`) is never reported. |
+| OpenCode | A session created without a `title` gets the server's name after its first prompt: `session.renamed` (2.x) or `session.updated`'s `info.title` (1.x). The dated placeholder (`New session - <ISO time>`) is never reported. Resume returns the saved name as `title`. |
 | Hermes | Its own `session.title` event (a derived title first, then the model's). |
 | Antigravity, Cursor, DeepSeek | ACP `session_info_update` with a `title`. |
 | Codex, Pi, OpenClaw | None (`namesOwnSessions` is false). Codex app-server leaves a thread unnamed (its terminal UI names threads client-side), Pi only has names set by `/name` or the host, and OpenClaw derives a label from the first message. The prompt's opening words stay, here and as the native name. |

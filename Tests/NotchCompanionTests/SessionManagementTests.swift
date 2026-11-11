@@ -72,12 +72,24 @@ final class SessionManagementTests: XCTestCase {
         XCTAssertEqual(model.current?.title, "My name")
     }
 
+    func testANameReportedWhenTheRuntimeOpensReplacesAnAutomaticTitle() async {
+        let (model, transport, file) = fixture()
+        defer { cleanUp(model, file) }
+        model.sessions[0].runtimeID = nil
+        transport.openedTitle = "Named while away"
+        await model.connect()
+        model.draft = "Fix the flaky login test in CI"
+        await model.send()
+        XCTAssertEqual(model.current?.title, "Named while away")
+    }
+
     func testAChosenTitleIsSentAtCreateAndKept() async {
         let (model, transport, file) = fixture()
         defer { cleanUp(model, file) }
         model.sessions[0].runtimeID = nil
         await model.connect()
         model.renameSession(model.currentID ?? "", title: "Release notes")
+        transport.openedTitle = "Runtime name"
         model.draft = "Draft them"
         await model.send()
         XCTAssertEqual(transport.created.first?["title"] as? String, "Release notes")
@@ -579,6 +591,7 @@ private final class ManagementTransport: HermesTransport {
     var holdPrompt = false
     var holdAnswer = false
     var created: [[String: Any]] = []
+    var openedTitle: String?
     var promptWaiter: CheckedContinuation<[String: Any], Error>?
     var answerWaiter: CheckedContinuation<[String: Any], Error>?
 
@@ -592,7 +605,10 @@ private final class ManagementTransport: HermesTransport {
         onConnectionChange?(false, nil)
     }
     func request(_ method: String, params: [String: Any]) async throws -> [String: Any] {
-        if method == "session.create" { created.append(params); return ["session_id": "parent", "stored_session_id": "stored"] }
+        if method == "session.create" {
+            created.append(params)
+            return ["session_id": "parent", "stored_session_id": "stored", "title": openedTitle].compactMapValues { $0 }
+        }
         if method == "prompt.submit", holdPrompt { return try await withCheckedThrowingContinuation { promptWaiter = $0 } }
         if method == "clarify.respond" || method == "approval.respond" {
             answerCount += 1

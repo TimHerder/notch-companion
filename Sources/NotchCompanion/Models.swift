@@ -272,6 +272,11 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var title: String = "New session"
     /// The title is still the first prompt's opening words, so the runtime's own name may replace it.
     var titleIsAutomatic: Bool = false
+    /// Takes the runtime's own name for the session; a title somebody chose stays.
+    mutating func adoptRuntimeTitle(_ value: Any?) {
+        let name = (value as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if titleIsAutomatic, !name.isEmpty { title = String(name.prefix(160)) }
+    }
     var state: WorkState = .idle
     var messages: [ChatMessage] = []
     var tools: [ToolActivity] = []
