@@ -10,10 +10,25 @@ import XCTest
 @MainActor private final class ShortcutTransport: RuntimeTransport {
     var onEvent: ((String, [String: Any]) -> Void)?
     var onConnectionChange: ((Bool, String?) -> Void)?
+    var sent: [String] = []
+    /// A request for this method waits for `finish`.
+    var pausedMethod: String?
+    var pending: CheckedContinuation<[String: Any], Error>?
     func connect() async throws { onConnectionChange?(true, nil) }
-    func disconnect() { onConnectionChange?(false, nil) }
-    func request(_ method: String, params: [String: Any]) async throws -> [String: Any] { [:] }
+    func disconnect() { finish(.failure(AppError("Disconnected fixture"))); onConnectionChange?(false, nil) }
+    func request(_ method: String, params: [String: Any]) async throws -> [String: Any] {
+        if method == "prompt.submit", let text = params["text"] as? String { sent.append(text) }
+        if method == pausedMethod { return try await withCheckedThrowingContinuation { pending = $0 } }
+        return method == "session.create" ? ["session_id": "live", "stored_session_id": "saved", "messages": []] : [:]
+    }
+    func finish(_ result: Result<[String: Any], Error>) {
+        let continuation = pending
+        pending = nil
+        continuation?.resume(with: result)
+    }
 }
+
+private final class HeardLevel: @unchecked Sendable { var rms: Float = 0 }
 
 @MainActor final class ShortcutDictationTests: XCTestCase {
     private func key(_ code: Int, _ characters: String, _ flags: NSEvent.ModifierFlags) -> NSEvent {
@@ -38,13 +53,14 @@ import XCTest
     }
 
     func testRecorderCancelsClearsRefusesAndNeverDuplicatesTheOtherAction() {
-        var current: [ShortcutAction: KeyShortcut] = [.openPanel: .openPanelDefault, .dictate: .dictateDefault]
+        var current: [ShortcutAction: KeyShortcut] = [.openPanel: .openPanelDefault, .dictate: .dictateDefault, .ask: .askDefault]
         let decide = { (event: NSEvent) in ShortcutRecording.decide(event, for: .dictate, current: { current[$0] }) }
         XCTAssertEqual(decide(key(kVK_Escape, "\u{1b}", [])), .cancel)
         XCTAssertEqual(decide(key(kVK_Delete, "\u{7f}", [])), .clear)
         XCTAssertEqual(decide(key(kVK_ForwardDelete, "", [])), .clear)
         XCTAssertEqual(decide(key(kVK_ANSI_A, "a", [])), .refuse("Add ⌃, ⌥ or ⌘"))
         XCTAssertEqual(decide(key(kVK_Space, " ", [.control, .option])), .refuse("Used by Open the notch"))
+        XCTAssertEqual(decide(key(kVK_ANSI_A, "a", [.control, .option])), .refuse("Used by Hold to ask"))
         XCTAssertEqual(decide(key(kVK_ANSI_D, "d", [.control, .option])),
                        .set(KeyShortcut(keyCode: UInt32(kVK_ANSI_D), modifiers: UInt32(controlKey | optionKey), key: "D")))
         // Another layout labels the same key differently; it is still the same combination.
@@ -67,6 +83,8 @@ import XCTest
         let model = open()
         XCTAssertEqual(model.openShortcut, .openPanelDefault)
         XCTAssertEqual(model.dictateShortcut, .dictateDefault)
+        XCTAssertEqual(model.askShortcut, .askDefault)
+        XCTAssertEqual(Set(ShortcutAction.allCases.map(\.hotKeyID)).count, 3, "Each action registers under its own hot key")
         XCTAssertTrue(model.showDictation)
         XCTAssertNil(model.dictationLanguage, "Dictation follows the system language until one is chosen")
         XCTAssertEqual(model.dictationEngine, .system, "macOS dictation is the default; Parakeet is opt-in")
@@ -74,6 +92,8 @@ import XCTest
         let custom = KeyShortcut(keyCode: UInt32(kVK_ANSI_K), modifiers: UInt32(cmdKey | shiftKey), key: "K")
         model.setShortcut(custom, for: .openPanel)
         model.setShortcut(nil, for: .dictate)
+        let hold = KeyShortcut(keyCode: UInt32(kVK_F6), modifiers: 0, key: "F6")
+        model.setShortcut(hold, for: .ask)
         model.dictationLanguage = "en-US"
         model.dictationEngine = .parakeet
         model.shutdown()
@@ -81,6 +101,7 @@ import XCTest
         let reopened = open()
         XCTAssertEqual(reopened.openShortcut, custom)
         XCTAssertNil(reopened.dictateShortcut, "Turning a shortcut off must not bring the default back")
+        XCTAssertEqual(reopened.askShortcut, hold)
         XCTAssertEqual(reopened.dictationLanguage, "en-US")
         XCTAssertEqual(reopened.dictationEngine, .parakeet)
         reopened.shutdown()
@@ -227,6 +248,212 @@ import XCTest
         XCTAssertEqual(model.draft, "Regarding the crash: it happens on launch")
         // Nothing held: it returns at once.
         await model.dictationDelivered(to: id)
+    }
+
+    /// A model whose default harness is set up (or not), with one session already used.
+    private func askModel(ready: Bool) async -> (AppModel, ShortcutTransport, () -> Void) {
+        let suite = "notch-ask-\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: suite)!
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        if ready {
+            preferences.set([RuntimeKind.hermes.rawValue: RuntimeRoute.defaultProfile(.hermes, defaults: preferences)],
+                            forKey: "runtime.configuredProfiles")
+        }
+        let transport = ShortcutTransport()
+        let model = AppModel(storageURL: folder.appendingPathComponent("sessions.json"), playsSounds: false,
+                             client: transport, preferences: preferences)
+        model.sessions[0].messages = [ChatMessage(role: "user", text: "Earlier work")]
+        await model.connect()
+        return (model, transport, {
+            model.shutdown()
+            preferences.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: folder)
+        })
+    }
+
+    func testHoldToAskSendsTheHeardWordsAsANewSessionAndLeavesThePanelClosed() async throws {
+        let (model, transport, cleanUp) = await askModel(ready: true)
+        defer { cleanUp() }
+        var opened = 0
+        model.activatePanel = { opened += 1 }
+        model.requestOpenPanel = { opened += 1 }
+        let earlier = model.sessions[0].id
+
+        // A tap on the shortcut hears nothing: no session, no panel.
+        await model.sendQuickAsk("  \n", failed: false)
+        XCTAssertEqual(model.sessions.count, 1)
+
+        await model.sendQuickAsk(" What changed in the last release? ", failed: false)
+        XCTAssertEqual(transport.sent, ["What changed in the last release?"])
+        XCTAssertEqual(model.sessions.count, 2)
+        let session = try XCTUnwrap(model.current)
+        XCTAssertNotEqual(session.id, earlier, "The question never joins the session that was open")
+        XCTAssertEqual(session.runtime, model.defaultRuntime)
+        XCTAssertEqual(session.workspacePath ?? model.workspacePath, model.workspacePath, "A new session's default folder")
+        XCTAssertEqual(session.title, "What changed in the last release?")
+        XCTAssertEqual(session.messages.map(\.text), ["What changed in the last release?"])
+        XCTAssertEqual(session.state, .working)
+        XCTAssertEqual(session.draft, "")
+        XCTAssertEqual(opened, 0, "The notch stays closed; the session runs in the background")
+    }
+
+    func testHoldToAskKeepsWordsItCannotSendInADraftAndOpensIt() async throws {
+        let (model, transport, cleanUp) = await askModel(ready: true)
+        defer { cleanUp() }
+        var opened = 0
+        model.activatePanel = { opened += 1 }
+
+        // A run that failed may have lost words: review them beside the failure.
+        await model.sendQuickAsk("Half a question", failed: true)
+        XCTAssertEqual(model.draft, "Half a question")
+        XCTAssertEqual(model.sessions.count, 2)
+        XCTAssertEqual(opened, 1)
+        // A failure before any word (no microphone access) opens one reused draft that says why.
+        await model.sendQuickAsk("", failed: true)
+        await model.sendQuickAsk("", failed: true)
+        XCTAssertEqual(model.sessions.count, 3)
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(opened, 3)
+        XCTAssertTrue(transport.sent.isEmpty)
+
+        // No harness is set up yet: the words wait in the draft where setup is offered.
+        let (fresh, freshTransport, cleanUpFresh) = await askModel(ready: false)
+        defer { cleanUpFresh() }
+        fresh.activatePanel = { opened += 1 }
+        await fresh.sendQuickAsk("Hello there", failed: false)
+        XCTAssertEqual(fresh.draft, "Hello there")
+        XCTAssertEqual(opened, 4)
+        XCTAssertTrue(freshTransport.sent.isEmpty)
+    }
+
+    private func waitForPausedRequest(_ transport: ShortcutTransport) async throws {
+        for _ in 0..<500 where transport.pending == nil { try await Task.sleep(for: .milliseconds(10)) }
+        _ = try XCTUnwrap(transport.pending)
+    }
+
+    func testHoldToAskStaysClosedWhenTheRuntimeAcceptedWithoutAcknowledging() async throws {
+        let (model, transport, cleanUp) = await askModel(ready: true)
+        defer { cleanUp() }
+        var opened = 0
+        model.activatePanel = { opened += 1 }
+        transport.pausedMethod = "prompt.submit"
+        let ask = Task { await model.sendQuickAsk("Is the build green?", failed: false) }
+        try await waitForPausedRequest(transport)
+        // The turn starts, then the acknowledgement of the request that started it is lost.
+        model.receive("message.start", payload: ["session_id": "live"])
+        transport.finish(.failure(HermesClientError.timedOut("prompt.submit")))
+        await ask.value
+        XCTAssertEqual(model.current?.messages.first?.text, "Is the build green?")
+        XCTAssertNil(model.current?.pendingSubmission)
+        XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(opened, 0, "A running session stays in the background")
+    }
+
+    func testHoldToAskReturnsToItsOwnDraftWhenTheSendFailsAfterTheSelectionMoved() async throws {
+        let (model, transport, cleanUp) = await askModel(ready: true)
+        defer { cleanUp() }
+        var opened = 0
+        model.activatePanel = { opened += 1 }
+        let earlier = model.sessions[0].id
+        transport.pausedMethod = "session.create"
+        let ask = Task { await model.sendQuickAsk("Summarize today's changes", failed: false) }
+        try await waitForPausedRequest(transport)
+        let asked = try XCTUnwrap(model.currentID)
+        XCTAssertNotEqual(asked, earlier)
+        model.selectSession(earlier)
+        transport.finish(.failure(AppError("Setup failed")))
+        await ask.value
+        XCTAssertEqual(model.currentID, asked, "The panel opens on the question's own draft")
+        XCTAssertEqual(model.draft, "Summarize today's changes")
+        XCTAssertEqual(model.errorMessage?.contains("Setup failed"), true, "Its reason survives the reselection")
+        XCTAssertEqual(opened, 1)
+    }
+
+    func testAFailureDeliversTheWordsHeardButNotYetFinal() {
+        let dictation = Dictation()
+        var delivered: [String] = []
+        dictation.deliver = { delivered.append("\($0): \($1)") }
+        dictation.setListeningForPreview(volatile: "half a sentence", level: 0.4, sessionID: "draft")
+        dictation.fail(CancellationError())
+        XCTAssertEqual(delivered, ["draft: half a sentence"])
+        XCTAssertFalse(dictation.isActive)
+        XCTAssertEqual(dictation.volatileText, "")
+        XCTAssertNotNil(dictation.failure)
+        // Nothing unfinished, nothing delivered.
+        dictation.setListeningForPreview(volatile: "", level: 0, sessionID: "draft")
+        dictation.fail(CancellationError())
+        XCTAssertEqual(delivered.count, 1)
+    }
+
+    func testListeningIslandGrowsWithTheWordsAndStopsAtSixLines() {
+        var geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1512, height: 982), topInset: 32,
+                                     leftArea: CGRect(x: 0, y: 950, width: 663.5, height: 32),
+                                     rightArea: CGRect(x: 848.5, y: 950, width: 663.5, height: 32), indicatorCount: 1)
+        let line = AskIsland.lineHeight
+        XCTAssertEqual(AskIsland.bodyHeight("Listening…"), 6 + line + 14)
+        let sentence = "Compare both options and tell me which one ships sooner. "
+        let few = AskIsland.lines(String(repeating: sentence, count: 3))
+        XCTAssertTrue((2...5).contains(few), "\(few)")
+        XCTAssertEqual(AskIsland.bodyHeight(String(repeating: sentence, count: 3)), 6 + CGFloat(few) * line + 14)
+        XCTAssertEqual(AskIsland.bodyHeight(String(repeating: sentence, count: 40)), 6 + 6 * line + 14, "A long prompt stops growing")
+
+        geometry.askBodyHeight = AskIsland.bodyHeight("Listening…")
+        let frame = geometry.askFrame
+        XCTAssertEqual(frame.height, geometry.bandHeight + 6 + line + 14)
+        XCTAssertEqual(frame.maxY, geometry.screen.maxY)
+        XCTAssertEqual(frame.minX, geometry.glanceFrame.minX)
+        XCTAssertEqual(frame.width, geometry.glanceFrame.width)
+        XCTAssertTrue(frame.contains(geometry.collapsedFrame))
+
+        // It opens and grows on the island spring and closes on the quick ease-out, like the glance.
+        let ask = NotchPresentation.ask(geometry)
+        XCTAssertEqual(ask.peek, 1)
+        XCTAssertEqual(ask.progress, 0)
+        XCTAssertEqual(UnifiedNotchMotion(from: .resting(geometry), to: ask, startedAt: 0).curve, .spring)
+        var taller = geometry
+        taller.askBodyHeight = AskIsland.bodyHeight(String(repeating: sentence, count: 3))
+        let grow = UnifiedNotchMotion(from: ask, to: .ask(taller), startedAt: 0)
+        XCTAssertEqual(grow.curve, .spring)
+        XCTAssertEqual(grow.presentation(at: 0.2).frame.maxY, geometry.screen.maxY, "It grows downward from the screen edge")
+        XCTAssertEqual(grow.presentation(at: 10).frame, taller.askFrame)
+        let close = UnifiedNotchMotion(from: ask, to: .resting(geometry), startedAt: 0)
+        XCTAssertEqual(close.curve, .easeOut)
+        XCTAssertEqual(close.duration, UnifiedNotchMotion.collapseDuration)
+    }
+
+    func testListeningIslandShowsFinalizedWordsThenThoseStillBeingHeard() async {
+        let (model, _, cleanUp) = await askModel(ready: true)
+        defer { cleanUp() }
+        XCTAssertEqual(model.askBodyHeight, 0, "No island, no height")
+        model.setAskingForPreview("")
+        XCTAssertEqual(model.askText, "")
+        XCTAssertEqual(model.askHint, "Listening…")
+        XCTAssertEqual(model.askBodyHeight, AskIsland.bodyHeight("Listening…"))
+        model.dictation.setListeningForPreview(volatile: "tomorrow morning", level: 0.5)
+        model.quickAsk = "What is the weather"
+        XCTAssertEqual(model.askText, "What is the weather tomorrow morning")
+        // Ended the way a release ends it: the closing island keeps its finalized words.
+        model.dictation.cancel()
+        model.setAskingForPreview(nil)
+        XCTAssertFalse(model.asking)
+        XCTAssertEqual(model.askText, "What is the weather")
+    }
+
+    func testMicrophoneLevelFollowsTheBufferAsDelivered() throws {
+        XCTAssertEqual(Dictation.loudness(0), 0)
+        XCTAssertEqual(Dictation.loudness(1), 1)
+        XCTAssertLessThan(Dictation.loudness(0.01), Dictation.loudness(0.1))
+        XCTAssertGreaterThan(Dictation.loudness(0.01), 0, "Quiet speech still moves the bars")
+
+        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false))
+        let converter = try XCTUnwrap(AVAudioConverter(from: format, to: format))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_600))
+        buffer.frameLength = 1_600
+        for index in 0..<1_600 { buffer.floatChannelData![0][index] = index % 2 == 0 ? 0.5 : -0.5 }
+        let heard = HeardLevel()
+        let tap = Dictation.tap(converter: converter, format: format, level: { heard.rms = $0 }) { _ in }
+        tap(buffer, AVAudioTime(sampleTime: 0, atRate: 16_000))
+        XCTAssertEqual(heard.rms, 0.5, accuracy: 0.001)
     }
 
     func testDictatedWordsJoinTheDraftWithOneSpace() {

@@ -11,6 +11,7 @@ struct KeyShortcut: Codable, Equatable {
 
     static let openPanelDefault = KeyShortcut(keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | optionKey), key: "Space")
     static let dictateDefault = KeyShortcut(keyCode: UInt32(kVK_ANSI_V), modifiers: UInt32(controlKey | optionKey), key: "V")
+    static let askDefault = KeyShortcut(keyCode: UInt32(kVK_ANSI_A), modifiers: UInt32(controlKey | optionKey), key: "A")
 
     /// `⌃⌥Space`, in the order macOS menus use.
     var display: String {
@@ -72,12 +73,32 @@ struct KeyShortcut: Codable, Equatable {
 enum ShortcutAction: String, CaseIterable, Identifiable {
     case openPanel
     case dictate
+    /// Held rather than pressed: it listens while down and sends on release.
+    case ask
 
     var id: String { rawValue }
     var key: String { "notch.shortcut.\(rawValue)" }
-    var hotKeyID: UInt32 { self == .openPanel ? 1 : 2 }
-    var defaultShortcut: KeyShortcut { self == .openPanel ? .openPanelDefault : .dictateDefault }
-    var title: String { self == .openPanel ? "Open the notch" : "Dictate a new session" }
+    var hotKeyID: UInt32 {
+        switch self {
+        case .openPanel: 1
+        case .dictate: 2
+        case .ask: 3
+        }
+    }
+    var defaultShortcut: KeyShortcut {
+        switch self {
+        case .openPanel: .openPanelDefault
+        case .dictate: .dictateDefault
+        case .ask: .askDefault
+        }
+    }
+    var title: String {
+        switch self {
+        case .openPanel: "Open the notch"
+        case .dictate: "Dictate a new session"
+        case .ask: "Hold to ask"
+        }
+    }
 
     /// A cleared shortcut is stored as empty data, so it stays off instead of
     /// returning to the default.
@@ -120,9 +141,12 @@ final class CompanionHotKeys {
     private var handlerRef: EventHandlerRef?
     private var hotKeys: [UInt32: EventHotKeyRef] = [:]
     private var actions: [UInt32: () -> Void] = [:]
+    private var releases: [UInt32: () -> Void] = [:]
 
     init() {
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        let eventTypes = [kEventHotKeyPressed, kEventHotKeyReleased].map {
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32($0))
+        }
         let context = Unmanaged.passUnretained(self).toOpaque()
         InstallEventHandler(GetApplicationEventTarget(), { _, event, context in
             guard let event, let context else { return OSStatus(eventNotHandledErr) }
@@ -130,18 +154,19 @@ final class CompanionHotKeys {
             guard GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                                     nil, MemoryLayout<EventHotKeyID>.size, nil, &id) == noErr else { return OSStatus(eventNotHandledErr) }
             let hotKeys = Unmanaged<CompanionHotKeys>.fromOpaque(context).takeUnretainedValue()
+            let released = GetEventKind(event) == UInt32(kEventHotKeyReleased)
             return MainActor.assumeIsolated {
-                guard let action = hotKeys.actions[id.id] else { return OSStatus(eventNotHandledErr) }
+                guard let action = released ? hotKeys.releases[id.id] : hotKeys.actions[id.id] else { return OSStatus(eventNotHandledErr) }
                 action()
                 return noErr
             }
-        }, 1, &eventType, context, &handlerRef)
+        }, eventTypes.count, eventTypes, context, &handlerRef)
     }
 
     /// Replaces the shortcut under `id`; false when macOS refused it (another
-    /// app holds the combination).
+    /// app holds the combination). `released` runs when its key comes back up.
     @discardableResult
-    func register(_ id: UInt32, _ shortcut: KeyShortcut?, action: @escaping () -> Void) -> Bool {
+    func register(_ id: UInt32, _ shortcut: KeyShortcut?, action: @escaping () -> Void, released: (() -> Void)? = nil) -> Bool {
         unregister(id)
         guard let shortcut, handlerRef != nil else { return shortcut == nil }
         var ref: EventHotKeyRef?
@@ -150,12 +175,14 @@ final class CompanionHotKeys {
         guard status == noErr, let ref else { return false }
         hotKeys[id] = ref
         actions[id] = action
+        releases[id] = released
         return true
     }
 
     func unregister(_ id: UInt32) {
         if let ref = hotKeys.removeValue(forKey: id) { UnregisterEventHotKey(ref) }
         actions[id] = nil
+        releases[id] = nil
     }
 
     func unregisterAll() {

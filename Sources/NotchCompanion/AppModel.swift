@@ -124,6 +124,17 @@ final class AppModel: ObservableObject {
     @Published var dictateShortcut: KeyShortcut? {
         didSet { ShortcutAction.dictate.save(dictateShortcut, preferences); shortcutsChanged?() }
     }
+    @Published var askShortcut: KeyShortcut? {
+        didSet { ShortcutAction.ask.save(askShortcut, preferences); shortcutsChanged?() }
+    }
+    /// Hold to ask: the words finalized so far, shown in the notch's listening
+    /// island. They stay while the island closes; the host clears them after.
+    @Published var quickAsk: String?
+    /// The hold shortcut is down, or its last words are being finalized: the
+    /// listening island is the presented tier.
+    @Published private(set) var asking = false { didSet { if oldValue != asking { askingChanged?() } } }
+    var askingChanged: (() -> Void)?
+    static let quickAskID = "quick-ask"
     /// The one Settings recorder waiting for keys; no shortcut fires meanwhile.
     @Published var recordingShortcut: ShortcutAction? { didSet { if oldValue != recordingShortcut { shortcutsChanged?() } } }
     /// Shortcuts macOS refused because another app holds them.
@@ -350,6 +361,7 @@ final class AppModel: ObservableObject {
         dictation.$sessionID.assign(to: &$dictatingSessionID)
         openShortcut = ShortcutAction.openPanel.load(preferences)
         dictateShortcut = ShortcutAction.dictate.load(preferences)
+        askShortcut = ShortcutAction.ask.load(preferences)
         rateLimits = preferences.data(forKey: "usage.rateLimits").flatMap { try? JSONDecoder().decode([String: [RuntimeRateLimit]].self, from: $0) } ?? [:]
         try? AppPaths.prepare()
         if let data = try? Data(contentsOf: storageURL), let saved = try? JSONDecoder().decode([CompanionSession].self, from: data) {
@@ -754,6 +766,8 @@ final class AppModel: ObservableObject {
         cancelDelegationPreparations()
         connectGeneration = UUID(); connecting = false; cancelDeferredOperation()
         changeTasks.values.forEach { $0.cancel() }; changeTasks.removeAll()
+        // A hold in progress is dropped, never sent while quitting.
+        asking = false
         dictation.cancel()
         persistTask?.cancel(); snoozeTimer?.cancel(); save(); client.disconnect(); delegationServer.stop()
     }
@@ -812,11 +826,19 @@ final class AppModel: ObservableObject {
     }
 
     func shortcut(for action: ShortcutAction) -> KeyShortcut? {
-        action == .openPanel ? openShortcut : dictateShortcut
+        switch action {
+        case .openPanel: openShortcut
+        case .dictate: dictateShortcut
+        case .ask: askShortcut
+        }
     }
 
     func setShortcut(_ shortcut: KeyShortcut?, for action: ShortcutAction) {
-        if action == .openPanel { openShortcut = shortcut } else { dictateShortcut = shortcut }
+        switch action {
+        case .openPanel: openShortcut = shortcut
+        case .dictate: dictateShortcut = shortcut
+        case .ask: askShortcut = shortcut
+        }
     }
 
     /// From Settings or the welcome. Choosing Parakeet is the consent its hint
@@ -841,6 +863,58 @@ final class AppModel: ObservableObject {
         guard Dictation.isAvailable else { return }
         startSessionFromNotch()
         if let currentID { startDictation(into: currentID, fromNotch: true) }
+    }
+
+    /// The hold shortcut went down: the notch's island listens for a new
+    /// session's prompt. The panel stays closed.
+    func beginQuickAsk() {
+        guard !asking, !dictation.isActive, Dictation.isAvailable else { return }
+        quickAsk = ""
+        dictation.deliver = { [weak self] _, text in
+            guard let self, self.asking else { return }
+            self.quickAsk = Dictation.append(text, to: self.quickAsk ?? "")
+        }
+        dictation.start(sessionID: Self.quickAskID, engine: dictationEngine, language: dictationLanguage, fromNotch: true)
+        asking = true
+        Task {
+            // Released, failed or stopped from a composer: every ending goes the same way.
+            await dictation.finished()
+            await finishQuickAsk()
+        }
+    }
+
+    /// The hold shortcut came back up: the last words are finalized, then sent.
+    func endQuickAsk() {
+        if asking { dictation.stop() }
+    }
+
+    private func finishQuickAsk() async {
+        guard asking else { return }
+        asking = false
+        await sendQuickAsk(quickAsk ?? "", failed: dictation.failure != nil)
+    }
+
+    /// Sends what was heard as a new session with the default harness and
+    /// folder. Words that cannot be sent open in its draft instead of being lost.
+    func sendQuickAsk(_ heard: String, failed: Bool) async {
+        let text = heard.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            // Nothing heard is a tap on the shortcut; a failure opens a draft that says why.
+            if failed { startSessionFromNotch() }
+            return
+        }
+        await newSession(showPanel: false)
+        guard let id = currentID else { return }
+        draft = text
+        // A failed run may have lost words, and a harness that is not set up cannot take them.
+        if !failed, !currentDraftNeedsSetup { await submit(reply: nil) }
+        // Words still in the draft, or a send the runtime never confirmed, open for review. A send
+        // accepted without its acknowledgement is running like any other and stays in the background.
+        guard let session = sessions.first(where: { $0.id == id }), !session.draft.isEmpty || session.pendingSubmission != nil else { return }
+        // Selecting clears the banner; the reason it could not go belongs with the draft.
+        let reason = errorMessage
+        if currentID != id { selectSession(id); errorMessage = reason }
+        activatePanel?()
     }
 
     private func startDictation(into sessionID: String, fromNotch: Bool) {
@@ -940,6 +1014,9 @@ final class AppModel: ObservableObject {
 
     /// Offscreen fixtures show a specific announcement without runtime events.
     func setAnnouncementForPreview(_ value: NotchAnnouncement?) { announcement = value }
+    /// Fixtures present the listening island without a microphone; nil ends it
+    /// the way a release does, leaving its words for the closing island.
+    func setAskingForPreview(_ words: String?) { quickAsk = words ?? quickAsk; asking = words != nil }
 
     /// Snapshots the message with the moment, so the band and stage keep
     /// saying what happened even if the session moves on during the hold.

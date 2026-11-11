@@ -50,11 +50,23 @@ struct MascotView: View {
                 }
                 if presentation.peek > 0 {
                     let start = (geometry?.glanceCameraMaxX ?? (geometry?.mascotWidth ?? 58) + 40) + 10
-                    GlanceBandSummary(summary: model.glanceSummary)
-                        .frame(width: max(0, proxy.size.width - start - 18), height: proxy.size.height, alignment: .trailing)
-                        .offset(x: start)
-                        .opacity(UnifiedNotchView.glanceOpacity(peek: presentation.peek))
-                        .allowsHitTesting(false)
+                    Group {
+                        if model.quickAsk != nil {
+                            // Hold to ask names the harness its words go to.
+                            let harness = model.newSessionRuntimeTitle ?? "New session"
+                            ViewThatFits(in: .horizontal) {
+                                Text("Ask \(harness)")
+                                Text(harness)
+                            }
+                            .font(.system(size: 11, weight: .medium)).foregroundStyle(IslandStyle.secondary).lineLimit(1)
+                        } else {
+                            GlanceBandSummary(summary: model.glanceSummary)
+                        }
+                    }
+                    .frame(width: max(0, proxy.size.width - start - 18), height: proxy.size.height, alignment: .trailing)
+                    .offset(x: start)
+                    .opacity(UnifiedNotchView.glanceOpacity(peek: presentation.peek))
+                    .allowsHitTesting(false)
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
@@ -85,7 +97,7 @@ struct MascotView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Notch Companion. \(indicatorSummary)")
-        .accessibilityValue(model.expanded ? "Expanded" : model.glancing ? "Glance" : "Collapsed")
+        .accessibilityValue(model.expanded ? "Expanded" : model.asking ? "Listening" : model.glancing ? "Glance" : "Collapsed")
         .accessibilityHint("Hover to glance at your sessions, or click to open for input")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { model.activatePanel?() }
@@ -989,7 +1001,8 @@ struct SettingsContent: View {
                 SettingsRow("Open at login", symbol: "power", tint: .gray) { OpenAtLoginToggle(model: model) }
                 ForEach(ShortcutAction.allCases) { action in
                     if action == .openPanel || Dictation.isAvailable {
-                        SettingsRow(action.title, symbol: action == .openPanel ? "command" : "mic.badge.plus", tint: .indigo, divider: true) {
+                        SettingsRow(action.title, symbol: action == .openPanel ? "command" : action == .dictate ? "mic.badge.plus" : "waveform.badge.mic",
+                                    tint: .indigo, divider: true) {
                             ShortcutRecorder(model: model, action: action)
                         }
                     }
@@ -1152,7 +1165,7 @@ struct ShortcutRecorder: View {
     var body: some View {
         let shortcut = model.shortcut(for: action)
         let recording = model.recordingShortcut == action
-        // Restoring must not take the combination from the other action.
+        // Restoring must not take the combination from another action.
         let canRestore = shortcut != action.defaultShortcut
             && !ShortcutAction.allCases.contains { $0 != action && model.shortcut(for: $0) == action.defaultShortcut }
         HStack(spacing: 6) {
@@ -1163,7 +1176,9 @@ struct ShortcutRecorder: View {
             }
             Button(recording ? refusal ?? "Type shortcut…" : shortcut?.display ?? "Off") { recording ? stop() : record() }
                 .buttonStyle(NotchPillButtonStyle(small: true, selected: recording))
-                .help(recording ? "Press the new shortcut; Escape cancels, Delete turns it off" : "Click, then press the new shortcut")
+                .help(recording ? "Press the new shortcut; Escape cancels, Delete turns it off"
+                      : action == .ask ? "Hold this shortcut to dictate a question; releasing sends it as a new session. Click to change it."
+                      : "Click, then press the new shortcut")
                 .accessibilityLabel("\(action.title) shortcut, \(shortcut?.spoken ?? "off")")
             if !recording, canRestore {
                 QuietIconButton(symbol: "arrow.counterclockwise", label: "Restore \(action.defaultShortcut.display)", size: 22) {

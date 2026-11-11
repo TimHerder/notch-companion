@@ -6,7 +6,8 @@ struct NotchPresentation: Equatable {
     var frame: CGRect
     var progress: CGFloat
     var bandHeight: CGFloat
-    /// The hover glance tier: 1 while the glance is settled, 0 at rest or open.
+    /// The small island tier: 1 while the hover glance or the hold-to-ask
+    /// island is settled, 0 at rest or open.
     var peek: CGFloat = 0
     /// A transient status announcement widening the resting band's shoulder.
     var announce: CGFloat = 0
@@ -80,6 +81,11 @@ struct NotchPresentation: Equatable {
 
     static func glance(_ geometry: NotchGeometry) -> Self {
         Self(frame: geometry.glanceFrame, progress: 0, bandHeight: geometry.bandHeight, peek: 1)
+    }
+
+    /// Hold to ask shares the glance's tier; only its frame and content differ.
+    static func ask(_ geometry: NotchGeometry) -> Self {
+        Self(frame: geometry.askFrame, progress: 0, bandHeight: geometry.bandHeight, peek: 1)
     }
 
     static func stage(_ geometry: NotchGeometry) -> Self {

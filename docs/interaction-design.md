@@ -103,20 +103,23 @@ Control–Option–Space (by default) opens the panel for input. Escape dismisse
 it and suppresses automatic reopening until the pointer has left. Drafts
 survive dismissal. Preserve keyboard access.
 
-**Global shortcuts.** Settings → **Open the notch** and **Dictate a new
-session** (Control–Option–V by default) each show a pill with the combination
-(`⌃⌥Space`). Clicking it reads “Type shortcut…”: the next key with Control,
+**Global shortcuts.** Settings → **Open the notch**, **Dictate a new
+session** (Control–Option–V by default) and **Hold to ask**
+(Control–Option–A, see [dictation](#dictation)) each show a pill with the
+combination (`⌃⌥Space`). Clicking it reads “Type shortcut…”: the next key with Control,
 Option or Command (or a bare F1–F20) becomes the shortcut; Shift alone or a bare
-key answers “Add ⌃, ⌥ or ⌘”, the other action's combination “Used by …”, Escape
+key answers “Add ⌃, ⌥ or ⌘”, another action's combination “Used by …”, Escape
 cancels and a bare Delete turns it **Off** (it stays off across launches). One
-recorder listens at a time; while it does, neither shortcut fires and Escape
+recorder listens at a time; while it does, no shortcut fires and Escape
 does not close the panel, and it stops when its window loses the keyboard
 (collapsing the notch, clicking elsewhere). A restore button returns a changed
-shortcut to its default unless the other action now uses that default.
-Shortcuts are Carbon hot keys (no Input Monitoring); one another app holds
+shortcut to its default unless another action now uses that default.
+Shortcuts are Carbon hot keys (no Input Monitoring), which also report Hold to
+ask's key coming back up; one another app holds
 shows an amber warning and drops from the menu-bar tooltip and menu. Without
-on-device speech the dictation shortcut is neither registered nor shown. Preferences:
-`notch.shortcut.openPanel`, `notch.shortcut.dictate` (empty data = off).
+on-device speech the two dictation shortcuts are neither registered nor shown. Preferences:
+`notch.shortcut.openPanel`, `notch.shortcut.dictate`, `notch.shortcut.ask`
+(empty data = off).
 
 Gaze and blink are continuous, sampled at 60 Hz; one 18 ms exponential filter
 eases gaze, with no second SwiftUI spring. Tracking reaches 1,200 points; the
@@ -168,7 +171,8 @@ distinguish read and unread.
 ## Island tiers
 
 Between the resting band and the full panel sit small tiers of the **same**
-silhouette, panel and clock: `NotchPresentation.peek` (glance) and `.announce`
+silhouette, panel and clock: `NotchPresentation.peek` (the glance, or
+[Hold to ask](#dictation)'s listening island) and `.announce`
 (widened band) interpolate on one `UnifiedNotchMotion`.
 
 **Glance (hover).** With Hover preview set to Glance (`notch.hoverPreview`,
@@ -1204,7 +1208,7 @@ by itself, like a [file drop](#file-drops).
 **Show dictation** (on by default, Settings → Composer) adds a microphone
 button beside Send in both surfaces' composer bar. Speech becomes text on
 this Mac: no audio leaves it, no model ships with the app, and nothing is sent
-until the user sends.
+until the user sends (releasing Hold to ask is that send).
 
 - **Engine.** Settings → **Dictation engine** (`notch.dictationEngine`), on
   Apple silicon: **macOS** (default, `system`) uses `SpeechTranscriber`
@@ -1240,11 +1244,46 @@ until the user sends.
   final words join the end of the draft with one space, never replacing typed
   text; words that arrive while an input method is composing join once it
   commits. A failure (no microphone, unsupported language, denied access with
-  **Open Settings**) stays there until dismissed.
+  **Open Settings**) stays there until dismissed; one that ends a run keeps the
+  words heard so far, those not yet final included.
 - **Dictate a new session.** The shortcut opens a ready draft the way the
   glance's New session does (reusing an untouched one), opens the panel for
   input and starts listening; pressing it again stops. The words stay in the
   draft for review.
+- **Hold to ask.** Holding its shortcut opens a listening island instead of
+  the panel, for a quick question from any app. Releasing sends what was heard
+  as a new session and the island closes; the panel never opens.
+  - *Island.* As wide as the glance, top-anchored, on the glance's tier
+    (`peek`): it opens and grows on the island spring and closes over 200 ms.
+    It takes no focus. Under the band, five bars rise with the microphone's
+    level (a murmur in a pause; faint while the microphone starts; static
+    under Reduce Motion), then the words in 13-point medium: final words in
+    full colour, those still being heard lighter. Before any word it says
+    “Starting microphone…”, a model download's progress or “Listening…”. The
+    band names the harness the words go to (“Ask Hermes”, or the name alone
+    where that does not fit), and the eyes look down at the words.
+  - *Growing.* One line tall at first, it grows a line at a time up to six;
+    a longer prompt keeps its newest lines in view and fades the oldest.
+  - *Release.* Listening stops and the bars become an arrow while the last
+    words are finalized (“Finishing…” if none are shown yet). The island then
+    closes with its words, and they go to a new session with the harness a New
+    session would use and the default folder. It becomes the selection, plays
+    the send cue and runs in the background; its live glyph, dot and
+    announcement follow as for any session. Nothing heard (a tap) sends nothing.
+  - *Words that cannot be sent* stay in the new session's draft, which
+    becomes the selection again if it changed meanwhile, and the panel opens on
+    it: after a dictation failure (beside the failure, with the words that
+    were not yet final), with no harness set up, in an untrusted project, or
+    when the send is refused or unconfirmed (with its error). A send the
+    runtime accepted without acknowledging stays in the background. A failure
+    before any word opens a ready draft that shows it.
+  - *Other tiers.* An open panel or hover glance closes into the island, and
+    hovering opens nothing until the hold has ended and the pointer has left
+    the notch; a popup update only
+    lights the edge. A panel opened during the hold takes over, and the words
+    still go on release. While another dictation runs the shortcut does
+    nothing; a composer's red waveform, the dictate shortcut or changing a
+    shortcut in Settings ends a hold like a release. Quitting drops it unsent.
 - **Sending while dictating.** Return or Send in the session being dictated
   into stops listening, shows “Adding your last words…” until the engine has
   delivered them (Parakeet writes only at the end, and words held by an open

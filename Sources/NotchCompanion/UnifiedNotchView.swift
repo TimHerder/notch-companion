@@ -50,7 +50,13 @@ struct UnifiedNotchView: View {
                     .accessibilityHidden(!interactive || choosingFiles)
             }
             .fixedSize(horizontal: false, vertical: true)
-            if presentation.peek > 0 {
+            if presentation.peek > 0, model.quickAsk != nil {
+                // Hold to ask takes the glance's tier while it listens and as it closes.
+                NotchAskView(model: model, dictation: model.dictation)
+                    .frame(width: NotchGeometry.glanceTargetWidth, height: max(0, size.height - presentation.bandHeight), alignment: .top)
+                    .padding(.top, presentation.bandHeight)
+                    .allowsHitTesting(false)
+            } else if presentation.peek > 0 {
                 // The glance shares the one silhouette and clock; it only
                 // fades in once the island has room for its natural-size text.
                 NotchGlanceView(model: model)
