@@ -147,6 +147,32 @@ final class ClaudeProtocolTests: XCTestCase {
         XCTAssertTrue(try state.receive(["type": "result", "result": "Ready"]).isEmpty)
     }
 
+    func testBackgroundShellHoldsTheTurnWithoutBecomingAnAgent() throws {
+        var state = ClaudeProtocolState(sessionID: id); state.nativeState = "idle"; try state.begin("turn")
+        let started = try state.receive(["type": "system", "subtype": "task_started", "task_id": "shell", "tool_use_id": "bash-call",
+                                         "task_type": "local_bash", "description": "Create branch"])
+        XCTAssertTrue(started.isEmpty, "A background command is not a Team agent")
+        XCTAssertTrue(try state.receive(["type": "result", "result": "Ready", "is_error": false]).isEmpty, "It still holds the turn open")
+        XCTAssertTrue(try state.receive(["type": "system", "subtype": "task_notification", "task_id": "shell", "status": "failed"]).isEmpty)
+        let finished = try state.receive(["type": "system", "subtype": "session_state_changed", "state": "idle"])
+        XCTAssertEqual(finished.map(\.name), ["message.complete"])
+        XCTAssertEqual(finished.first?.payload["status"] as? String, "complete", "A command's exit status is not the turn's")
+    }
+
+    func testEveryAgentTaskKindStartsAndFinishesItsTeamRow() throws {
+        // nil: a CLI that sends no task_type; the originating tool call decides.
+        for (type, tool) in [("remote_agent", "Agent"), ("in_process_teammate", "Agent"), (nil, "Agent"), (nil, "Task"), (nil, "Bash")] as [(String?, String)] {
+            var state = ClaudeProtocolState(sessionID: id); try state.begin("turn")
+            _ = try state.receive(["type": "assistant", "message": ["content": [["type": "tool_use", "id": "call", "name": tool, "input": [:]]]]])
+            var frame: [String: Any] = ["type": "system", "subtype": "task_started", "task_id": "task", "tool_use_id": "call"]
+            frame["task_type"] = type
+            let agent = tool != "Bash"
+            XCTAssertEqual(try state.receive(frame).map(\.name), agent ? ["subagent.start"] : [], "\(type ?? "no type") from \(tool)")
+            let done = try state.receive(["type": "system", "subtype": "task_notification", "task_id": "task", "status": "completed"])
+            XCTAssertEqual(done.map(\.name), agent ? ["subagent.complete"] : [], "\(type ?? "no type") from \(tool)")
+        }
+    }
+
     func testPartialTextNotDuplicatedByFullAssistantAndUsageNotContext() throws {
         var state = ClaudeProtocolState(sessionID: id); try state.begin("turn")
         let delta = try state.receive(["type": "stream_event", "event": ["delta": ["type": "text_delta", "text": "Hello"]]])

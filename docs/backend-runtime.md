@@ -191,7 +191,12 @@ delegation messages are never labeled human. The adapter waits for the exact
 `command_lifecycle.command_uuid` receipt (or matching user replay), never an
 original-turn result; `refused` restores the draft. Accepted IDs survive resume
 in-process; a fresh process cannot prove absent history. Pending inputs and
-native background tasks prevent premature completion. Session-state events are
+native background tasks prevent premature completion. Every `task_started` holds
+the turn open, but only an agent's task (`task_type` `local_agent`,
+`remote_agent` or `in_process_teammate`; without the field, one started by an
+`Agent`/`Task` call) emits `subagent.start` and `subagent.complete`: a
+background shell, monitor or workflow is not a Team agent, and its exit status
+is not the turn's. Session-state events are
 enabled process-locally, and Stop sends `cancel_queued` so pending steering
 cannot restart work.
 

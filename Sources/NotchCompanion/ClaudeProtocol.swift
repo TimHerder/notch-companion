@@ -14,6 +14,8 @@ struct ClaudeProtocolState {
     var requests: [String: Interaction] = [:]
     var children = Set<String>()
     var taskAliases: [String: String] = [:]
+    /// Calls of the agent tool, to tell an agent's task from a command's when a CLI sends no `task_type`.
+    var agentTools = Set<String>()
     var tools = Set<String>()
     var partialMessages = Set<String>()
     var text = ""
@@ -40,7 +42,7 @@ struct ClaudeProtocolState {
     mutating func begin(_ id: String) throws {
         guard !active, children.isEmpty, requests.isEmpty else { throw AppError("Claude Code still has active work or a pending interaction.") }
         active = true; turnID = id; result = nil; text = ""; failedChild = false; interrupted = false; errorCategory = nil
-        partialMessages.removeAll(); tools.removeAll(); taskAliases.removeAll()
+        partialMessages.removeAll(); tools.removeAll(); taskAliases.removeAll(); agentTools.removeAll()
         contextUsed = nil
         if nativeState != nil { nativeState = "running" }
     }
@@ -286,15 +288,21 @@ struct ClaudeProtocolState {
             if let id = frame["task_id"] as? String {
                 if subtype == "task_started" {
                     children.insert(id)
+                    // Background shells, monitors and workflows are tasks too: they hold
+                    // the turn open, but only an agent has a transcript to show in Team.
                     let alias = frame["tool_use_id"] as? String ?? id
+                    let agent = (frame["task_type"] as? String).map { ["local_agent", "remote_agent", "in_process_teammate"].contains($0) } ?? agentTools.contains(alias)
+                    guard agent else { return [] }
                     taskAliases[id] = alias; tools.insert(alias)
                     return [event("subagent.start", ["subagent_id": alias, "name": frame["description"] as? String ?? "Claude agent"])]
                 }
                 let patch = frame["patch"] as? [String: Any] ?? [:]
                 let status = frame["status"] as? String ?? patch["status"] as? String ?? ""
                 if children.contains(id), subtype == "task_notification" || (subtype == "task_updated" && ["completed", "failed", "stopped"].contains(status)) {
-                    children.remove(id); failedChild = failedChild || status == "failed"
-                    return [event("subagent.complete", ["subagent_id": taskAliases[id] ?? id, "status": status == "failed" ? "error" : status == "stopped" ? "interrupted" : "complete", "text": frame["summary"] as? String ?? ""])] + completeIfSettled()
+                    children.remove(id)
+                    guard let alias = taskAliases[id] else { return completeIfSettled() }
+                    failedChild = failedChild || status == "failed"
+                    return [event("subagent.complete", ["subagent_id": alias, "status": status == "failed" ? "error" : status == "stopped" ? "interrupted" : "complete", "text": frame["summary"] as? String ?? ""])] + completeIfSettled()
                 }
             }
             return []
@@ -328,6 +336,7 @@ struct ClaudeProtocolState {
                     else { text += value; events.append(event("message.delta", ["text": value])) }
                 }
                 if block["type"] as? String == "tool_use", let id = block["id"] as? String, tools.insert(id).inserted {
+                    if ["Agent", "Task"].contains(block["name"] as? String ?? "") { agentTools.insert(id) }
                     events.append(event(child == nil ? "tool.start" : "subagent.tool", ["tool_id": id, "subagent_id": child ?? "", "name": block["name"] as? String ?? "Tool", "context": CodexProtocolState.describe(block["input"])]))
                 }
                 if block["type"] as? String == "tool_result", let id = block["tool_use_id"] as? String {
