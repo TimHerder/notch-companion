@@ -25,6 +25,8 @@ final class ClaudeClient: RuntimeTransport {
         /// Launched with bypass allowed, and whether native history exists to resume.
         var allowsBypass = false
         var resumable = false
+        /// Created without a chosen title: the first prompt asks the CLI to name the session.
+        var untitled = false
         /// Launched with computer use and not yet initialized: a failure retries without it.
         var computerUseLaunch = false
         /// The profile's own mode, read before the first override; nil while none is applied.
@@ -151,6 +153,7 @@ final class ClaudeClient: RuntimeTransport {
             let session = try await open(id: id, cwd: cwd, resume: method == "session.resume",
                                          allowBypass: params["permission_mode"] as? String == PermissionMode.fullAccess.rawValue,
                                          delegation: params["delegation"] as? [String: Any])
+            session.untitled = method == "session.create" && (params["title"] as? String ?? "").isEmpty
             return sessionResult(session)
         }
         let id = params["session_id"] as? String ?? ""
@@ -278,6 +281,15 @@ final class ClaudeClient: RuntimeTransport {
                 try session.state.begin(turn)
                 started = true
                 session.resumable = true
+                if session.untitled {
+                    session.untitled = false
+                    // Print mode names a session only when its host asks; persist saves the name in native history.
+                    let request: [String: Any] = ["subtype": "generate_session_title", "description": params["text"] as? String ?? "", "persist": true]
+                    Task { @MainActor [weak self, weak session] in
+                        guard let self, let session, let title = (try? await self.control(session, request, optional: true))?["title"] as? String else { return }
+                        self.emit(session.state.event("session.title", ["title": title]))
+                    }
+                }
                 emit(session.state.event("message.start", ["role": "assistant"]))
                 return try await withTaskCancellationHandler {
                     try await withCheckedThrowingContinuation { continuation in
@@ -329,6 +341,7 @@ final class ClaudeClient: RuntimeTransport {
         old.close(AppError("Claude Code reopened this session to allow Full access."))
         let session = try await open(id: id, cwd: old.cwd, resume: old.resumable, allowBypass: allowBypass, delegation: old.delegation)
         session.inheritedMode = old.inheritedMode
+        session.untitled = old.untitled
         return session
     }
 
@@ -458,7 +471,8 @@ final class ClaudeClient: RuntimeTransport {
                 "history_complete": false, "accepted_turn_ids": Array(session.steeringReceipts), "info": info, "catalog": session.catalog]
     }
 
-    private func control(_ session: Session, _ body: [String: Any]) async throws -> [String: Any] {
+    /// An optional request that goes unanswered only fails itself; any other fails the session.
+    private func control(_ session: Session, _ body: [String: Any], optional: Bool = false) async throws -> [String: Any] {
         let id = UUID().uuidString
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -466,7 +480,9 @@ final class ClaudeClient: RuntimeTransport {
                 session.timeouts[id] = Task { @MainActor [weak self, weak session] in
                     do { try await Task.sleep(nanoseconds: 60_000_000_000) } catch { return }
                     guard let self, let session else { return }
-                    self.failed(session, AppError("Claude Code did not answer a control request. Reconnect to check the saved session."))
+                    let error = AppError("Claude Code did not answer a control request. Reconnect to check the saved session.")
+                    if optional { session.timeouts[id] = nil; session.controls.removeValue(forKey: id)?.resume(throwing: error) }
+                    else { self.failed(session, error) }
                 }
                 do { try session.process.send(["type": "control_request", "request_id": id, "request": body]) }
                 catch { failed(session, error) }

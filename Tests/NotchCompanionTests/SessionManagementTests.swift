@@ -53,6 +53,38 @@ final class SessionManagementTests: XCTestCase {
         XCTAssertNotNil(model.current?.completionID)
     }
 
+    func testRuntimeTitleReplacesOnlyAnAutomaticTitle() async {
+        let (model, transport, file) = fixture()
+        defer { cleanUp(model, file) }
+        model.sessions[0].runtimeID = nil
+        await model.connect()
+        model.draft = "Fix the flaky login test in CI"
+        await model.send()
+        XCTAssertEqual(transport.created.count, 1)
+        XCTAssertNil(transport.created.first?["title"], "An automatic title is not sent, so the runtime names its own session")
+        XCTAssertEqual(model.current?.title, "Fix the flaky login test in CI")
+        event(model, "session.title", ["title": " Fix flaky login test\n"])
+        XCTAssertEqual(model.current?.title, "Fix flaky login test")
+        event(model, "session.title", ["title": " "])
+        XCTAssertEqual(model.current?.title, "Fix flaky login test")
+        model.renameSession(model.currentID ?? "", title: "My name")
+        event(model, "session.title", ["title": "Runtime name"])
+        XCTAssertEqual(model.current?.title, "My name")
+    }
+
+    func testAChosenTitleIsSentAtCreateAndKept() async {
+        let (model, transport, file) = fixture()
+        defer { cleanUp(model, file) }
+        model.sessions[0].runtimeID = nil
+        await model.connect()
+        model.renameSession(model.currentID ?? "", title: "Release notes")
+        model.draft = "Draft them"
+        await model.send()
+        XCTAssertEqual(transport.created.first?["title"] as? String, "Release notes")
+        event(model, "session.title", ["title": "Runtime name"])
+        XCTAssertEqual(model.current?.title, "Release notes")
+    }
+
     func testNewTurnDoesNotInheritHistoricalChildFailure() async {
         let (model, _, file) = fixture()
         defer { cleanUp(model, file) }
@@ -546,6 +578,7 @@ private final class ManagementTransport: HermesTransport {
     var answerCount = 0
     var holdPrompt = false
     var holdAnswer = false
+    var created: [[String: Any]] = []
     var promptWaiter: CheckedContinuation<[String: Any], Error>?
     var answerWaiter: CheckedContinuation<[String: Any], Error>?
 
@@ -559,7 +592,7 @@ private final class ManagementTransport: HermesTransport {
         onConnectionChange?(false, nil)
     }
     func request(_ method: String, params: [String: Any]) async throws -> [String: Any] {
-        if method == "session.create" { return ["session_id": "parent", "stored_session_id": "stored"] }
+        if method == "session.create" { created.append(params); return ["session_id": "parent", "stored_session_id": "stored"] }
         if method == "prompt.submit", holdPrompt { return try await withCheckedThrowingContinuation { promptWaiter = $0 } }
         if method == "clarify.respond" || method == "approval.respond" {
             answerCount += 1

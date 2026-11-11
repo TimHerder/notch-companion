@@ -239,6 +239,24 @@ native store stays authoritative; the JSON registry is UI metadata, not an agent
 home. Codex's native source may be `vscode`, so source is never an ownership
 filter.
 
+**Titles.** A new session shows the first 64 characters of its first prompt
+until its runtime names it. A runtime that names its own sessions is sent only
+a chosen title with `session.create` (a rename before the first send, a
+delegator's, or `create_sessions`'s `title`); without one it names the session
+and reports the name as `session.title`. The app applies it only while the
+title is still automatic (`titleIsAutomatic`, saved; older entries decode as
+chosen), so a rename is never replaced and stays local. Delegated children keep
+their delegator's title. The other runtimes are sent the automatic title too,
+as their native name.
+
+| Runtime | Where the name comes from |
+| --- | --- |
+| Claude Code | Print mode names a session only on request: the first prompt of a session created without a title also sends the control request `generate_session_title {description: prompt, persist: true}`, which saves the name in the native transcript. It is optional: unanswered after 60 seconds or rejected by an older CLI, the prompt's opening words stay. |
+| OpenCode | A session created without a `title` gets the server's name after its first prompt: `session.renamed` (2.x) or `session.updated`'s `info.title` (1.x). The dated placeholder (`New session - <ISO time>`) is never reported. |
+| Hermes | Its own `session.title` event (a derived title first, then the model's). |
+| Antigravity, Cursor, DeepSeek | ACP `session_info_update` with a `title`. |
+| Codex, Pi, OpenClaw | None (`namesOwnSessions` is false). Codex app-server leaves a thread unnamed (its terminal UI names threads client-side), Pi only has names set by `/name` or the host, and OpenClaw derives a label from the first message. The prompt's opening words stay, here and as the native name. |
+
 Saved app preferences beat environment overrides. Hermes profile fallback is
 `NOTCH_HERMES_SOURCE_HOME`, `HERMES_HOME`, then `~/.hermes`; Codex uses
 `CODEX_HOME` then `~/.codex`. The default never follows Hermes's mutable
@@ -848,7 +866,7 @@ methods and events.
 
 | RPC | Request | Important result |
 | --- | --- | --- |
-| `session.create` | `title?`, `cwd?` | `session_id` (live), `stored_session_id` (durable), `info` |
+| `session.create` | `title?` (absent when the runtime is to name the session), `cwd?` | `session_id` (live), `stored_session_id` (durable), `info` |
 | `session.resume` | `session_id: durableID` | `session_id`, `session_key`, `messages`, `running`, `status`, `info` |
 | `prompt.submit` | `session_id`, `text`, `surface: "hud"` | `status: "streaming"`; content arrives by event |
 | `session.interrupt` | `session_id` | acknowledgement; wait for the terminal turn event |
@@ -873,6 +891,7 @@ omits it). Images are implicit pending attachments, so removing one must call
 | `tool.start` | `tool_id`, `name`, `context`, optional `args` |
 | `tool.complete` | same `tool_id`, `name`, `summary`, `result`, `duration_s` |
 | `session.info` | model, working directory, tools and other metadata |
+| `session.title` | `title`: the runtime's own name for the session |
 | `error` | `message` |
 | `approval.request` | `request_id`, redacted `command`, allowed `choices` (`once`, `session`, `always`, `deny`) |
 | `clarify.request` | `request_id`, `question`, `choices`, optional `multi_select`; or `questions: [{qid,question,choices,multi_select}]` |

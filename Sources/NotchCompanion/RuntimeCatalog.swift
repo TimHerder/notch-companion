@@ -105,6 +105,8 @@ extension RuntimeKind {
         }
     }
     var requiresProjectTrust: Bool { self == .claude || self == .antigravity || self == .cursor }
+    /// Names a session created without a title; the others take the prompt's opening words as their native title.
+    var namesOwnSessions: Bool { ![.codex, .pi, .openclaw].contains(self) }
     /// Runs only its native default profile; the companion never sets a profile override.
     var usesNativeProfileOnly: Bool { self == .antigravity || self == .cursor }
     var capabilities: RuntimeCapabilities {

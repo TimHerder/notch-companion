@@ -91,8 +91,10 @@ final class ClaudeAntigravityClientTests: XCTestCase {
         var interactions: [String] = []
         var failures: [String] = []
         var reportedModels: [String] = []
+        var titles: [String] = []
         client.onEvent = { name, payload in
             if name == "message.complete" { completions += 1 }
+            if name == "session.title", let title = payload["title"] as? String { titles.append(title) }
             if name == "session.info", let model = payload["model"] as? String { reportedModels.append(model) }
             if name == "session.disconnected" { failures.append(payload["message"] as? String ?? "Disconnected") }
             if name == "approval.request" || name == "clarify.request" {
@@ -127,6 +129,7 @@ final class ClaudeAntigravityClientTests: XCTestCase {
         }
         XCTAssertEqual(interactions, ["approval.request", "clarify.request"])
         XCTAssertEqual(completions, 3)
+        XCTAssertEqual(titles, ["Fixture title"], "Only the first prompt of an untitled session asks Claude to name it")
         XCTAssertTrue(failures.isEmpty, failures.joined(separator: "; "))
         XCTAssertEqual(Set(reportedModels), ["fixture-selected"])
         XCTAssertGreaterThanOrEqual(reportedModels.count, 2)
@@ -335,9 +338,11 @@ final class ClaudeAntigravityClientTests: XCTestCase {
                     # Like Claude Code, an effort change alone drops Ultracode; an older CLI ignores the flag.
                     ultracode=settings['ultracode'] and workflows and reports if 'ultracode' in settings else ultracode and requested==effort
                     effort=requested
+                elif kind=='generate_session_title':
+                    assert frame['request']['description'] and frame['request']['persist'] is True
                 else:
                     assert kind in ['initialize', 'get_settings'], 'Never write user or project settings'
-                body={'models':[{'value':'default','resolvedModel':'fixture-model'},{'value':'fixture-selected','supportsEffort':True,'supportedEffortLevels':['low','high','xhigh']}],'session_state':'idle','current_permission_mode':'bypassPermissions'} if kind=='initialize' else {}
+                body={'models':[{'value':'default','resolvedModel':'fixture-model'},{'value':'fixture-selected','supportsEffort':True,'supportedEffortLevels':['low','high','xhigh']}],'session_state':'idle','current_permission_mode':'bypassPermissions'} if kind=='initialize' else {'title':'Fixture title'} if kind=='generate_session_title' else {}
                 if kind=='get_settings':
                     body={'applied':{'model':selected_model,'effort':effort or 'medium'}}
                     # Like Claude Code, the applied state holds only on a model with xhigh; the request is the profile's own.

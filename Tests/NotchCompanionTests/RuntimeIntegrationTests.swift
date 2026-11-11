@@ -367,14 +367,17 @@ final class RuntimeIntegrationTests: XCTestCase {
         XCTAssertFalse(model.current?.hasUnreadCompletion ?? true)
     }
 
-    func testInitialNativeTitleUsesPromptInsteadOfPlaceholder() async throws {
+    func testInitialNativeTitleIsThePromptOnlyWhereTheRuntimeNamesNothing() async throws {
         let file = temporaryFile(), transport = RoutedFixture()
         let model = AppModel(storageURL: file, playsSounds: false, client: transport)
         defer { model.shutdown(); try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         await model.connect()
-        model.draft = "A recognizable native conversation title"
-        await model.send()
-        XCTAssertEqual(transport.calls.first { $0.0 == "session.create" }?.1["title"] as? String, "A recognizable native conversation title")
+        for (runtime, title) in [(RuntimeKind.codex, "A recognizable native conversation title" as String?), (.hermes, nil)] {
+            await model.newSession(showPanel: false, runtime: runtime)
+            model.draft = "A recognizable native conversation title"
+            await model.send()
+            XCTAssertEqual(transport.calls.last { $0.0 == "session.create" }?.1["title"] as? String, title, runtime.title)
+        }
     }
 
     func testReconnectDuringStartupStartsFreshConnection() async throws {

@@ -216,6 +216,7 @@ setup. These opt-ins can send real prompts and consume account quota:
 ```sh
 NOTCH_RUN_LIVE_RUNTIME_TESTS=1 NOTCH_LIVE_RUNTIMES=codex,claude swift test --filter RuntimeLiveTests
 NOTCH_RUN_BUSY_INPUT_TEST=1 NOTCH_LIVE_RUNTIMES=codex,claude swift test --filter RuntimeLiveTests/testBusyComposerSteeringAndQueue
+NOTCH_RUN_LIVE_TITLE_TEST=1 NOTCH_LIVE_RUNTIMES=claude,opencode,antigravity swift test --filter RuntimeLiveTests/testRuntimeNamesAnUntitledSession
 ```
 
 Read the chosen test before enabling it. Other opt-ins cover Hermes startup,
