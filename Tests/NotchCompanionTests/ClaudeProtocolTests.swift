@@ -159,6 +159,20 @@ final class ClaudeProtocolTests: XCTestCase {
         XCTAssertEqual(finished.first?.payload["status"] as? String, "complete", "A command's exit status is not the turn's")
     }
 
+    func testEveryAgentTaskKindStartsAndFinishesItsTeamRow() throws {
+        // nil: a CLI that sends no task_type; the originating tool call decides.
+        for (type, tool) in [("remote_agent", "Agent"), ("in_process_teammate", "Agent"), (nil, "Agent"), (nil, "Task"), (nil, "Bash")] as [(String?, String)] {
+            var state = ClaudeProtocolState(sessionID: id); try state.begin("turn")
+            _ = try state.receive(["type": "assistant", "message": ["content": [["type": "tool_use", "id": "call", "name": tool, "input": [:]]]]])
+            var frame: [String: Any] = ["type": "system", "subtype": "task_started", "task_id": "task", "tool_use_id": "call"]
+            frame["task_type"] = type
+            let agent = tool != "Bash"
+            XCTAssertEqual(try state.receive(frame).map(\.name), agent ? ["subagent.start"] : [], "\(type ?? "no type") from \(tool)")
+            let done = try state.receive(["type": "system", "subtype": "task_notification", "task_id": "task", "status": "completed"])
+            XCTAssertEqual(done.map(\.name), agent ? ["subagent.complete"] : [], "\(type ?? "no type") from \(tool)")
+        }
+    }
+
     func testPartialTextNotDuplicatedByFullAssistantAndUsageNotContext() throws {
         var state = ClaudeProtocolState(sessionID: id); try state.begin("turn")
         let delta = try state.receive(["type": "stream_event", "event": ["delta": ["type": "text_delta", "text": "Hello"]]])
