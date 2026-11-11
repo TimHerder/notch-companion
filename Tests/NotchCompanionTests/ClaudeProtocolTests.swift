@@ -147,6 +147,18 @@ final class ClaudeProtocolTests: XCTestCase {
         XCTAssertTrue(try state.receive(["type": "result", "result": "Ready"]).isEmpty)
     }
 
+    func testBackgroundShellHoldsTheTurnWithoutBecomingAnAgent() throws {
+        var state = ClaudeProtocolState(sessionID: id); state.nativeState = "idle"; try state.begin("turn")
+        let started = try state.receive(["type": "system", "subtype": "task_started", "task_id": "shell", "tool_use_id": "bash-call",
+                                         "task_type": "local_bash", "description": "Create branch"])
+        XCTAssertTrue(started.isEmpty, "A background command is not a Team agent")
+        XCTAssertTrue(try state.receive(["type": "result", "result": "Ready", "is_error": false]).isEmpty, "It still holds the turn open")
+        XCTAssertTrue(try state.receive(["type": "system", "subtype": "task_notification", "task_id": "shell", "status": "failed"]).isEmpty)
+        let finished = try state.receive(["type": "system", "subtype": "session_state_changed", "state": "idle"])
+        XCTAssertEqual(finished.map(\.name), ["message.complete"])
+        XCTAssertEqual(finished.first?.payload["status"] as? String, "complete", "A command's exit status is not the turn's")
+    }
+
     func testPartialTextNotDuplicatedByFullAssistantAndUsageNotContext() throws {
         var state = ClaudeProtocolState(sessionID: id); try state.begin("turn")
         let delta = try state.receive(["type": "stream_event", "event": ["delta": ["type": "text_delta", "text": "Hello"]]])

@@ -594,6 +594,9 @@ drop opens its session).
 - Input and approval requests never rotate out with ordinary activity rows.
 - Scrolling up stops following new content until the user returns with
   **Jump to latest** or scrolls to the end.
+- Each session has its own scroll view, opened at its end (a bottom initial
+  offset). Reusing one across sessions, or scrolling a new one down from the
+  top, can blank a lazy transcript whose unfolded turns are taller than the view.
 - Progress describes observable work, such as “Reading a file”.
 
 ## Change summaries

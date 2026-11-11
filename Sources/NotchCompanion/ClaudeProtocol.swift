@@ -286,6 +286,9 @@ struct ClaudeProtocolState {
             if let id = frame["task_id"] as? String {
                 if subtype == "task_started" {
                     children.insert(id)
+                    // Background shells, monitors and workflows are tasks too: they hold
+                    // the turn open, but only an agent has a transcript to show in Team.
+                    guard frame["task_type"] as? String == "local_agent" else { return [] }
                     let alias = frame["tool_use_id"] as? String ?? id
                     taskAliases[id] = alias; tools.insert(alias)
                     return [event("subagent.start", ["subagent_id": alias, "name": frame["description"] as? String ?? "Claude agent"])]
@@ -293,8 +296,10 @@ struct ClaudeProtocolState {
                 let patch = frame["patch"] as? [String: Any] ?? [:]
                 let status = frame["status"] as? String ?? patch["status"] as? String ?? ""
                 if children.contains(id), subtype == "task_notification" || (subtype == "task_updated" && ["completed", "failed", "stopped"].contains(status)) {
-                    children.remove(id); failedChild = failedChild || status == "failed"
-                    return [event("subagent.complete", ["subagent_id": taskAliases[id] ?? id, "status": status == "failed" ? "error" : status == "stopped" ? "interrupted" : "complete", "text": frame["summary"] as? String ?? ""])] + completeIfSettled()
+                    children.remove(id)
+                    guard let alias = taskAliases[id] else { return completeIfSettled() }
+                    failedChild = failedChild || status == "failed"
+                    return [event("subagent.complete", ["subagent_id": alias, "status": status == "failed" ? "error" : status == "stopped" ? "interrupted" : "complete", "text": frame["summary"] as? String ?? ""])] + completeIfSettled()
                 }
             }
             return []

@@ -103,6 +103,11 @@ struct ConversationHistoryView: View {
                 }
             }
             // Content dissolves as it passes under the header and into the composer, never sliced.
+            // A lazy transcript with rows taller than the view (an unfolded turn) can
+            // lose its rows when scrolled to the end from the top or from another
+            // session's offset. Each session gets its own scroll view, opened at the end.
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .id(session?.id)
             .scrollEdgeFade(top: 14, bottom: 14)
             .accessibilityLabel("Conversation history")
             // Links in answers open in their own app; local paths open as files.
