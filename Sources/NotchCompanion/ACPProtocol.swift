@@ -62,6 +62,11 @@ struct ACPProtocolState {
             }
             return []
         }
+        // The runtime's own name for the session, as Antigravity sends after the first prompt.
+        if kind == "session_info_update" {
+            guard metadata == nil, let title = update["title"] as? String else { return [] }
+            return [event("session.title", sid, ["title": title])]
+        }
         // Native load replay is authoritative history, never new live activity.
         if loading.contains(sid) {
             if metadata != nil { return [] }

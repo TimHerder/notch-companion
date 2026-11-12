@@ -102,6 +102,32 @@ final class RuntimeLiveTests: XCTestCase {
         print("PI CATALOG VERIFIED: \(catalog.models.count) models before the first message; no native conversation or prompt")
     }
 
+    /// A session sent without a chosen title takes the name its runtime gives it.
+    func testRuntimeNamesAnUntitledSession() async throws {
+        guard ProcessInfo.processInfo.environment["NOTCH_RUN_LIVE_TITLE_TEST"] == "1" else {
+            throw XCTSkip("Set NOTCH_RUN_LIVE_TITLE_TEST=1 and NOTCH_LIVE_RUNTIMES to runtimes that name their own sessions.")
+        }
+        let prompt = "This is Notch Companion's session title verification. Reply with exactly TITLE_OK. Do not use tools or change files or memory."
+        for runtime in try selectedRuntimes() {
+            let folder = nativeTemporaryDirectory.appendingPathComponent("notch-title-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let model = liveModel(storageURL: folder.appendingPathComponent("sessions.json"))
+            defer { model.shutdown(); try? FileManager.default.removeItem(at: folder) }
+            await model.connect()
+            await model.newSession(showPanel: false, runtime: runtime)
+            model.sessions[0].workspacePath = folder.path
+            if runtime.requiresProjectTrust { model.sessions[0].trustedProjectPath = folder.path }
+            model.draft = prompt
+            await model.send(); try await settle(model)
+            XCTAssertEqual(model.current?.state, .finished, model.errorMessage ?? runtime.title)
+            // Some runtimes name the session in the background, after the reply.
+            let deadline = Date().addingTimeInterval(60)
+            while model.current?.title == String(prompt.prefix(64)), Date() < deadline { try await Task.sleep(for: .milliseconds(150)) }
+            guard let title = model.current?.title, title != String(prompt.prefix(64)) else { XCTFail("\(runtime.title) did not name its session"); continue }
+            print("TITLE VERIFIED: \(runtime.rawValue) named its session \"\(title)\"")
+        }
+    }
+
     func testInstalledHarnessModelsToolsContextAndQuestions() async throws {
         guard ProcessInfo.processInfo.environment["NOTCH_RUN_HARNESS_COMPATIBILITY_TESTS"] == "1" else {
             throw XCTSkip("Set NOTCH_RUN_HARNESS_COMPATIBILITY_TESTS=1 for native model, tool, usage and question checks.")

@@ -45,8 +45,10 @@ final class ClaudeLiveTests: XCTestCase {
         var result: [String: Any]?
         var diagnostic: String?
         var info = RuntimeSessionInfo()
+        var title: String?
         client.onEvent = { name, payload in
             if name == "session.info" { info.merge(payload, runtime: .claude) }
+            if name == "session.title" { title = payload["title"] as? String }
             if name == "message.complete" { result = payload }
             if name == "session.error" || name == "session.disconnected" { diagnostic = payload["message"] as? String }
             if name == "approval.request" || name == "clarify.request" {
@@ -60,6 +62,8 @@ final class ClaudeLiveTests: XCTestCase {
         XCTAssertEqual(result?["status"] as? String, "complete", diagnostic ?? "Native Claude did not complete")
         guard result?["status"] as? String == "complete" else { return }
         XCTAssertTrue((result?["text"] as? String)?.contains(marker) == true)
+        try await wait { title != nil }
+        XCTAssertFalse(title?.isEmpty ?? true, "Claude names a session created without a title")
         XCTAssertGreaterThan(info.context?.used ?? 0, 0)
         XCTAssertGreaterThan(info.context?.limit ?? 0, 0)
         XCTAssertEqual(info.context?.estimated, true)

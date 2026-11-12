@@ -270,6 +270,13 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var trustedProjectPath: String? = nil
     var nativeActivityUnverified: String? = nil
     var title: String = "New session"
+    /// The title is still the first prompt's opening words, so the runtime's own name may replace it.
+    var titleIsAutomatic: Bool = false
+    /// Takes the runtime's own name for the session; a title somebody chose stays.
+    mutating func adoptRuntimeTitle(_ value: Any?) {
+        let name = (value as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if titleIsAutomatic, !name.isEmpty { title = String(name.prefix(160)) }
+    }
     var state: WorkState = .idle
     var messages: [ChatMessage] = []
     var tools: [ToolActivity] = []
@@ -463,7 +470,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -471,6 +478,7 @@ extension CompanionSession {
         runtimeID = try values.decodeIfPresent(String.self, forKey: .runtimeID)
         storedID = try values.decodeIfPresent(String.self, forKey: .storedID)
         title = try values.decodeIfPresent(String.self, forKey: .title) ?? "New session"
+        titleIsAutomatic = try values.decodeIfPresent(Bool.self, forKey: .titleIsAutomatic) ?? false
         state = try values.decodeIfPresent(WorkState.self, forKey: .state) ?? .idle
         messages = try values.decodeIfPresent([ChatMessage].self, forKey: .messages) ?? []
         tools = try values.decodeIfPresent([ToolActivity].self, forKey: .tools) ?? []

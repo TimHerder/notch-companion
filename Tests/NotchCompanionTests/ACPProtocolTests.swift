@@ -36,6 +36,10 @@ final class ACPProtocolTests: XCTestCase {
         XCTAssertEqual(done.last?.payload["text"] as? String, "Working")
         XCTAssertTrue(state.finish("owned", stopReason: "end_turn").isEmpty)
         XCTAssertTrue(state.notification("session/update", update("owned", "agent_message_chunk", ["content": ["text": "late"]])).isEmpty)
+        let named = state.notification("session/update", update("owned", "session_info_update", ["title": "Read the marker"]))
+        XCTAssertEqual(named.map(\.name), ["session.title"], "A runtime names its session whether or not a turn is running")
+        XCTAssertEqual(named.first?.payload["title"] as? String, "Read the marker")
+        XCTAssertTrue(state.notification("session/update", update("external", "session_info_update", ["title": "Private"])).isEmpty)
     }
 
     func testPermissionScopesAreOfferedNativeOptionsAndSessionBound() throws {

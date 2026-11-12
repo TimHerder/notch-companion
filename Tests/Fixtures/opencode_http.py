@@ -257,7 +257,7 @@ class Handler(BaseHTTPRequestHandler):
         with lock:
             if path == '/session':
                 sid = 'ses_parent'
-                sessions[sid] = dict(id=sid, directory=unquote(self.headers['x-opencode-directory']), title=body['title'], metadata=body.get('metadata', {}))
+                sessions[sid] = dict(id=sid, directory=unquote(self.headers['x-opencode-directory']), title=body.get('title', 'New session - 2026-01-01T00:00:00.000Z'), metadata=body.get('metadata', {}))
                 history[sid] = []
                 save()
                 return self.send_json(200, sessions[sid])
@@ -292,6 +292,12 @@ class Handler(BaseHTTPRequestHandler):
                             pending_delegation_snapshot = intermediate
                     event('session.status', sessionID=sid, status=statuses[sid])
                     text = body['parts'][0]['text']
+                    if text == 'name-me':
+                        # The placeholder title is reported before the generated one.
+                        event('session.updated', sessionID=sid, info=dict(sessions[sid]))
+                        if sessions[sid]['title'].startswith('New session - '):
+                            sessions[sid]['title'] = 'Named by OpenCode'
+                        event('session.updated', sessionID=sid, info=dict(sessions[sid]))
                     self.send_json(204)
                     if text not in ['delegate-during-snapshot', 'delegate-during-nested-snapshot']:
                         threading.Thread(target=work, args=(sid, text), daemon=True).start()

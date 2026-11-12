@@ -150,6 +150,31 @@ final class OpenCodeHTTPTests: XCTestCase {
     }
 
     @MainActor
+    func testOnlyOpenCodesGeneratedTitleIsReported() async throws {
+        let fixture = try peer()
+        defer { try? FileManager.default.removeItem(at: fixture.home) }
+        let client = OpenCodeClient(profileID: fixture.home.path, executableURL: fixture.executable, supervisorURL: supervisor)
+        defer { client.disconnect() }
+        var events: [(String, [String: Any])] = []
+        client.onEvent = { events.append(($0, $1)) }
+        try await client.connect()
+        let opened = try await client.request("session.create", params: ["cwd": fixture.home.path])
+        let id = try XCTUnwrap(opened["session_id"] as? String)
+        _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "name-me", "turn_id": "title-turn"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.filter { $0.0 == "session.title" }.map { $0.1["title"] as? String }, ["Named by OpenCode"],
+                       "The dated placeholder is never a title")
+        XCTAssertNil(OpenCodeClient.generatedTitle("Child session - 2026-01-01T00:00:00.000Z"))
+        XCTAssertEqual(OpenCodeClient.generatedTitle("New session - 2026-Q4 planning"), "New session - 2026-Q4 planning")
+        client.disconnect()
+        let resumed = OpenCodeClient(profileID: fixture.home.path, executableURL: fixture.executable, supervisorURL: supervisor)
+        defer { resumed.disconnect() }
+        try await resumed.connect()
+        let snapshot = try await resumed.request("session.resume", params: ["session_id": id, "cwd": fixture.home.path])
+        XCTAssertEqual(snapshot["title"] as? String, "Named by OpenCode", "A name missed before a restart is read on resume")
+    }
+
+    @MainActor
     func testV2HTTPIsRejectedBeforeCreatingNativeSession() async throws {
         let fixture = try peer()
         defer { try? FileManager.default.removeItem(at: fixture.home) }

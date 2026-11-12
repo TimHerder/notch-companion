@@ -1079,7 +1079,7 @@ final class AppModel: ObservableObject {
     func renameSession(_ id: String, title: String) {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
-        update(id) { $0.title = String(title.prefix(160)) }
+        update(id) { $0.title = String(title.prefix(160)); $0.titleIsAutomatic = false }
         save()
     }
 
@@ -1673,7 +1673,7 @@ final class AppModel: ObservableObject {
             target.stagedSubmission = StagedSubmission(message: message, draft: queuedAttachments != nil ? reply : reply == nil ? session.draft : nil,
                                                         attachments: attachments)
             if reply == nil { target.draft = ""; target.attachments = [] }
-            if target.title == "New session" { target.title = String(text.prefix(64)) }
+            if target.title == "New session" { target.title = String(text.prefix(64)); target.titleIsAutomatic = true }
         }
         guard save() else {
             update(localID) {
@@ -1741,7 +1741,7 @@ final class AppModel: ObservableObject {
                 target.messages.append(message)
                 if target.permissionMode == .plan { target.planTurnID = turnID }
                 target.changes.append(changes)
-                if target.title == "New session" { target.title = String(text.prefix(64)) }
+                if target.title == "New session" { target.title = String(text.prefix(64)); target.titleIsAutomatic = true }
                 target.updatedAt = Date()
                 target.nativeSubmissionAttempted = true
                 target.pendingSubmission = PendingSubmission(id: turnID, draft: reply ?? session.draft,
@@ -1940,7 +1940,8 @@ final class AppModel: ObservableObject {
                 guard !session.isLegacyPrivate || session.messages.isEmpty else {
                     throw AppError("This legacy conversation has no native session ID. Use Continue in Hermes to carry its preserved context into a new session.")
                 }
-                params["title"] = session.title
+                // A runtime that names its own sessions is sent only a chosen title.
+                if session.title != "New session", !(session.titleIsAutomatic && session.runtime.namesOwnSessions) { params["title"] = session.title }
                 result = try await client.request("session.create", params: params)
             }
         } catch {
@@ -2017,6 +2018,8 @@ final class AppModel: ObservableObject {
         }
         update(localID) { target in
             target.runtimeID = sid
+            // A name the runtime gave the session while the app was away.
+            target.adoptRuntimeTitle(result["title"])
             if let info = result["info"] as? [String: Any] {
                 var snapshot = target.runtimeInfo ?? RuntimeSessionInfo()
                 snapshot.merge(info, runtime: target.runtime)
@@ -2174,6 +2177,8 @@ final class AppModel: ObservableObject {
             sessions[index].runtimeInfo = info
             // The runtime's running total for the current turn replaces any earlier report.
             if let tokens = payload["turn_tokens"] as? Int, tokens >= 0, let turnID { sessions[index].turnTokens[turnID] = tokens }
+        case "session.title":
+            sessions[index].adoptRuntimeTitle(payload["title"])
         case "runtime.notice":
             errorMessage = EventValue.string(payload["message"])
             turnNotices[localID] = errorMessage

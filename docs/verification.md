@@ -73,6 +73,13 @@ private development hasn't been re-run against this source snapshot. Known limit
   doesn't host. The child-discovery race and the unstable pre-send snapshot are
   covered by offline fixtures only, not live OpenCode.
 - Pi: no terminal-rendered extension UI and no built-in tool approvals.
+- Session titles: a session sent without a chosen title took its runtime's name
+  in a live native prompt (macOS 27.2, arm64, 2026-11-11) on Claude Code
+  2.1.311, OpenCode 2.0.30 and Antigravity CLI 1.5.3. The same prompt showed
+  Codex 0.162.1 leaves its thread unnamed. Hermes 0.22.3's `session.title` is
+  read from its installed source only (its sign-in needed renewal, so no prompt
+  ran). OpenCode 1.x and the ACP title update for Cursor and DeepSeek are
+  covered by fixtures only.
 
 - Claude computer use: the launch entry, dialog declaration, session-scoped
   approval, grant/deny/missing-permission/idle replies, undeclared kinds and the

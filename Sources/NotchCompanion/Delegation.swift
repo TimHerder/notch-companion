@@ -1073,6 +1073,7 @@ extension AppModel {
             session.id = id
             let title = (row["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             session.title = !title.isEmpty ? String(title.prefix(160)) : prompt.isEmpty ? "New session" : String((prompt.components(separatedBy: .newlines).first ?? prompt).prefix(64))
+            session.titleIsAutomatic = title.isEmpty && !prompt.isEmpty
             // An ordinary top-level session: it lists, searches and notifies like any other.
             sessions.insert(session, at: 0)
             save()
