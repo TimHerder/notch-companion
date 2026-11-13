@@ -27,6 +27,12 @@ draws a small one.
   come in.
 - **Files and screenshots.** Drop files onto the notch or capture a window with
   SnapShot. Attachments wait for review and are only sent when you send.
+- **Voice dictation.** Click the microphone beside Send to speak into the
+  draft, or hold a shortcut to ask a quick question from any app and release to
+  send it as a new session. Speech is transcribed on your Mac, with macOS's
+  built-in engine or the optional Parakeet model (about 480 MB, more accurate
+  with technical terms and detects the language you speak, downloaded once
+  from Hugging Face). Words from the microphone wait in the draft until you send.
 - **Change summaries.** See which files each turn changed, with line counts and
   diffs.
 - **A bit of character.** Animated eyes, or a mascot (Mote, Fold or Soot), that
@@ -69,7 +75,8 @@ owners. Notch Companion is not affiliated with or endorsed by them. See
 To update, wait until your sessions are idle, quit, and replace the app.
 
 **Control–Option–Space** opens the composer and **Escape** closes it. Your draft
-is kept.
+is kept. **Control–Option–V** starts dictating into a new session, and holding
+**Control–Option–A** asks by voice. Change any shortcut in Settings.
 
 ## Build from source
 
@@ -86,7 +93,8 @@ Needs macOS 26+, Xcode command-line tools, Python 3 and Node.js. See
 On your Mac, Notch Companion stores session routing, drafts, attachment paths
 and display state. Conversations, credentials and provider connections stay with each agent,
 and prompts go wherever that agent sends them. SnapShot asks for Screen
-Recording permission and captures only the window you choose.
+Recording permission and captures only the window you choose. Dictation asks
+for Microphone permission, and no audio leaves your Mac.
 
 ## Project
 
