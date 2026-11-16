@@ -260,7 +260,8 @@ independent of Status effects: the session title, then the harness and the verb
 failure's reason, the question or the command). Never while that conversation is
 on screen in the panel or the full-session window, never for a snoozed session,
 and never for a delegated child's own result; a child's question appears under
-its parent's title and opens the child's card. No sound of its own (the app's
+its parent's title (it wakes a snoozed parent, so it notifies) and opens the
+child's card. No sound of its own (the app's
 cues play). Each session keeps at most one notification, replaced by the next
 and removed once the session is read (opening it, or Mark all as read) or
 deleted. Clicking one opens the panel on its session. Turning the switch on asks

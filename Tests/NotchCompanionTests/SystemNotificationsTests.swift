@@ -43,7 +43,8 @@ private final class NoticeTestTransport: HermesTransport {
         posted = []
         model.sessions[0].snoozedUntil = Date().addingTimeInterval(3_600)
         XCTAssertNil(model.systemNotice(.finished, sessionID: parentID, detail: "x"), "A snoozed session never notifies")
-        XCTAssertNil(model.systemNotice(.needsInput, sessionID: child.id, detail: "x"), "Nor does its child")
+        XCTAssertEqual(model.systemNotice(.needsInput, sessionID: child.id, detail: "x")?.title, "Release notes",
+                       "A child's question wakes its snoozed parent, so it still notifies")
         model.sessions[0].snoozedUntil = nil
 
         model.expanded = true

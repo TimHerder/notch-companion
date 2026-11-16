@@ -316,6 +316,14 @@ import XCTest
         let later = try XCTUnwrap(steered.first { $0.payload["turn_tokens"] != nil }?.payload)
         XCTAssertEqual(later["turn_tokens"] as? Int, 15)
         XCTAssertEqual(ModelTokens.decode(later["turn_usage"]), ["claude-opus-5-5": ModelTokens(input: 15, cacheWriteHour: 0)])
+
+        try state.begin("t3")
+        let partial = try state.receive(["type": "result", "modelUsage": [
+            "claude-opus-5-5": ["inputTokens": 400, "outputTokens": 20, "cacheReadInputTokens": 30],
+            "claude-haiku-4-5": ["inputTokens": 5, "outputTokens": 5, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 50]]])
+        let missing = try XCTUnwrap(partial.first { $0.payload["turn_tokens"] != nil }?.payload)
+        XCTAssertNil(ModelTokens.decode(missing["turn_usage"]), "A model missing a kind is never priced as zero")
+        XCTAssertNotNil(missing["turn_usage"], "and the turn says so")
     }
 
     func testCodexSplitsTurnUsageForTheTurnsModel() throws {
@@ -334,7 +342,9 @@ import XCTest
         XCTAssertEqual(ModelTokens.decode(first["turn_usage"]), ["gpt-5.4": ModelTokens(input: 400, output: 50, cacheRead: 600, cacheWriteHour: 0)])
         _ = state.notifications("turn/completed", ["threadId": "t", "turn": ["id": "a", "status": "completed"]])
         _ = state.notifications("turn/started", ["threadId": "t", "turn": ["id": "b"]])
-        _ = state.notifications("model/rerouted", ["threadId": "t", "turnId": "b", "toModel": "gpt-5.4-mini"])
+        XCTAssertNotNil(ModelTokens.decode(usage("b", input: 1_500, cached: 600, output: 60)["turn_usage"]))
+        let reroute = state.notifications("model/rerouted", ["threadId": "t", "turnId": "b", "toModel": "gpt-5.4-mini"]).first?.payload ?? [:]
+        XCTAssertEqual((reroute["turn_usage"] as? [String: Any])?.isEmpty, true, "A reroute clears the turn's split at once")
         let rerouted = usage("b", input: 2_000, cached: 600, output: 80)
         XCTAssertNotNil(rerouted["turn_usage"], "An invalid turn says so, clearing an earlier split")
         XCTAssertNil(ModelTokens.decode(rerouted["turn_usage"]), "A rerouted turn cannot say which model used what")
@@ -343,5 +353,12 @@ import XCTest
         XCTAssertNotNil(ModelTokens.decode(usage("c", input: 2_100, cached: 600, output: 90)["turn_usage"]))
         XCTAssertNil(ModelTokens.decode(usage("c", input: 300_000, cached: 0, output: 100, last: 290_000)["turn_usage"]), "A prompt past 272K is priced at a tier left out")
         XCTAssertNil(ModelTokens.decode(usage("c", input: 300_100, cached: 0, output: 110)["turn_usage"]), "and stays unpriced for the rest of the turn")
+        _ = state.notifications("turn/completed", ["threadId": "t", "turn": ["id": "c", "status": "completed"]])
+        _ = state.notifications("turn/started", ["threadId": "t", "turn": ["id": "d"]])
+        XCTAssertNotNil(ModelTokens.decode(usage("d", input: 300_200, cached: 0, output: 120)["turn_usage"]))
+        let uncached = state.notifications("thread/tokenUsage/updated", ["threadId": "t", "turnId": "d", "tokenUsage": [
+            "total": ["totalTokens": 300_330, "inputTokens": 300_200, "outputTokens": 130], "last": ["inputTokens": 10]]]).first?.payload ?? [:]
+        XCTAssertNotNil(uncached["turn_usage"])
+        XCTAssertNil(ModelTokens.decode(uncached["turn_usage"]), "A report without cached input is unknown, never priced as uncached")
     }
 }

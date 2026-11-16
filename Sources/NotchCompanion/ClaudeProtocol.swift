@@ -35,6 +35,8 @@ struct ClaudeProtocolState {
     /// The same per model and kind, for the turn's priced split.
     private var processModelTokens: [String: ModelTokens] = [:]
     private var turnStartModelTokens: [String: ModelTokens] = [:]
+    /// Models this process reported without every kind; their split stays unknown.
+    private var malformedModels = Set<String>()
     /// Each assistant message's model and usage since the turn began, by message ID
     /// (a message repeats its usage on every content block): only these tell
     /// 5-minute from 1-hour cache writes.
@@ -377,6 +379,7 @@ struct ClaudeProtocolState {
                     sum + ["inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"].compactMap { Self.tokenCount(row[$0]) }.reduce(0, +)
                 }
                 var info: [String: Any] = [:]
+                malformedModels.formUnion(rows.filter { Self.modelTokens($0.value) == nil }.keys)
                 if total >= turnStartTokens {
                     info["turn_tokens"] = total - turnStartTokens
                     // Empty clears a split an earlier result of this turn reported.
@@ -384,7 +387,7 @@ struct ClaudeProtocolState {
                 }
                 if !info.isEmpty { events.append(event("session.info", info)) }
                 processTokens = total
-                processModelTokens = Self.modelTokens(rows)
+                processModelTokens = rows.compactMapValues(Self.modelTokens)
             }
             result = frame
             return events + completeIfSettled()
@@ -392,11 +395,11 @@ struct ClaudeProtocolState {
         return []
     }
 
-    private static func modelTokens(_ rows: [String: [String: Any]]) -> [String: ModelTokens] {
-        rows.mapValues { row in
-            ModelTokens(input: tokenCount(row["inputTokens"]) ?? 0, output: tokenCount(row["outputTokens"]) ?? 0,
-                        cacheRead: tokenCount(row["cacheReadInputTokens"]) ?? 0, cacheWrite: tokenCount(row["cacheCreationInputTokens"]) ?? 0)
-        }
+    /// Nil unless every kind is reported: a missing count is unknown, not zero.
+    private static func modelTokens(_ row: [String: Any]) -> ModelTokens? {
+        guard let input = tokenCount(row["inputTokens"]), let output = tokenCount(row["outputTokens"]),
+              let read = tokenCount(row["cacheReadInputTokens"]), let write = tokenCount(row["cacheCreationInputTokens"]) else { return nil }
+        return ModelTokens(input: input, output: output, cacheRead: read, cacheWrite: write)
     }
 
     /// This result's per-model difference from modelUsage, which also counts
@@ -404,7 +407,8 @@ struct ClaudeProtocolState {
     /// messages account for every one; a fast-mode model is left out (unpriced).
     private func turnUsage(_ rows: [String: [String: Any]]) -> [String: ModelTokens]? {
         var usage: [String: ModelTokens] = [:]
-        for (model, now) in Self.modelTokens(rows) {
+        for (model, row) in rows {
+            guard !malformedModels.contains(model), let now = Self.modelTokens(row) else { continue }
             let before = turnStartModelTokens[model] ?? ModelTokens()
             var delta = ModelTokens(input: now.input - before.input, output: now.output - before.output,
                                     cacheRead: now.cacheRead - before.cacheRead, cacheWrite: now.cacheWrite - before.cacheWrite)

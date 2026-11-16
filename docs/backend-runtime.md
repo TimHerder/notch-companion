@@ -687,10 +687,14 @@ Batch, priority/fast and data-residency prices are not applied.
 - **Codex:** the parent thread's `total` split (`inputTokens` includes
   `cachedInputTokens`; input plus output must equal `totalTokens`) minus the
   turn-start split, under the model the client sent on `turn/start` (selected,
-  else the thread's). A turn that reroutes, or has a request whose `last`
-  input exceeds 272K tokens (a higher price tier), reports an empty split,
-  which removes one saved earlier in the turn.
-- **Claude:** each model's change in `modelUsage` since the turn began. Its cache
+  else the thread's). A missing `cachedInputTokens` makes the report unusable,
+  never all-uncached. A turn that reroutes (at once), has a request whose `last`
+  input exceeds 272K tokens (a higher price tier) or is missing, or gets an
+  unusable report, reports an empty split, which removes one saved earlier in
+  the turn.
+- **Claude:** each model's change in `modelUsage` since the turn began; a model
+  whose row has ever lacked one of the four counts in this process stays
+  unpriced (an empty split when no model is left). Its cache
   writes split by retention only when the turn's assistant messages for that
   model (deduplicated by message ID) carry `cache_creation`
   `ephemeral_5m`/`ephemeral_1h` counts that add up to the change; a model with

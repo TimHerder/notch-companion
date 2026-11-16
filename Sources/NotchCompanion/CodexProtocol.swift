@@ -44,8 +44,7 @@ struct CodexProtocolState {
     static func split(_ value: Any?) -> ModelTokens? {
         guard let total = value as? [String: Any], let input = total["inputTokens"] as? Int, let output = total["outputTokens"] as? Int,
               let all = total["totalTokens"] as? Int, input + output == all else { return nil }
-        let cached = total["cachedInputTokens"] as? Int ?? 0
-        guard cached >= 0, cached <= input, output >= 0 else { return nil }
+        guard let cached = total["cachedInputTokens"] as? Int, cached >= 0, cached <= input, output >= 0 else { return nil }
         return ModelTokens(input: input - cached, output: output, cacheRead: cached)
     }
 
@@ -116,27 +115,32 @@ struct CodexProtocolState {
                 if let base = turnBaselines[tid], base.turn == incomingTurn, total >= base.total { info["turn_tokens"] = total - base.total }
                 tokenTotals[tid] = total
             }
-            if let split = Self.split(usage["total"]) {
-                if var turn = turnSplits[tid], turn.turn == incomingTurn {
-                    turn.long = turn.long || ((usage["last"] as? [String: Any])?["inputTokens"] as? Int ?? 0) > 272_000
-                    turnSplits[tid] = turn
+            let split = Self.split(usage["total"])
+            if var turn = turnSplits[tid], turn.turn == incomingTurn {
+                // A request the report cannot size counts as long: its price tier is unknown.
+                let last = (usage["last"] as? [String: Any])?["inputTokens"] as? Int
+                turn.long = turn.long || (last ?? .max) > 272_000
+                turnSplits[tid] = turn
+                // Empty clears a split this turn reported before a reroute, a long prompt or a malformed report.
+                info["turn_usage"] = [String: Any]()
+                if let split, let model = turn.model, !turn.long {
                     let delta = ModelTokens(input: split.input - turn.base.input, output: split.output - turn.base.output,
                                             cacheRead: split.cacheRead - turn.base.cacheRead, cacheWriteHour: 0)
-                    // Empty clears a split this turn reported before a reroute or a long prompt.
-                    info["turn_usage"] = turn.model.flatMap { model in
-                        !turn.long && min(delta.input, delta.output, delta.cacheRead) >= 0 && delta.total == info["turn_tokens"] as? Int
-                            ? [model: delta.payload] : nil
-                    } ?? [String: Any]()
+                    if min(delta.input, delta.output, delta.cacheRead) >= 0, delta.total == info["turn_tokens"] as? Int {
+                        info["turn_usage"] = [model: delta.payload]
+                    }
                 }
-                splitTotals[tid] = split
             }
+            // Without a usable total, later turns have no baseline until the next good report.
+            splitTotals[tid] = split
             return [event("session.info", info)]
         case "model/rerouted":
             guard !child, let model = params["toModel"] as? String else { return [] }
             models[tid] = model
             // A turn that changed model mid-way cannot say which tokens each used.
+            guard turnSplits[tid] != nil else { return [event("session.info", ["model": model])] }
             turnSplits[tid]?.model = nil
-            return [event("session.info", ["model": model])]
+            return [event("session.info", ["model": model, "turn_usage": [String: Any]()])]
         case "turn/started":
             guard let turn = params["turn"] as? [String: Any], let id = turn["id"] as? String else { return [] }
             activeTurns[tid] = id

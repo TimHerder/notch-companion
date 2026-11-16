@@ -103,13 +103,14 @@ final class SystemNotifications: NSObject, ObservableObject, UNUserNotificationC
 extension AppModel {
     /// The notification for an announced moment, or nil: a snoozed session, a
     /// conversation on screen or a child's own result never notifies. A child's
-    /// question surfaces under its parent's title and opens the child's card.
+    /// question surfaces under its parent's title, wakes it, and opens the child's card.
     func systemNotice(_ kind: NotchAnnouncement.Kind, sessionID: String, detail: String) -> SystemNotice? {
         guard kind != .hello, let session = sessions.first(where: { $0.id == sessionID }),
               session.snoozedUntil == nil, !isConversationOnScreen(sessionID) else { return nil }
         var title = session.title
         if let parentID = session.parentSessionID {
-            guard kind == .needsInput, let parent = sessions.first(where: { $0.id == parentID }), parent.snoozedUntil == nil else { return nil }
+            // A child's question wakes its parent, so a snoozed parent does not hold it back.
+            guard kind == .needsInput, let parent = sessions.first(where: { $0.id == parentID }) else { return nil }
             title = parent.title
         }
         return SystemNotice(sessionID: sessionID, title: title, subtitle: session.runtime.title + " · " + kind.verb,
