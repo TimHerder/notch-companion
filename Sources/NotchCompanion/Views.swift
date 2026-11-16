@@ -867,6 +867,15 @@ struct SettingsContent: View {
                     }
                         .help("Read, idle sessions move to Archived after this long without activity. Search and the Archived list still find them.")
                 }
+                SettingsRow("Remove worktrees", symbol: "arrow.triangle.branch", tint: .orange, divider: true) {
+                    ViewThatFits(in: .horizontal) {
+                        NotchSegmentedControl(label: "Remove worktrees", options: WorktreeCleanup.allCases,
+                                              title: \.label, selection: $model.removeWorktrees, small: true)
+                        NotchSegmentedControl(label: "Remove worktrees", options: WorktreeCleanup.allCases,
+                                              title: \.shortLabel, selection: $model.removeWorktrees, small: true, spoken: \.label)
+                    }
+                        .help("Removes worktrees Notch Companion created, once their session is idle. One with uncommitted changes is kept, and a branch is deleted only once merged.")
+                }
             }
             SettingsGroup(PanelTheme.pick(nil, "Composer", "Composer")) {
                 SettingsRow("Show model picker", symbol: "cube.fill", tint: .indigo) {

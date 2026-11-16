@@ -87,12 +87,20 @@ struct DraftDestinationView: View {
     @ObservedObject var model: AppModel
     var session: CompanionSession
     var choosingRuntime = false
+    var choosingWorkspace = false
 
     var body: some View {
         HStack(spacing: 8) {
             // Above its neighbour, so the open harness menu covers the folder button.
             SessionRuntimeControl(model: model, session: session, choosingRuntime: choosingRuntime).zIndex(1)
             WorkspaceButton(model: model, inDraft: true)
+            if let branches = model.worktreeBranches(for: session) {
+                WorktreeChoiceControl(model: model, session: session, branches: branches, choosing: choosingWorkspace).zIndex(1)
+            }
+        }
+        // A Git folder offers Local or New worktree; OpenClaw's agent workspace never does.
+        .task(id: session.runtime == .openclaw ? nil : session.workspacePath ?? model.workspacePath) {
+            if session.runtime != .openclaw { await model.loadBranches(for: session.workspacePath ?? model.workspacePath) }
         }
     }
 }
@@ -107,17 +115,21 @@ private struct WorkspaceButton: View {
     var body: some View {
         let path = model.currentWorkspacePath
         let choosing = model.canChooseCurrentWorkspace
+        // A worktree session shows its branch with a branch mark instead of the worktree's folder name.
+        let worktree = model.current?.worktree
+        let name = worktree?.branch ?? URL(fileURLWithPath: path).lastPathComponent
+        let symbol = worktree != nil ? "arrow.triangle.branch" : PanelTheme.current == .tahoe ? "folder.fill" : "folder"
         Button {
             if choosing { model.chooseSessionWorkspace() }
             else { model.openExternally(URL(fileURLWithPath: path, isDirectory: true)) }
         } label: {
             HStack(spacing: 5) {
+                // A branch keeps its readable start; its ID suffix is in the tooltip.
                 if PanelTheme.current == .refined || inDraft {
-                    Image(systemName: PanelTheme.current == .tahoe ? "folder.fill" : "folder").imageScale(.small)
-                    Text(URL(fileURLWithPath: path).lastPathComponent).lineLimit(1).truncationMode(.middle)
+                    Image(systemName: symbol).imageScale(.small)
+                    Text(name).lineLimit(1).truncationMode(worktree == nil ? .middle : .tail)
                 } else {
-                    Label(URL(fileURLWithPath: path).lastPathComponent,
-                          systemImage: PanelTheme.current == .tahoe ? "folder.fill" : "folder").lineLimit(1).truncationMode(.middle)
+                    Label(name, systemImage: symbol).lineLimit(1).truncationMode(worktree == nil ? .middle : .tail)
                 }
                 if choosing { Image(systemName: "chevron.up.chevron.down").font(.system(size: 7.5, weight: .semibold)) }
             }
@@ -125,9 +137,137 @@ private struct WorkspaceButton: View {
         // A long folder name stops at 150 points in the bar, so Send keeps its room.
         .modifier(WidthCap(limit: inDraft ? 220 : 150))
         .destinationButtonStyle(inDraft: inDraft)
-        .help(choosing ? "Choose this session’s working folder · \(path)" : "Show this session’s working folder in Finder · \(path)")
-        .accessibilityLabel(choosing ? "Working folder, \(path)" : "Show this session’s working folder in Finder, \(path)")
+        .help(worktree.map { "Worktree on \($0.branch) of \(URL(fileURLWithPath: $0.project).lastPathComponent) · \(path)" + Self.status($0) }
+              ?? (choosing ? "Choose this session’s working folder · \(path)" : "Show this session’s working folder in Finder · \(path)"))
+        .accessibilityLabel(worktree.map { "Show this session’s worktree in Finder, branch \($0.branch)." + Self.status($0) }
+                            ?? (choosing ? "Working folder, \(path)" : "Show this session’s working folder in Finder, \(path)"))
         .accessibilityHint(choosing ? "Choose another folder for this new session" : "")
+    }
+
+    /// Cleanup's outcome: removed until the next send, or kept and why.
+    static func status(_ worktree: SessionWorktree) -> String {
+        if worktree.removed == true { return "\nRemoved. Sending or restoring recreates it from its branch." }
+        return worktree.kept.map { "\nKept: \($0) Removal is retried later." } ?? ""
+    }
+}
+
+/// A Git draft's workspace: Local works in its folder; New worktree branches
+/// from a searchable base (the current branch by default) on the first send.
+struct WorktreeChoiceControl: View {
+    @ObservedObject var model: AppModel
+    var session: CompanionSession
+    var branches: GitBranches
+    @State private var choosing: Bool
+    @State private var search = ""
+    @StateObject private var popupDismissal = PopupDismissalMonitor()
+
+    init(model: AppModel, session: CompanionSession, branches: GitBranches, choosing: Bool = false) {
+        self.model = model
+        self.session = session
+        self.branches = branches
+        _choosing = State(initialValue: choosing)
+    }
+
+    var body: some View {
+        let base = session.worktreeBase
+        Button { choosing.toggle() } label: {
+            HStack(spacing: 5) {
+                Image(systemName: base == nil ? "laptopcomputer" : "arrow.triangle.branch").imageScale(.small)
+                Text(base.map { "Worktree · \($0)" } ?? "Local").lineLimit(1).truncationMode(.middle)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 7.5, weight: .semibold))
+            }
+        }
+        .modifier(WidthCap(limit: 200))
+        .destinationButtonStyle(inDraft: true)
+        .help(base.map { "Runs in a new worktree and branch from \($0), created on the first send" } ?? "Runs in this folder")
+        .accessibilityLabel("Workspace for this new session")
+        .accessibilityValue(base.map { "New worktree from \($0)" } ?? "Local")
+        .background(PopupDismissalRegion(monitor: popupDismissal))
+        // From its trailing edge: it ends the centred row, so the choices stay inside the panel.
+        .overlay(alignment: .trailing) {
+            if choosing { choices.fixedSize() }
+        }
+        .onChange(of: model.currentID) { _, _ in choosing = false }
+        .onChange(of: model.page) { _, _ in choosing = false }
+        .onChange(of: model.expanded) { _, expanded in if !expanded { choosing = false } }
+        .onChange(of: choosing, initial: true) { _, presented in
+            if presented { popupDismissal.start { choosing = false } } else { popupDismissal.stop(); search = "" }
+        }
+        .onDisappear { popupDismissal.stop() }
+    }
+
+    private var choices: some View {
+        let base = session.worktreeBase
+        return VStack(alignment: .leading, spacing: PanelTheme.pick(2, 2, 0)) {
+            row("Local", symbol: "laptopcomputer", selected: base == nil) {
+                model.setWorktreeBase(nil, for: session.id)
+                choosing = false
+            }
+            // Stays open on the branches, defaulting to the current one.
+            row("New worktree", symbol: "arrow.triangle.branch", selected: base != nil) {
+                if base == nil { model.setWorktreeBase(branches.current, for: session.id) }
+            }
+            if base != nil {
+                Group {
+                    if PanelTheme.current == .instrument { RuleLabel("Base branch").padding(.top, 4) }
+                    else {
+                        Text("Base branch").font(.system(size: PanelTheme.pick(11, 12, 11), weight: .semibold))
+                            .foregroundStyle(CompanionStyle.secondary).padding(.leading, 10).padding(.top, 6)
+                    }
+                }
+                NotchSearchField(prompt: "Search branches…", text: $search, label: "Find a base branch")
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: PanelTheme.pick(2, 2, 0)) {
+                        let names = branches.matching(search)
+                        ForEach(names, id: \.self) { name in
+                            row(name, detail: name == branches.current ? "current" : nil, selected: base == name) {
+                                model.setWorktreeBase(name, for: session.id)
+                                choosing = false
+                            }
+                        }
+                        if names.isEmpty {
+                            Text("No matching branches.").foregroundStyle(CompanionStyle.secondary).padding(.vertical, 6).padding(.leading, 10)
+                        }
+                    }
+                }
+                .frame(height: min(CGFloat(max(branches.matching(search).count, 1)) * 30, 150))
+            }
+        }
+        .padding(PanelTheme.pick(6, 5, 5)).frame(width: 260)
+        .modifier(WorktreePopupStyle())
+        .background(PopupDismissalRegion(monitor: popupDismissal))
+    }
+
+    private func row(_ title: String, symbol: String? = nil, detail: String? = nil, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if let symbol { Image(systemName: symbol).imageScale(.small).frame(width: 16) }
+                Text(title).lineLimit(1).truncationMode(.middle)
+                if let detail { Text(detail).foregroundStyle(CompanionStyle.tertiary) }
+                Spacer(minLength: 0)
+                if selected {
+                    if PanelTheme.current == .instrument { LED(color: CompanionStyle.text, size: 6) }
+                    else { Image(systemName: "checkmark").font(.system(size: PanelTheme.pick(10, 12, 10), weight: .semibold))
+                        .foregroundStyle(PanelTheme.current == .tahoe ? CompanionStyle.accent : CompanionStyle.text) }
+                }
+            }
+            .font(PanelTheme.pick(CompanionStyle.callout, .system(size: 13), .system(size: 12.5, weight: .medium)))
+            .padding(.horizontal, PanelTheme.pick(10, 9, 8)).frame(height: PanelTheme.pick(30, 30, 28))
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(PanelTheme.current == .instrument ? NotchRowButtonStyle(selected: selected) : NotchRowButtonStyle(cornerRadius: PanelTheme.pick(8, 7, 8)))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// The harness menu's surface in each design.
+private struct WorktreePopupStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        switch PanelTheme.current {
+        case .refined: content.notchPopover()
+        case .tahoe: content.notchPopover(cornerRadius: 12)
+        case .instrument: content.instrumentPopup()
+        }
     }
 }
 

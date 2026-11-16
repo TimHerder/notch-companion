@@ -135,6 +135,16 @@ private development hasn't been re-run against this source snapshot. Known limit
   yet checked live: hover and pressed states of Instrument's white keys, the
   question card's More button and scroller flash, keyboard shortcuts for queued
   messages, and a snooze waking on a real question or approval.
+- Worktree sessions and worktree cleanup: creating a session's worktree from
+  a local base branch, a refused creation keeping the draft, cleanup keeping
+  uncommitted work and unmerged branches, a delegated child following its
+  parent, the user's own worktree left alone, and recreation from a kept
+  branch are covered by unit tests against temporary Git repositories; the
+  draft's workspace choice, base-branch picker, Git error and branch chip by
+  offscreen fixtures in all three designs (`--worktree-only`). No live native
+  prompt has run in a worktree session, and the picker has not been used
+  physically. Children isolated before this change have no worktree record,
+  so their worktrees are never removed.
 
 - Configurable shortcuts and dictation: which keys a recorder accepts, cancels,
   clears or refuses (including the other action's combination), persistence

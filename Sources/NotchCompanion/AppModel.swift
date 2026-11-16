@@ -169,6 +169,17 @@ final class AppModel: ObservableObject {
     @Published var snoozeChoicesShown = false
     /// Sleeps until the earliest snoozed session's wake.
     var snoozeTimer: Task<Void, Never>?
+    @Published var removeWorktrees = WorktreeCleanup.archived {
+        didSet { preferences.set(removeWorktrees.rawValue, forKey: WorktreeCleanup.key) }
+    }
+    /// Draft folders' branches for New worktree; absent outside Git.
+    @Published var gitBranches: [String: GitBranches] = [:]
+    var worktreeTimer: Task<Void, Never>?
+    var worktreeCleanupTask: Task<Void, Never>?
+    /// When each session's worktree removal was last tried, so a kept one waits an hour.
+    var worktreeAttempts: [String: Date] = [:]
+    /// Worktrees being recreated, by session.
+    var worktreeRestores: [String: Task<Void, Error>] = [:]
     @Published private(set) var deferredOperation: DeferredOperation?
     @Published private(set) var answeringRequestIDs: Set<String> = []
     @Published private(set) var runtimeSettingsRevision = 0
@@ -282,9 +293,10 @@ final class AppModel: ObservableObject {
         session.id != currentID && !isSubmitting(session.id) && !unfinishedParents.contains(session.id)
             && (unfinishedChildren[session.id]?.isEmpty ?? true) && session.isDormant(after: autoArchiveAfter.interval, now: now)
     }
-    /// A session's project is its working folder; drafts without one use the default.
+    /// A session's project is its working folder (for a worktree session, the folder it branched from);
+    /// drafts without one use the default.
     func projectPath(of session: CompanionSession) -> String {
-        URL(fileURLWithPath: session.workspacePath ?? workspacePath).standardizedFileURL.path
+        URL(fileURLWithPath: session.worktree?.project ?? session.workspacePath ?? workspacePath).standardizedFileURL.path
     }
     /// Visible sessions grouped by project, both in the stable session order.
     var visibleProjects: [SessionProject] {
@@ -342,6 +354,7 @@ final class AppModel: ObservableObject {
         let savedUpdateStyle = preferences.string(forKey: NotchUpdateStyle.key)
         updateStyle = NotchUpdateStyle(rawValue: savedUpdateStyle ?? "") ?? (savedUpdateStyle == "shoulder" ? .compact : .popup)
         autoArchiveAfter = SessionAutoArchive(rawValue: preferences.string(forKey: SessionAutoArchive.key) ?? "") ?? .halfDay
+        removeWorktrees = WorktreeCleanup(rawValue: preferences.string(forKey: WorktreeCleanup.key) ?? "") ?? .archived
         companionAppearance = CompanionAppearance(rawValue: preferences.string(forKey: CompanionAppearance.key) ?? "")
             ?? (updateStyle == .compact ? .eyes : .mascot)
         mascotCharacter = MascotCharacter(rawValue: preferences.string(forKey: MascotCharacter.key) ?? "") ?? .mote
@@ -421,6 +434,7 @@ final class AppModel: ObservableObject {
         if sessions.isEmpty { var session = CompanionSession(); session.runtime = newDraftRuntime; session.profileID = RuntimeRoute.defaultProfile(session.runtime, defaults: preferences); applyNativeWorkspace(to: &session); sessions = [session]; currentID = session.id }
         delegationEnabled = preferences.object(forKey: "delegation.enabled") as? Bool ?? true
         configureDelegation()
+        startWorktreeCleanup()
         self.client.onEvent = { [weak self] name, payload in self?.receive(name, payload: payload) }
         self.client.onConnectionChange = { [weak self] connected, message in
             guard let self else { return }
@@ -769,7 +783,7 @@ final class AppModel: ObservableObject {
         // A hold in progress is dropped, never sent while quitting.
         asking = false
         dictation.cancel()
-        persistTask?.cancel(); snoozeTimer?.cancel(); save(); client.disconnect(); delegationServer.stop()
+        persistTask?.cancel(); snoozeTimer?.cancel(); worktreeTimer?.cancel(); save(); client.disconnect(); delegationServer.stop()
     }
 
     /// `workspace` starts the draft in a project's folder instead of the default.
@@ -1039,7 +1053,7 @@ final class AppModel: ObservableObject {
 
     func setRuntime(_ runtime: RuntimeKind, for id: String) {
         guard runtime.isSupported, canChangeRuntime(id), sessions.first(where: { $0.id == id })?.runtime != runtime else { return }
-        update(id) { $0.runtime = runtime; $0.profileID = RuntimeRoute.defaultProfile(runtime, defaults: preferences); $0.modelOverride = nil; $0.permissionMode = nil; $0.fullAccessConfirmed = false; $0.runtimeInfo = nil; $0.trustedProjectPath = nil; applyNativeWorkspace(to: &$0) }
+        update(id) { $0.runtime = runtime; $0.profileID = RuntimeRoute.defaultProfile(runtime, defaults: preferences); $0.modelOverride = nil; $0.permissionMode = nil; $0.fullAccessConfirmed = false; $0.runtimeInfo = nil; $0.trustedProjectPath = nil; if runtime == .openclaw { $0.worktreeBase = nil }; applyNativeWorkspace(to: &$0) }
         projectTrustSessionID = nil
         refreshConnection()
         save()
@@ -1102,6 +1116,7 @@ final class AppModel: ObservableObject {
     func restoreSession(_ id: String) {
         update(id) { $0.isArchived = false; $0.lastSeenAt = Date() }
         save()
+        Task { await recreateWorktrees(restoring: id) }
     }
 
     func openFailedAgent() {
@@ -1262,7 +1277,7 @@ final class AppModel: ObservableObject {
     /// A draft's folder can change until its native session exists. OpenClaw
     /// uses the workspace configured for its native agent.
     var canChooseCurrentWorkspace: Bool {
-        current.map { canChangeRuntime($0.id) && $0.runtime != .openclaw } ?? false
+        current.map { canChangeRuntime($0.id) && $0.runtime != .openclaw && $0.worktree == nil } ?? false
     }
 
     func chooseSessionWorkspace() {
@@ -1270,7 +1285,7 @@ final class AppModel: ObservableObject {
         let picker = folderPicker("Working folder for this session", from: session.workspacePath ?? workspacePath)
         guard runPicker(picker) == .OK, let url = picker.url, canChangeRuntime(session.id) else { return }
         // Project trust and model catalogs are per folder, so both follow it.
-        update(session.id) { $0.workspacePath = url.standardizedFileURL.path }
+        update(session.id) { $0.workspacePath = url.standardizedFileURL.path; $0.worktreeBase = nil }
         if projectTrustSessionID == session.id { projectTrustSessionID = nil }
         save()
     }
@@ -1686,6 +1701,8 @@ final class AppModel: ObservableObject {
         var appendedTurnID: String?
         var requestedSubmission = false
         do {
+            // Its folder must exist before the native session opens in it.
+            try await prepareWorktree(localID)
             let sid = try await ensureRuntime(localID)
             runtimeID = sid
             let capabilities = sessions.first(where: { $0.id == localID })?.capabilities ?? session.capabilities

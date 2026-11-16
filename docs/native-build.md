@@ -246,6 +246,11 @@ and full-session conversations using synthetic change metadata and no runtime;
 turn whose open card lists six of eight files and “2 more files” (three and
 “5 more files” in the notch). `--delegation-only` gives the delegating turn a
 card with the child's group, open while the child's result is handled.
+`--worktree-only` builds a temporary Git repository and renders a draft's
+workspace choice (`worktree-draft-local`, `-new`, `-new-full`), the open
+base-branch picker (`worktree-picker`, `-narrow`), a refused creation
+(`worktree-draft-error`) and a started worktree session's branch chip and
+project grouping (`worktree-session`, `-full`, `worktree-sessions-list`).
 `--work-only` renders a finished turn whose commentary and tool calls fold above
 its answer and changes (`compact-`/`full-worked-collapsed`, `-expanded`) and the
 same turn live with its interleaved text and ticking footer (`-worked-live`);

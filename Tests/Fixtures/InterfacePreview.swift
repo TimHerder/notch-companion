@@ -688,6 +688,71 @@ import ImageIO
         try render(UnifiedNotchView(model: model), size: compact, name: "delegation-waiting", output: output)
     }
 
+    /// A Git draft's Local / New worktree choice, its base-branch picker, a failed
+    /// creation, and a started worktree session's branch chip, from a temporary repository.
+    @MainActor static func renderWorktree(output: URL, temporary: URL, preferences: UserDefaults) throws {
+        let model = AppModel(storageURL: temporary.appendingPathComponent("worktree.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
+        defer { model.shutdown() }
+        let repository = temporary.appendingPathComponent("notch-companion")
+        try FileManager.default.createDirectory(at: repository, withIntermediateDirectories: true)
+        func git(_ arguments: [String]) throws {
+            _ = try WorkspaceChanges.run(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+                                          "-c", "core.hooksPath=/dev/null"] + arguments, at: repository.path, reportingErrors: true)
+        }
+        try Data("fixture".utf8).write(to: repository.appendingPathComponent("README.md"))
+        try git(["init", "-q", "-b", "main"]); try git(["add", "."]); try git(["commit", "-q", "-m", "Initial"])
+        for branch in ["feature/login-form", "fix/parser-trailing-commas", "docs/worktrees"] { try git(["branch", branch]) }
+        for remote in ["origin/main", "origin/release-2026.11"] { try git(["update-ref", "refs/remotes/" + remote, "main"]) }
+        let folder = repository.path
+        model.gitBranches[folder] = GitBranches.read(folder)
+        model.sessions[0].runtime = .codex
+        model.sessions[0].workspacePath = folder
+        model.currentID = model.sessions[0].id
+        model.connection = true
+        model.connectionMessage = "Codex connected"
+        model.reducedMotion = true
+        model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1920, height: 1080), topInset: 0,
+                                       leftArea: nil, rightArea: nil, indicatorCount: 0)
+        model.notchPresentation = .expanded(model.geometry!)
+        model.expanded = true
+        let compact = model.geometry!.expandedFrame.size
+        let full = NSSize(width: 900, height: 660)
+        model.page = .session
+        try render(UnifiedNotchView(model: model), size: compact, name: "worktree-draft-local", output: output)
+        model.setWorktreeBase("main", for: model.sessions[0].id)
+        try render(UnifiedNotchView(model: model), size: compact, name: "worktree-draft-new", output: output)
+        try render(FullSessionView(model: model), size: full, name: "worktree-draft-new-full", output: output)
+        // The open picker over the panel's width, outlined so any overflow shows.
+        for (width, name) in [(CGFloat(520), "worktree-picker"), (296, "worktree-picker-narrow")] {
+            try render(DraftDestinationView(model: model, session: model.sessions[0], choosingWorkspace: true)
+                .frame(width: width, height: 360).border(Color.red.opacity(0.6), width: 0.5).padding(20)
+                .background(CompanionStyle.background).foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
+                size: NSSize(width: width + 40, height: 400), name: name, output: output)
+        }
+        model.draft = "Fix the login form validation."
+        model.errorMessage = "Git could not create a worktree from main: fatal: a branch named 'notch/fix-the-login-form-1a2b3c4d' already exists"
+        try render(UnifiedNotchView(model: model), size: compact, name: "worktree-draft-error", output: output)
+        model.errorMessage = nil
+        // Started: its branch in the folder chip, grouped under the folder it branched from.
+        let checkout = model.worktreesDirectory.appendingPathComponent("notch-companion-1a2b3c4d/fix-the-login-form-1a2b3c4d").path
+        var started = CompanionSession(id: "worktree", runtimeID: "live-worktree", title: "Fix the login form validation", state: .finished,
+            messages: [ChatMessage(id: "turn", role: "user", text: "Fix the login form validation.", turnID: "turn"),
+                       ChatMessage(role: "assistant", text: "The form now rejects an empty password before submitting.", turnID: "turn")],
+            workspacePath: checkout)
+        started.runtime = .codex
+        started.storedID = "native-worktree"
+        started.worktree = SessionWorktree(repository: folder, project: folder, branch: "notch/fix-the-login-form-1a2b3c4d", path: checkout,
+                                           kept: "It has uncommitted changes.")
+        var local = CompanionSession(id: "local", title: "Update the README", state: .finished, workspacePath: folder)
+        local.runtime = .claude
+        model.sessions = [started, local]
+        model.currentID = "worktree"
+        try render(UnifiedNotchView(model: model), size: compact, name: "worktree-session", output: output)
+        try render(FullSessionView(model: model), size: full, name: "worktree-session-full", output: output)
+        model.page = .sessions
+        try render(UnifiedNotchView(model: model), size: compact, name: "worktree-sessions-list", output: output)
+    }
+
     @MainActor static func render<V: View>(_ content: V, size: NSSize, name: String, output: URL,
                                            settle: TimeInterval = 0.35) throws {
         // `--only a,b` renders just the fixtures whose names start with one of these prefixes.
@@ -761,6 +826,10 @@ import ImageIO
         }
         if CommandLine.arguments.contains("--delegation-only") {
             try renderDelegation(output: output, temporary: temporary, preferences: preferences)
+            return
+        }
+        if CommandLine.arguments.contains("--worktree-only") {
+            try renderWorktree(output: output, temporary: temporary, preferences: preferences)
             return
         }
         if CommandLine.arguments.contains("--work-only") {

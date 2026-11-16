@@ -229,17 +229,24 @@ enum WorkspaceChanges {
         return snapshot
     }
 
-    static func run(_ arguments: [String], at workspace: String, acceptsDifference: Bool = false, timeout seconds: TimeInterval = 5) throws -> String {
+    /// `reportingErrors` throws Git's own message (worktree commands), not the review hint.
+    static func run(_ arguments: [String], at workspace: String, acceptsDifference: Bool = false, timeout seconds: TimeInterval = 5,
+                    reportingErrors: Bool = false) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["--no-pager", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false"] + arguments
         process.currentDirectoryURL = URL(fileURLWithPath: workspace, isDirectory: true)
         process.environment = ["PATH": "/usr/bin:/bin", "HOME": FileManager.default.homeDirectoryForCurrentUser.path, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"]
         process.standardInput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        // Only short commands report errors, so their stderr cannot fill its pipe while stdout drains.
+        let errors = reportingErrors ? Pipe() : nil
+        process.standardError = errors ?? FileHandle.nullDevice
         let pipe = Pipe()
         process.standardOutput = pipe
-        defer { try? pipe.fileHandleForReading.close(); try? pipe.fileHandleForWriting.close() }
+        defer {
+            try? pipe.fileHandleForReading.close(); try? pipe.fileHandleForWriting.close()
+            try? errors?.fileHandleForReading.close(); try? errors?.fileHandleForWriting.close()
+        }
         try process.run()
         // SIGKILL bounds even a stuck filesystem/Git process; this is our child only.
         let timeout = DispatchWorkItem { if process.isRunning { kill(process.processIdentifier, SIGKILL) } }
@@ -249,6 +256,7 @@ enum WorkspaceChanges {
             if process.isRunning { kill(process.processIdentifier, SIGKILL); process.waitUntilExit() }
         }
         try pipe.fileHandleForWriting.close()
+        try errors?.fileHandleForWriting.close()
         var data = Data()
         var oversized = false
         while let chunk = try pipe.fileHandleForReading.read(upToCount: 65_536), !chunk.isEmpty {
@@ -261,6 +269,13 @@ enum WorkspaceChanges {
         process.waitUntilExit()
         guard !oversized else { throw AppError("The diff is too large to preview. Open the project in your editor.") }
         guard process.terminationStatus == 0 || (acceptsDifference && process.terminationStatus == 1) else {
+            if let errors {
+                let output = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                // Progress lines ("Preparing worktree…") come first; the failure is Git's fatal/error line.
+                let failures = output.split(separator: "\n").filter { $0.hasPrefix("fatal:") || $0.hasPrefix("error:") }
+                let message = (failures.isEmpty ? output : failures.joined(separator: "\n")).trimmingCharacters(in: .whitespacesAndNewlines)
+                throw AppError(message.isEmpty ? "Git exited with status \(process.terminationStatus)." : message)
+            }
             throw AppError("Could not read workspace changes. Open the project in your editor to review them.")
         }
         return String(decoding: data, as: UTF8.self)
