@@ -36,10 +36,12 @@ extension AppModel {
         save()
     }
 
-    /// A read result of an idle top-level session can be marked unread again.
+    /// A read result of an idle top-level session can be marked unread again. Not while
+    /// snoozed: its unread state is hidden and waking clears the receipt anyway, and an
+    /// unread failure would look newly arrived and wake it.
     func canMarkUnread(_ id: String) -> Bool {
         guard let session = sessions.first(where: { $0.id == id }) else { return false }
-        return session.parentSessionID == nil && !session.isBusy && !session.hasUnreadResult
+        return session.parentSessionID == nil && session.snoozedUntil == nil && !session.isBusy && !session.hasUnreadResult
             && [.finished, .failed].contains(session.displayState) && session.acknowledgedCompletionID != nil
     }
 

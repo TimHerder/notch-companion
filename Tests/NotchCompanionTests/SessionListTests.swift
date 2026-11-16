@@ -116,6 +116,12 @@ import XCTest
         XCTAssertFalse(model.isAutoArchived(session(model, "done")), "Unread sessions do not auto-archive")
         XCTAssertEqual(model.sessionIndicators.map(\.id), ["done", "busy"], "Its dot is back beside the working one")
         XCTAssertEqual(model.unreadResultCount, 1)
+        // Not while snoozed: an unread failure would look new and wake it.
+        model.update("busy") { $0.state = .failed; $0.parentTurnComplete = true; $0.runtimeID = nil; $0.completionID = "f"; $0.acknowledgeResult() }
+        model.snoozeSession("busy", until: Date().addingTimeInterval(hour))
+        XCTAssertFalse(model.canMarkUnread("busy"))
+        model.markUnread("busy")
+        XCTAssertNotNil(session(model, "busy").snoozedUntil)
         model.setSessionVisibility(notchVisible: true)
         model.selectSession("done")
         XCTAssertFalse(session(model, "done").hasUnreadCompletion, "Opening it reads it again")

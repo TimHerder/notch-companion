@@ -1103,8 +1103,9 @@ identify selection.
     the stable order; search, Snoozed and Archived group them by project. A
     pinned session never auto-archives; its dot, unread state and attention are
     unchanged. Archiving unpins; snoozing hides it until it wakes, still pinned.
-  - **Mark as unread** is offered on a read, idle top-level session whose last
-    turn has a result (finished or failed). It clears the read receipt, so the
+  - **Mark as unread** is offered on a read, idle, unsnoozed top-level session
+    whose last turn has a result (finished or failed); waking already returns a
+    snoozed one unread. It clears the read receipt, so the
     row, dots, glance and counts show it unread and it cannot auto-archive;
     opening it reads it again, by the usual read-receipt rules.
   - **Undo.** Archive, Snooze and Unpin from either browser show one quiet

@@ -583,14 +583,13 @@ struct SessionBrowserView: View {
                 Button(choice.title) { snooze(session, until: choice.until()) }.help(choice.help())
             }
             let reset = model.limitResetDate(for: session.id)
-            let others = HStack(spacing: 6) {
-                if let reset {
-                    Button(Self.limitResetTitle) { snooze(session, until: reset) }
-                        .help("Snooze until \(session.runtime.title)’s usage limit resets, \(SnoozeChoice.time(reset))")
-                }
-                Button(Self.customTitle) { customSnoozeDate = Self.defaultCustomDate(); model.customSnoozeShown = true }
-                    .help("Choose a day and time")
+            let limit = reset.map { reset in
+                Button(Self.limitResetTitle) { snooze(session, until: reset) }
+                    .help("Snooze until \(session.runtime.title)’s usage limit resets, \(SnoozeChoice.time(reset))")
             }
+            let custom = Button(Self.customTitle) { customSnoozeDate = Self.defaultCustomDate(); model.customSnoozeShown = true }
+                .help("Choose a day and time")
+            let others = HStack(spacing: 6) { limit; custom }
             let cancel = Button("Cancel") { model.snoozeChoicesShown = false }.help("Keep \(session.title) in your sessions")
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 6) { ForEach(0..<4) { choices[$0] }; others; cancel }
@@ -601,8 +600,8 @@ struct SessionBrowserView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) { ForEach(0..<2) { choices[$0] } }
                     HStack(spacing: 6) { ForEach(2..<4) { choices[$0] } }
-                    others
-                    cancel
+                    // The sidebar gives Until limit resets its own row.
+                    if let limit { limit; HStack(spacing: 6) { custom; cancel } } else { others; cancel }
                 }
             }
             .accessibilityElement(children: .contain)
