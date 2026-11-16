@@ -160,6 +160,15 @@ private development hasn't been re-run against this source snapshot. Known limit
   no turn) by its protocol fixture; every state by offscreen fixtures in all
   three designs (`--git-actions-only`). No live push, pull request, signed
   commit, real hook or live Claude title draft has run.
+- macOS notifications and the estimated cost: which moments notify (snoozed,
+  on-screen, child results and questions), their removal once read, the price
+  table, per-model recording from Codex and Claude protocol fixtures and the
+  Usage page's estimates are covered by offline tests; the denied switch and the
+  Usage page by offscreen fixtures in all three designs. Not yet checked live:
+  the authorization prompt, delivery and click-through from Notification Center
+  in an ad-hoc-signed build, and whether installed Codex and Claude Code report
+  splits that pass the checks (a turn that does not shows its tokens as
+  unpriced).
 
 - Configurable shortcuts and dictation: which keys a recorder accepts, cancels,
   clears or refuses (including the other action's combination), persistence

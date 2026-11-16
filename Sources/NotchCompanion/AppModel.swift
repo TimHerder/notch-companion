@@ -65,6 +65,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var announcement: NotchAnnouncement?
     /// Another session's result, named inside the open panel.
     @Published var panelToast: NotchAnnouncement?
+    /// Settings → macOS notifications; tests capture them instead.
+    var postSystemNotice: (SystemNotice) -> Void = { SystemNotifications.shared.post($0) }
+    var removeSystemNotices: ([String]) -> Void = { SystemNotifications.shared.remove($0) }
     @Published var pointerOffset = CGSize.zero
     /// Set by the host after a quiet spell with nobody near; the eyes doze.
     @Published var drowsy = false
@@ -1051,11 +1054,15 @@ final class AppModel: ObservableObject {
     /// Snapshots the message with the moment, so the band and stage keep
     /// saying what happened even if the session moves on during the hold.
     func announce(_ kind: NotchAnnouncement.Kind, sessionID: String, failure: String = "") {
-        guard statusEffects, let session = sessions.first(where: { $0.id == sessionID }) else { return }
+        guard let session = sessions.first(where: { $0.id == sessionID }) else { return }
+        let detail = SessionDigest.announcementDetail(kind, session: session, requests: requests, failure: failure)
+        // macOS notifications follow their own setting, not Status effects.
+        if let notice = systemNotice(kind, sessionID: sessionID, detail: detail) { postSystemNotice(notice) }
+        guard statusEffects else { return }
         // The same request the detail snapshots: an approval's detail is its command.
         let request = requests.first { $0.sessionID == session.runtimeID }
         announcement = NotchAnnouncement(kind: kind, sessionID: sessionID, title: session.title,
-                                         detail: SessionDigest.announcementDetail(kind, session: session, requests: requests, failure: failure),
+                                         detail: detail,
                                          worked: SessionDigest.turnStart(session).map { Date().timeIntervalSince($0) },
                                          isApproval: kind == .needsInput && session.nativeActivityUnverified == nil
                                             && request?.kind == .approval && !SessionDigest.oneLine(request?.detail ?? "").isEmpty)
@@ -1143,8 +1150,9 @@ final class AppModel: ObservableObject {
     func markAllAsRead() {
         var acknowledged = sessions
         var changed = false
-        for index in acknowledged.indices {
-            if acknowledged[index].acknowledgeResult() { changed = true }
+        for index in acknowledged.indices where acknowledged[index].acknowledgeResult() {
+            changed = true
+            removeSystemNotices([acknowledged[index].id])
         }
         guard changed else { return }
         sessions = acknowledged
@@ -1163,11 +1171,16 @@ final class AppModel: ObservableObject {
     }
 
     func acknowledgeVisibleSession() {
-        guard (notchSessionVisible && page == .session && fileDropChoice == nil)
-                || (fullSessionVisible && fullConversationVisible && !page.isRuntimeSetup),
-              let currentID, let index = sessions.firstIndex(where: { $0.id == currentID }),
-              sessions[index].acknowledgeResult() else { return }
+        guard let currentID, isConversationOnScreen(currentID) else { return }
+        removeSystemNotices([currentID])
+        guard let index = sessions.firstIndex(where: { $0.id == currentID }), sessions[index].acknowledgeResult() else { return }
         scheduleSave()
+    }
+
+    /// The panel's settled session page or the full window's Conversation tab shows it.
+    func isConversationOnScreen(_ id: String) -> Bool {
+        currentID == id && ((notchSessionVisible && page == .session && fileDropChoice == nil)
+            || (fullSessionVisible && fullConversationVisible && !page.isRuntimeSetup))
     }
 
     func deleteSession(_ id: String) {
@@ -1180,6 +1193,7 @@ final class AppModel: ObservableObject {
               }) else { return }
         sessions.removeAll { removed.contains($0.id) }
         removed.forEach(delegationServer.revoke)
+        removeSystemNotices(Array(removed))
         if currentID.map(removed.contains) == true { currentID = topLevelSessions.first?.id ?? sessions.first?.id }
         if topLevelSessions.isEmpty { var fresh = CompanionSession(); fresh.runtime = defaultRuntime; fresh.profileID = RuntimeRoute.defaultProfile(fresh.runtime, defaults: preferences); applyNativeWorkspace(to: &fresh); sessions.append(fresh); currentID = fresh.id }
         save()
@@ -2254,6 +2268,7 @@ final class AppModel: ObservableObject {
             sessions[index].runtimeInfo = info
             // The runtime's running total for the current turn replaces any earlier report.
             if let tokens = payload["turn_tokens"] as? Int, tokens >= 0, let turnID { sessions[index].turnTokens[turnID] = tokens }
+            if payload["turn_usage"] != nil, let turnID { sessions[index].turnUsage[turnID] = ModelTokens.decode(payload["turn_usage"]) }
         case "session.title":
             sessions[index].adoptRuntimeTitle(payload["title"])
         case "runtime.notice":

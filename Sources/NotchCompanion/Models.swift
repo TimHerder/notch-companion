@@ -286,6 +286,8 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var changes: [TurnChanges] = []
     /// Tokens each companion turn used, as the runtime reported them; absent is unknown.
     var turnTokens: [String: Int] = [:]
+    /// The same turns' tokens per model, split for pricing; absent turns are unpriced.
+    var turnUsage: [String: [String: ModelTokens]] = [:]
     /// When each turn ended (completed, failed or stopped), keyed by its visible user row:
     /// steering and wakes share a turn ID but each starts its own block.
     var turnEndedAt: [String: Date] = [:]
@@ -482,7 +484,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, isPinned, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic, worktreeBase, worktree, pullRequest
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnUsage, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, isPinned, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic, worktreeBase, worktree, pullRequest
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -522,6 +524,7 @@ extension CompanionSession {
         permissionMode = try? values.decodeIfPresent(PermissionMode.self, forKey: .permissionMode)
         fullAccessConfirmed = try values.decodeIfPresent(Bool.self, forKey: .fullAccessConfirmed) ?? false
         turnTokens = try values.decodeIfPresent([String: Int].self, forKey: .turnTokens) ?? [:]
+        turnUsage = (try? values.decodeIfPresent([String: [String: ModelTokens]].self, forKey: .turnUsage)) ?? [:]
         turnEndedAt = try values.decodeIfPresent([String: Date].self, forKey: .turnEndedAt) ?? [:]
         turnOutcome = try values.decodeIfPresent([String: WorkState].self, forKey: .turnOutcome) ?? [:]
         runtimeInfo = try values.decodeIfPresent(RuntimeSessionInfo.self, forKey: .runtimeInfo)

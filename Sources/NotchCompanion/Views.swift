@@ -987,6 +987,7 @@ struct SettingsContent: View {
                     }
                     .help("Light the notch edge and briefly name a session when it finishes, fails, or needs you.")
                 }
+                SettingsRow("macOS notifications", symbol: "app.badge.fill", tint: .red, divider: true) { SystemNotificationsToggle(model: model) }
                 SettingsRow("Live activity", symbol: "timer", tint: .orange, divider: true) {
                     Toggle("Live activity", isOn: $model.liveActivityEnabled).toggleStyle(NotchSwitchStyle())
                         .help("While an agent works or waits, show its current tool and running time beside the notch.")

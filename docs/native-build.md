@@ -235,7 +235,8 @@ or acceptance status changes. Rebuilding a tagged release is covered in
 ## Reproducible native UI fixtures
 
 Use `--settings-only` for full-height Settings captures at compact and narrow
-widths, including the version footer. The standalone fixture executable says
+widths, including the version footer. `settings-notifications-denied-560` shows macOS
+notifications switched on but denied, with its System Settings button. The standalone fixture executable says
 `Development build`; a fixture bundle with the release Info.plist shows the
 stamped release label.
 
@@ -273,7 +274,8 @@ with a mock transport and temporary session storage. It writes PNGs under
 welcome steps (`compact-welcome-0`…`4` on Apple silicon, whose dictation step is `3`, else `…3`;
 `-1-mascot` with Soot chosen, `-3-parakeet` with Parakeet chosen; the agent step lists the harnesses installed on the rendering Mac), clarification,
 failure, full conversation (also at 1440 × 900, `full-conversation-wide`), the
-full-session window's empty Activity and Team tabs, Settings and Usage, and
+full-session window's empty Activity and Team tabs, Settings and Usage (with
+priced, unpriced and unreported days and the estimated total), and
 Markdown with a long code line. The renderer supports both native SwiftPM and Swift 6.3 swiftbuild resource
 layouts and copies the resource bundle beside its standalone executable. The fixture
 never starts Hermes or modifies saved user sessions. Offscreen fixture renders

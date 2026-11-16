@@ -539,7 +539,7 @@ final class ClaudeClient: RuntimeTransport {
                         (event.payload["model"] as? String).map({ $0 != session.info["model"] as? String }) == true {
                         session.info.removeValue(forKey: "usage")
                     }
-                    session.info.merge(event.payload.filter { $0.key != "session_id" && $0.key != "turn_tokens" }) { _, new in new }
+                    session.info.merge(event.payload.filter { !["session_id", "turn_tokens", "turn_usage"].contains($0.key) }) { _, new in new }
                 }
                 emit(event)
             }

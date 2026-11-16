@@ -155,6 +155,7 @@ final class CodexClient: RuntimeTransport {
             let id = try state.register(thread)
             delegationInstructions[id] = delegation?["instructions"] as? String
             state.tokenTotals[id] = 0
+            state.splitTotals[id] = ModelTokens()
             remember(id, response)
             if let title = params["title"] as? String, !title.isEmpty {
                 titles[id] = title
@@ -237,6 +238,8 @@ final class CodexClient: RuntimeTransport {
                     if let effort = selectedModel.reasoningEffort { arguments["effort"] = effort }
                 }
                 arguments.merge(permissionArguments(sid, model: selectedModel)) { _, new in new }
+                // turn/started can arrive before this reply; usage is priced by this model.
+                state.models[sid] = selectedModel?.model ?? threadModels[sid]
                 // Additive context, as T3 Code sends it: the profile's instructions stay.
                 let instruct = delegationInstructions[sid].flatMap { instructedThreads.contains(sid) ? nil : $0 }
                 if let instruct { arguments["additionalContext"] = ["notch_delegation": ["kind": "application", "value": instruct]] }

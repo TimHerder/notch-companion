@@ -49,18 +49,28 @@ struct UsageView: View {
                 }
                 if days.isEmpty { note("No messages sent from here yet.") }
                 else {
+                    let shown = Array(days.prefix(30))
                     SettingsGroup {
-                        ForEach(Array(days.prefix(30).enumerated()), id: \.element.id) { index, day in
+                        ForEach(Array(shown.enumerated()), id: \.element.id) { index, day in
                             SettingsRow(Self.day(day.day) + " · " + day.runtime.title, divider: index > 0) {
-                                if theme == .instrument {
-                                    Text(Self.describe(day)).font(CompanionStyle.mono(11)).monospacedDigit()
-                                } else {
-                                    Text(Self.describe(day)).monospacedDigit().foregroundStyle(CompanionStyle.secondary)
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    value(Self.describe(day))
+                                    if day.total != nil { estimate(Self.describeCost(day.cost, unpriced: day.unpricedTokens)) }
                                 }
+                                .accessibilityElement(children: .combine)
                             }
+                        }
+                        SettingsRow("Estimated total", divider: true) {
+                            VStack(alignment: .trailing, spacing: 2) {
+                                value(Self.money(shown.compactMap(\.cost).reduce(nil) { ($0 ?? 0) + $1 }))
+                                let unpriced = shown.map(\.unpricedTokens).reduce(0, +)
+                                if unpriced > 0 { estimate(RuntimeContextUsage.tokens(unpriced) + " tokens unpriced") }
+                            }
+                            .accessibilityElement(children: .combine)
                         }
                     }
                     note("Tokens your harnesses reported for each message sent here, including cached input. — means none were reported.")
+                    note("Estimated: what these tokens would cost at the providers' standard API list prices for the models used. Subscriptions aren't billed this way. Models without a confirmed price, and older days, show —.")
                 }
             }
             .padding(.top, PanelTheme.pick(8, 10, 8)).padding(.bottom, PanelTheme.pick(12, 10, 8))
@@ -82,6 +92,17 @@ struct UsageView: View {
         case .tahoe: Text(text).foregroundStyle(CompanionStyle.secondary)
         case .instrument: Text(text).font(.system(size: 11)).foregroundStyle(CompanionStyle.faint)
         }
+    }
+
+    @ViewBuilder private func value(_ text: String) -> some View {
+        if PanelTheme.current == .instrument {
+            Text(text).font(CompanionStyle.mono(11)).monospacedDigit()
+        } else {
+            Text(text).monospacedDigit().foregroundStyle(CompanionStyle.secondary)
+        }
+    }
+    @ViewBuilder private func estimate(_ text: String) -> some View {
+        Text(text).font(UsageLimitRow.captionFont).monospacedDigit().foregroundStyle(UsageLimitRow.captionColor).lineLimit(1)
     }
 
     @ViewBuilder private func heading(_ text: String) -> some View {
@@ -174,6 +195,16 @@ struct UsageView: View {
     static func describe(_ day: UsageDay) -> String {
         let tokens = day.total.map { RuntimeContextUsage.tokens($0) + " tokens" } ?? "—"
         return day.unreportedTurns > 0 && day.total != nil ? tokens + " · \(day.unreportedTurns) unreported" : tokens
+    }
+
+    /// "Estimated $1.24", with the tokens no confirmed price covers; — when none priced.
+    static func describeCost(_ cost: Double?, unpriced: Int) -> String {
+        let text = "Estimated " + money(cost)
+        return unpriced > 0 ? text + " · " + RuntimeContextUsage.tokens(unpriced) + " tokens unpriced" : text
+    }
+    static func money(_ cost: Double?) -> String {
+        guard let cost else { return "—" }
+        return cost > 0 && cost < 0.005 ? "<$0.01" : String(format: "$%.2f", cost)
     }
 
     static func day(_ date: Date, now: Date = Date(), calendar: Calendar = .app) -> String {
