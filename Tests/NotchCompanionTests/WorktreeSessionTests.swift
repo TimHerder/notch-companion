@@ -271,6 +271,37 @@ import XCTest
         XCTAssertEqual(model.sessions.first { $0.id == id }?.worktree?.kept, "Another session works in it.")
     }
 
+    func testASymlinkIntoTheWorktreeStillKeepsIt() async throws {
+        let (model, _) = makeModel()
+        let repository = try makeRepository()
+        let (_, worktree) = try await archivedWorktreeSession(model, repository: repository)
+        let alias = repository.deletingLastPathComponent().appendingPathComponent("alias-\(UUID().uuidString)")
+        folders.append(alias)
+        try FileManager.default.createSymbolicLink(atPath: alias.path, withDestinationPath: worktree.path)
+        model.sessions.append(CompanionSession(id: "aliased", title: "Aliased", state: .working, workspacePath: alias.path))
+        await model.cleanUpWorktrees()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: worktree.path))
+    }
+
+    func testASharedChildsSendRecreatesItsParentsWorktree() async throws {
+        let (model, transport) = makeModel()
+        let repository = try makeRepository()
+        let (parentID, worktree) = try await archivedWorktreeSession(model, repository: repository)
+        let checkout = URL(fileURLWithPath: worktree.path)
+        try Data("x".utf8).write(to: checkout.appendingPathComponent("kept.txt"))
+        try git(["add", "."], at: checkout); try git(["commit", "-q", "-m", "Unmerged"], at: checkout)
+        var child = CompanionSession(id: "shared-child", title: "Shared child", workspacePath: worktree.path)
+        child.runtime = .codex
+        child.parentSessionID = parentID
+        model.sessions.append(child)
+        await model.cleanUpWorktrees()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: worktree.path))
+        let sent = await model.submit(reply: "Carry on", target: "shared-child")
+        XCTAssertTrue(sent, model.backgroundSendErrors["shared-child"] ?? "")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: worktree.path + "/kept.txt"), "The parent's worktree came back first")
+        XCTAssertEqual(transport.calls.last { $0.0 == "session.create" }?.1["cwd"] as? String, worktree.path)
+    }
+
     func testRestoreWaitsForARemovalInProgress() async throws {
         let (model, _) = makeModel()
         let repository = try makeRepository()

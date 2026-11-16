@@ -729,7 +729,8 @@ without `--force`, so a worktree with uncommitted or untracked files is kept
 (`kept`, retried after an hour), then `git branch -d <branch>`, which keeps an
 unmerged branch. A removed worktree (`removed`) or one deleted by hand comes
 back before the next send or on Restore with `git worktree add <path>
-<branch>`; if that fails (the branch was merged and deleted, for example) the
+<branch>` (a shared child's send recreates the ancestor's worktree it works in;
+paths are compared with symlinks resolved); if that fails (the branch was merged and deleted, for example) the
 error shows, the draft stays and nothing is sent. A restore and a send share
 one attempt, and both wait for a cleanup pass in progress. Git's stderr is
 read alongside its output, so a noisy hook cannot stall a command. Continuing in the

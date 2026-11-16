@@ -158,6 +158,12 @@ extension AppModel {
     func recreateWorktree(_ id: String) async throws {
         // A removal in progress finishes first, so it cannot take the recreated checkout.
         await worktreeCleanupTask?.value
+        // A shared child works in an ancestor's worktree, which comes back for it.
+        var owner = sessions.first { $0.id == id }
+        while let current = owner, current.worktree == nil, let parent = current.parentSessionID {
+            owner = sessions.first { $0.id == parent }
+        }
+        guard let id = owner?.id else { return }
         if let running = worktreeRestores[id] { return try await running.value }
         guard let worktree = sessions.first(where: { $0.id == id })?.worktree,
               !FileManager.default.fileExists(atPath: worktree.path) else { return }
@@ -214,10 +220,10 @@ extension AppModel {
                       worktreeAttempts[id].map({ now.timeIntervalSince($0) >= 3_600 }) ?? true else { continue }
                 worktreeAttempts[id] = now
                 // Another session working in it (`create_sessions` inherits the folder) keeps it.
-                let folder = URL(fileURLWithPath: worktree.path).standardizedFileURL.path
+                let folder = URL(fileURLWithPath: worktree.path).standardizedFileURL.resolvingSymlinksInPath().path
                 let tree = Set(delegatedDescendants(of: session.id) + [session.id])
                 if sessions.contains(where: { !tree.contains($0.id) && $0.workspacePath.map {
-                    let path = URL(fileURLWithPath: $0).standardizedFileURL.path
+                    let path = URL(fileURLWithPath: $0).standardizedFileURL.resolvingSymlinksInPath().path
                     return path == folder || path.hasPrefix(folder + "/")
                 } == true }) {
                     update(id) { $0.worktree?.kept = "Another session works in it." }
