@@ -1,6 +1,6 @@
 import Foundation
 
-/// Native OpenCode / DeepSeek Harness / Cursor CLI / Antigravity CLI ACP v1 frontends. Only
+/// Native OpenCode / DeepSeek Harness / Cursor CLI / Antigravity CLI / GitHub Copilot CLI ACP v1 frontends. Only
 /// the companion's delegation bridge is injected; no provider overrides or alternate empty
 /// agent homes; modes only as advertised and explicitly chosen per session.
 @MainActor
@@ -70,6 +70,7 @@ final class ACPRuntimeClient: RuntimeTransport {
             let launch = try Self.deepSeekLaunch(profileID: profileID)
             environment["DSH_HOME"] = launch.home; arguments = launch.arguments
         } else if [.opencode, .cursor, .antigravity].contains(runtime) { arguments = ["acp"] }
+        else if runtime == .copilot { arguments = ["--acp", "--stdio"] }
         else { throw ACPClientError.unavailable("This runtime has no supported ACP launch contract.") }
         let run = UUID(); generation = run
         process.onFrame = { [weak self] frame in
@@ -173,7 +174,7 @@ final class ACPRuntimeClient: RuntimeTransport {
                     "questions": [.opencode, .cursor, .antigravity].contains(runtime), "modelSelection": !catalog.models.isEmpty,
                     "contextUsage": true, "delegation": false,
                     "permissionModes": PermissionMode.allCases.filter { modeIDs[sid]?[$0] != nil }.map(\.rawValue)],
-                    "capability_note": [.cursor, .antigravity].contains(runtime) ? runtime.capabilityNote : runtime == .deepseek
+                    "capability_note": [.cursor, .antigravity, .copilot].contains(runtime) ? runtime.capabilityNote : runtime == .deepseek
                         ? "Selected native ACP composition; native resume preserves context but ACP does not replay history or expose interactive extensions. Lost sends require native verification."
                         : "ACP v1: native child activity is shown, but ACP cannot confirm child completion. If delegation occurs, further sends remain protected pending native verification. Models are reported after the native session opens."]
                 if let model = catalog.defaultModel?.model { info["model"] = model }
@@ -313,6 +314,7 @@ final class ACPRuntimeClient: RuntimeTransport {
                 let message = error["message"] as? String ?? "The native ACP request failed."
                 // ACP's auth_required; agy reuses the sign-in cached by an interactive `agy` session.
                 let text = code != -32000 ? message : runtime == .antigravity ? "Antigravity CLI is not signed in. Run agy in Terminal and sign in once, then send again."
+                    : runtime == .copilot ? "GitHub Copilot CLI is not signed in. Run copilot login in Terminal, then send again."
                     : message + " Complete authentication in the native runtime if requested."
                 continuation.resume(throwing: ACPClientError.rpc(code, text))
             } else if let result = frame["result"] as? [String: Any] { continuation.resume(returning: result) }

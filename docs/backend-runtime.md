@@ -1,7 +1,8 @@
 # Native runtime adapters
 
 The companion routes Hermes, Codex, OpenCode, Pi, OpenClaw, Claude Code,
-DeepSeek Harness, Antigravity CLI and Cursor CLI through `RuntimeTransport`. Each
+DeepSeek Harness, Antigravity CLI, Cursor CLI and GitHub Copilot CLI through
+`RuntimeTransport`. Each
 uses its existing native setup. [Verification](verification.md) records installed
 versions, real checks and open acceptance work; [adapter
 acceptance](multi-harness-handover.md) defines the required checks, upstream
@@ -32,13 +33,13 @@ Settings connection check. Finding an executable alone does not make a harness
 ready. Readiness survives orderly disconnects and restarts; location changes and
 failed connections invalidate it, and checks cancelled by reconnect or a
 location change cannot register stale setup. The draft's harness dropdown lists
-only ready, supported profiles without pending location changes; all nine stay
+only ready, supported profiles without pending location changes; all ten stay
 in Settings. A new draft prefers the ready `runtime.default`, then the first
 ready harness. With none ready, the UI links to Settings and disables Send while
 keeping drafts and attachments. Picker selection launches nothing. Established
 conversations keep their runtime/profile and recovery controls when setup is
 unavailable. Setup never installs, upgrades, signs in or collects provider
-credentials. Claude, Antigravity and Cursor (`requiresProjectTrust`) need a saved
+credentials. Claude, Antigravity, Cursor and Copilot (`requiresProjectTrust`) need a saved
 project-trust decision before headless hooks load; changing the profile or
 project invalidates it.
 
@@ -53,6 +54,7 @@ project invalidates it.
 | Claude Code | Installed unmodified `claude --print` stream-json; `CLAUDE_CONFIG_DIR`, trusted `cwd` | Native hooks/memory, exact UUID resume, models, permissions/questions, child events. Context = latest parent request's input/cache counts against the reported window. Never `--bare`, an SDK replacement or copied credentials; bypass only for confirmed [Full access](#permission-modes). |
 | Antigravity CLI | Installed [`agy acp`](https://antigravity.google/docs/ide/extensions/acp/) (ACP v1, shared ACP adapter) with its cached sign-in, never `authenticate`; original `~/.gemini/antigravity-cli`, trusted `cwd` | Exact conversation IDs and resume, file references, tools, approvals, native questions, Auto-edit/Plan modes, model discovery and exact-ID switching, delegation hosting. Context only from ACP `usage_update`. No images. Native permission rules still decide which actions ask. |
 | Cursor CLI | Installed `cursor-agent acp` after `authenticate` with `cursor_login`; native `~/.cursor`, trusted `cwd` | Shared ACP adapter. `cursor/ask_question` → question card, `cursor/create_plan` → plan approval, answered in the documented `outcome` shape; requests without `sessionId` are attributed by `toolCallId` or the sole active session, else declined. Sign-in stays with `cursor-agent login`; no profile override. |
+| GitHub Copilot CLI | Installed [`copilot --acp --stdio`](https://docs.github.com/en/copilot/reference/acp-server), never `authenticate`; native `~/.copilot` (`COPILOT_HOME`), trusted `cwd` | Shared ACP adapter. `session/load` replay, tools, approvals, images, models from the `model` config option, Plan mode, delegation hosting. ACP `-32000` before sign-in becomes a `copilot login` hint (`initialize` succeeds signed out, so Settings readiness doesn't prove sign-in). Questions aren't offered (no elicitation form). Its own permission settings decide which actions ask. No profile override. |
 
 ### Installed harness compatibility
 
@@ -169,7 +171,7 @@ owned children as well as the parent.
 | OpenCode 2 HTTP | Text/files/images | [`POST /api/session/{sessionID}/prompt`](https://dev.opencode.ai/v2/docs/api) with `delivery: steer` and an exact inbox receipt; only after negotiating `opencode-http-v2`. |
 | OpenCode 1 HTTP | Queue only | No delivery distinction. |
 | Claude Code | Text/files/images | User input with `priority: now`, `origin: {kind: human}` ([SDK changelog](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md#03286)). Enabled only when `system/init` reports CLI 2.x ≥ 2.1.286. |
-| DeepSeek and Cursor ACP v1 | Queue only | Standard [`session/prompt`](https://agentclientprotocol.com/protocol/v1/prompt-turn) has no same-turn steering. |
+| DeepSeek, Cursor and Copilot ACP v1 | Queue only | Standard [`session/prompt`](https://agentclientprotocol.com/protocol/v1/prompt-turn) has no same-turn steering. |
 | Antigravity ACP v1 | Queue only | agy [steers](https://antigravity.google/docs/ide/extensions/acp/) with a second `session/prompt` during a turn; the shared ACP adapter allows one prompt per session, so it queues. |
 | OpenClaw Gateway | Queue only | Upstream [`/steer`](https://docs.openclaw.ai/tools/steer) can fall back to a normal turn and has no verified receipt/run mapping here. |
 | Legacy Hermes | Queue only | Protected bridge. |
@@ -257,7 +259,7 @@ away), applied by the same rule.
 | Claude Code | Print mode names a session only on request: the first prompt of a session created without a title also sends the control request `generate_session_title {description: prompt, persist: true}`, which saves the name in the native transcript. It is optional: unanswered after 60 seconds or rejected by an older CLI, the prompt's opening words stay. |
 | OpenCode | A session created without a `title` gets the server's name after its first prompt: `session.renamed` (2.x) or `session.updated`'s `info.title` (1.x). The dated placeholder (`New session - <ISO time>`) is never reported. Resume returns the saved name as `title`. |
 | Hermes | Its own `session.title` event (a derived title first, then the model's). |
-| Antigravity, Cursor, DeepSeek | ACP `session_info_update` with a `title`. |
+| Antigravity, Cursor, DeepSeek, Copilot | ACP `session_info_update` with a `title`; without one the prompt's opening words stay. |
 | Codex, Pi, OpenClaw | None (`namesOwnSessions` is false). Codex app-server leaves a thread unnamed (its terminal UI names threads client-side), Pi only has names set by `/name` or the host, and OpenClaw derives a label from the first message. The prompt's opening words stay, here and as the native name. |
 
 Saved app preferences beat environment overrides. Hermes profile fallback is
@@ -592,6 +594,7 @@ exposed.
 | Claude Code | `set_permission_mode` (`default`, `acceptEdits`, `plan`, `bypassPermissions`), verified against the echo. Before the first override the profile mode is read from `get_settings` (`effective.permissions.defaultMode`, `manual` = `default`); Inherit restores it once. Each process reports the mode it opened in from `initialize.current_permission_mode` as `profile_permission_mode` session info (a `PermissionMode` raw value, else a title such as `Auto` for Claude's `auto`; `manual` = `default`; null when the CLI reports none, clearing a saved one). Restoring Inherit reports the restored mode the same way, since a resumed process can open in another mode than the configured one. A settings `defaultMode` of `bypassPermissions` opens in it without the flag below. `--allow-dangerously-skip-permissions` is passed only to a session opened with Full access or an idle session switched to it, which reopens its process (resuming if history exists). The reopen rechecks ownership after the old process exits; a disconnect during it cancels the launch. |
 | ACP (DeepSeek) | Advertised `modes.availableModes` matching a known name (`default`/`ask`, `acceptEdits`/`auto-edit`, `plan`, `bypassPermissions`/`full-access`/`yolo`) are offered via `session/set_mode`; Inherit restores the opening `currentModeId` once. |
 | ACP (Cursor) | Only `plan` (Cursor's `ask` is read-only Q&A, not Ask); Inherit restores the opening mode. |
+| ACP (Copilot) | Mode IDs are URLs (`https://agentclientprotocol.com/protocol/session-modes#plan`); the fragment is matched, the full ID sent. Only `plan`: `agent` follows Copilot's own permission settings (Inherit) and `autopilot` keeps asking, so it isn't Full access. Inherit restores the opening mode. |
 | ACP (Antigravity) | Advertised `accept-edits` → Auto-edit and `plan` → Plan (agy 1.5). Its `default` mode follows the native permission rules, which may never ask, so it is Inherit, not Ask; Inherit restores it once. 1.4 advertises no modes. |
 | Others | Hermes, Pi, OpenClaw and OpenCode map none. OpenCode V2 prompts have no agent/permission field. |
 
@@ -692,7 +695,7 @@ task.` when a role is given, sent as a background send through the normal
 staging, intent, duplicate and delivery protections without touching the
 composer or banner. A child inherits the parent's model only on the same
 harness. Any ready harness can be a child; only hosting harnesses give it tools.
-Claude, Antigravity and Cursor children need the user's existing trust for that
+Claude, Antigravity, Cursor and Copilot children need the user's existing trust for that
 harness and folder (`capability_denied` otherwise).
 
 **Worktrees.** `isolation: worktree` runs `git worktree add -b notch/<name>` from
@@ -752,7 +755,7 @@ cancels its tool call; an abandoned `wait` never acknowledges a result. An ACP
 session reloaded while live keeps the bridge it was opened with.
 
 **Injection** (`hostsDelegation`: Claude, Codex, OpenCode 2, DeepSeek, Pi,
-Cursor, Antigravity, Hermes, OpenClaw; version-specific, rerun native acceptance before release). An adapter
+Cursor, Copilot, Antigravity, Hermes, OpenClaw; version-specific, rerun native acceptance before release). An adapter
 may report `hosts_delegation` with a session or model catalog; `false` drops
 that route from hosting until it reports otherwise, and `orchestrator_capabilities`
 then says its children cannot delegate:
@@ -761,7 +764,7 @@ then says its children cannot delegate:
 | --- | --- |
 | Claude Code 2.1.287 | `--allowedTools mcp__notch__*` (Plan: only `orchestrator_capabilities`, `notch_session_list`, `notch_session_wait`, `pending_request_list`, `pending_request_read`); instructions as `appendSystemPrompt` in `initialize`; then the server, bearer header and 65-minute `timeout` via `mcp_set_servers`, so the token never enters argv. No `--strict-mcp-config`, and the delegation server never goes in `--mcp-config` (that carries only [computer use](#claude-computer-use)): user servers stay. A failed registration leaves the session usable with a notice. |
 | Codex 0.162.1 | Per-thread `config` on `thread/start`/`thread/resume` with only `mcp_servers.notch` (`url`, `http_headers.Authorization`, `tool_timeout_sec: 3900`), keeping user servers. Instructions as `additionalContext` `notch_delegation` (`kind: application`) on the thread's first turn in this process; `developerInstructions` untouched. |
-| ACP (DeepSeek, Cursor) | A stdio MCP server in `session/new`/`session/load` `mcpServers`: the companion executable with `--notch-delegation-bridge`, endpoint and token in its `env`. It relays JSON-RPC lines concurrently (65-minute timeout) and answers a revoked token with an error. Instructions come from the server's `initialize`. Without delegation `mcpServers` is `[]`. |
+| ACP (DeepSeek, Cursor, Copilot) | A stdio MCP server in `session/new`/`session/load` `mcpServers`: the companion executable with `--notch-delegation-bridge`, endpoint and token in its `env`. It relays JSON-RPC lines concurrently (65-minute timeout) and answers a revoked token with an error. Instructions come from the server's `initialize`. Without delegation `mcpServers` is `[]`. |
 | Antigravity CLI 1.5.2 | The same stdio bridge in `session/new`/`session/resume` `mcpServers`; agy starts it when the session opens and caches the tool descriptors and server instructions (never the endpoint or token) under its app data `mcp/notch/`. Instructions also go in `_meta.antigravity.systemPrompt.append` on every open when `initialize` advertises it, since agy keeps them only for its process. Nothing is written to its configuration (`agy mcp add` would). |
 | Pi 1.3.0 | Bundled `pi_delegation.mjs` via `--extension`, endpoint and token in the process environment (deleted before the agent runs commands). Registers tools as `mcp__notch__<tool>`; `before_agent_start` appends instructions. Uses `node:http`, not `fetch`, so hour-long waits are not cut. Nothing written to the Pi home. |
 | OpenCode 2.0.30 | One runtime server per session, `notch-<first 16 hex of SHA-256(native ID)>`, added with `PUT /api/experimental/mcp/{server}?location[directory]=<session folder>` (`type: remote`, bearer header, `oauth: false`); runtime-only, so it ends with the owned server and nothing is written to configuration. Added when the session opens and again before each prompt, because an idle folder drops runtime servers. Every server at a folder is visible there, so each session's rules (`PATCH /api/session/{id}` `permissions`, its other rules kept) end with deny `notch-????????????????_*` (one `?` per hex digit, so a user's own `notch-…` server stays usable), then allow its own `<server>_*`; earlier companion rules, the old `notch-*` deny included, are replaced. A session opened without delegation gets the deny alone and loses a stale `notch` instruction entry. Instructions as session instruction entry `notch`. A failure leaves the session usable with a notice. OpenCode 1.x reports `hosts_delegation: false`. |

@@ -23,6 +23,8 @@ enum RuntimeLocation: String, CaseIterable {
     case claudeProfile = "runtime.claude.profile"
     case cursorExecutable = "runtime.cursor.executable"
     case cursorProfile = "runtime.cursor.profile"
+    case copilotExecutable = "runtime.copilot.executable"
+    case copilotProfile = "runtime.copilot.profile"
 
     var runtime: RuntimeKind { RuntimeKind(rawValue: rawValue.split(separator: ".")[1].description)! }
     var isProfile: Bool { rawValue.hasSuffix(".profile") }

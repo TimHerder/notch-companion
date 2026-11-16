@@ -51,12 +51,13 @@ and the version/capability checks implemented in the adapter.
 | Claude Code | [Unmodified programmatic CLI](https://code.claude.com/docs/en/headless) |
 | Antigravity CLI | [`agy acp` server](https://antigravity.google/docs/ide/extensions/acp/) and [CLI reference](https://antigravity.google/docs/cli/reference) |
 | Cursor CLI | [ACP interface](https://cursor.com/docs/cli/acp) |
+| GitHub Copilot CLI | [ACP server](https://docs.github.com/en/copilot/reference/acp-server) and [configuration directory](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference) |
 
 ACP capabilities are negotiated; a shared protocol does not guarantee identical
 profile composition, approval behavior, extensions or persistence. In particular,
 DeepSeek's existing selected profile must remain intact. Do not create a minimal
-replacement profile to make its ACP startup succeed. Record Cursor's evidence as
-protocol fixtures until its installed CLI has passed live acceptance. Antigravity sends its questions
+replacement profile to make its ACP startup succeed. Record Cursor's and Copilot's evidence as
+protocol fixtures until their installed CLIs have passed live acceptance. Antigravity sends its questions
 as `interaction_` permission requests: their options are answers, never approvals,
 and its `load` accepts IDs it never saved, so check the native session list first.
 

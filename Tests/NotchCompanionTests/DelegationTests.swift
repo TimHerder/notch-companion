@@ -948,7 +948,7 @@ import XCTest
     }
 
     func testAnACPReloadKeepsTheBridgeItWasOpenedWith() async throws {
-        for runtime in [RuntimeKind.opencode, .cursor] { try await checkACPReloadKeepsTheBridge(runtime) }
+        for runtime in [RuntimeKind.opencode, .cursor, .copilot] { try await checkACPReloadKeepsTheBridge(runtime) }
     }
 
     private func checkACPReloadKeepsTheBridge(_ runtime: RuntimeKind) async throws {

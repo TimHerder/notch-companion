@@ -305,7 +305,9 @@ struct ACPProtocolState {
             "plan": .plan, "bypassPermissions": .fullAccess, "full-access": .fullAccess, "fullAccess": .fullAccess, "yolo": .fullAccess]
         var result: [PermissionMode: String] = [:]
         for row in modes?["availableModes"] as? [[String: Any]] ?? [] {
-            if let id = row["id"] as? String, let mode = known[id], result[mode] == nil { result[mode] = id }
+            // Copilot names its modes by URL (`…/session-modes#plan`); the fragment is the mode.
+            if let id = row["id"] as? String, let mode = known[id] ?? id.split(separator: "#").last.flatMap({ known[String($0)] }),
+               result[mode] == nil { result[mode] = id }
         }
         return result
     }

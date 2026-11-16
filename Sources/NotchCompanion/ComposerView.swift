@@ -75,7 +75,7 @@ struct ComposerView: View {
                     }.buttonStyle(NotchPillButtonStyle(small: true))
                 }
             }
-            if let session = model.current, [.pi, .deepseek, .antigravity, .cursor].contains(session.runtime), session.messages.isEmpty {
+            if let session = model.current, [.pi, .deepseek, .antigravity, .cursor, .copilot].contains(session.runtime), session.messages.isEmpty {
                 Text(session.runtimeInfo?.capabilityNote ?? session.runtime.capabilityNote)
                     .font(.system(size: 11)).foregroundStyle(CompanionStyle.secondary)
                     .fixedSize(horizontal: false, vertical: true)

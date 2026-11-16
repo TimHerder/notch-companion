@@ -54,14 +54,15 @@ Companion doesn't bundle agents, sell model access or sign in for you.
 | Antigravity CLI | `agy acp` | Supported. Can't take images |
 | DeepSeek Harness | ACP | Supported |
 | Cursor CLI | `cursor-agent acp` | Supported |
+| GitHub Copilot CLI | `copilot --acp` | Supported |
 
 What each agent can do depends on that agent. See the
 [runtime contract](docs/backend-runtime.md) and [verification record](docs/verification.md)
 for details.
 
 Claude Code, Codex, OpenCode, Pi, OpenClaw, DeepSeek Harness, Antigravity,
-Cursor and Hermes Agent and their logos are trademarks of their respective
-owners. Notch Companion is not affiliated with or endorsed by them. See
+Cursor, GitHub Copilot and Hermes Agent and their logos are trademarks of their
+respective owners. Notch Companion is not affiliated with or endorsed by them. See
 [third-party marks](docs/third-party-marks.md).
 
 ## Install
