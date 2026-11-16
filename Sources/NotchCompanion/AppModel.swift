@@ -177,6 +177,8 @@ final class AppModel: ObservableObject {
     /// Draft folders' branches for New worktree; absent outside Git.
     @Published var gitBranches: [String: GitBranches] = [:]
     var worktreeTimer: Task<Void, Never>?
+    /// Each session's Commit, Push and Open pull request state, shared by the notch and full window.
+    var gitActionControllers: [String: GitActionsController] = [:]
     var worktreeCleanupTask: Task<Void, Never>?
     /// When each session's worktree removal was last tried, so a kept one waits an hour.
     var worktreeAttempts: [String: Date] = [:]
@@ -1685,6 +1687,8 @@ final class AppModel: ObservableObject {
             set { if background { backgroundSendErrors[localID] = newValue } else { self.errorMessage = newValue } }
         }
         backgroundSendErrors.removeValue(forKey: localID)
+        // A commit or push in progress must not race a new turn's edits.
+        guard !gitActionRunning(near: localID) else { errorMessage = "Wait for the Git action to finish, then send."; return false }
         guard !persistenceBlocked else { errorMessage = "Restore the saved session registry before sending."; return false }
         guard session.runtime.isSupported else { errorMessage = session.runtime.capabilityNote; return false }
         guard isProjectTrusted(session) else {

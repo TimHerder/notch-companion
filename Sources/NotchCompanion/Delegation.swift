@@ -166,8 +166,13 @@ enum Delegation {
             throw DelegationFailure("orchestration_error", "Git could not create a worktree from \(base): \(error.localizedDescription)")
         }
         let relative = source.path == repository.path ? "" : String(source.path.dropFirst(repository.path.count + 1))
+        // A pull request's base: HEAD's branch, a local branch, or a remote-tracking one without its remote.
+        let baseBranch = base == "HEAD"
+            ? (try? WorkspaceChanges.run(["symbolic-ref", "--short", "-q", "HEAD"], at: source.path))?.trimmingCharacters(in: .whitespacesAndNewlines)
+            : (try? WorkspaceChanges.run(["rev-parse", "--verify", "--quiet", "refs/heads/" + base], at: repository.path)) != nil
+                ? base : base.split(separator: "/", maxSplits: 1).last.map(String.init)
         let record = SessionWorktree(repository: main, project: URL(fileURLWithPath: folder).standardizedFileURL.path,
-                                     branch: "notch/" + unique, path: worktree.path)
+                                     branch: "notch/" + unique, path: worktree.path, base: baseBranch?.isEmpty == false ? baseBranch : nil)
         return (relative.isEmpty ? worktree.path : worktree.appendingPathComponent(relative).path, record)
     }
 

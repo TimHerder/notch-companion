@@ -12,6 +12,8 @@ struct ChangeSummaryView: View {
     /// An open card lists this many files, then "N more files". The notch passes
     /// fewer, so an open card leaves its header and the answer above it in view.
     var fileLimit = 6
+    /// Commit, Push and Open pull request, on the latest finished turn's card.
+    var actions: GitActionsView? = nil
     @State var showsAllFiles = false
     @State var selectedPath: String?
 
@@ -118,6 +120,7 @@ struct ChangeSummaryView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 editorButton("Open project in \(editorName)", url: project)
+                if let actions { actions }
             }
         }
         .font(PanelTheme.pick(CompanionStyle.callout, .system(size: 12.5), .system(size: 11.5))).foregroundStyle(CompanionStyle.text)

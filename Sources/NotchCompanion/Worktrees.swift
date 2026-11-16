@@ -11,6 +11,8 @@ struct SessionWorktree: Codable, Equatable, Sendable {
     var branch: String
     /// The worktree's top folder.
     var path: String
+    /// The branch it was made from, as named on the remote: a pull request's default base.
+    var base: String? = nil
     /// Cleanup removed it; the next restore or send recreates it from `branch`.
     var removed: Bool? = nil
     /// Why the last removal kept it, such as uncommitted changes.
@@ -184,19 +186,25 @@ extension AppModel {
     /// Settings' rule for a top-level session, whose children's worktrees follow it.
     /// The whole tree must be idle: nothing running, sending, queued or being delegated.
     func worktreeCleanupDue(_ session: CompanionSession, now: Date = Date()) -> Bool {
-        let tree = [session.id] + delegatedDescendants(of: session.id)
-        let idle = tree.allSatisfy { id in
-            guard let member = sessions.first(where: { $0.id == id }) else { return true }
-            return !member.isBusy && member.pendingSubmission == nil && member.queuedSends.isEmpty && !isSubmitting(id)
-                && !unfinishedParents.contains(id) && (unfinishedChildren[id]?.isEmpty ?? true)
-        }
-        guard idle, !delegationCreations.values.contains(where: { tree.contains($0.parentID) }) else { return false }
+        // A commit or push in progress keeps its worktree.
+        guard treeIsIdle(session.id), !([session.id] + delegatedDescendants(of: session.id)).contains(where: { gitActionControllers[$0]?.working != nil }) else { return false }
         switch removeWorktrees {
         case .archived: return session.isArchived || isAutoArchived(session, now: now)
         case .inactive:
             return session.id != currentID && max(session.updatedAt, session.lastSeenAt ?? .distantPast) < now.addingTimeInterval(-WorktreeCleanup.inactiveInterval)
         case .never: return false
         }
+    }
+
+    /// Nothing in a session's tree is running, sending, unconfirmed, queued or being delegated.
+    func treeIsIdle(_ id: String) -> Bool {
+        let tree = [id] + delegatedDescendants(of: id)
+        let idle = tree.allSatisfy { id in
+            guard let member = sessions.first(where: { $0.id == id }) else { return true }
+            return !member.isBusy && member.pendingSubmission == nil && member.stagedSubmission == nil && member.queuedSends.isEmpty
+                && !isSubmitting(id) && !unfinishedParents.contains(id) && (unfinishedChildren[id]?.isEmpty ?? true)
+        }
+        return idle && !delegationCreations.values.contains(where: { tree.contains($0.parentID) })
     }
 
     /// Removes due worktrees; a kept one is retried an hour later. Sends wait for a run in progress.

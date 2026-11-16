@@ -251,6 +251,12 @@ workspace choice (`worktree-draft-local`, `-new`, `-new-full`), the open
 base-branch picker (`worktree-picker`, `-narrow`), a refused creation
 (`worktree-draft-error`) and a started worktree session's branch chip and
 project grouping (`worktree-session`, `-full`, `worktree-sessions-list`).
+`--git-actions-only` builds a temporary repository with a github.com remote and
+renders the latest change card's Git actions (`git-actions`, `-full`), the
+commit form (`-commit`, `-commit-full`), a hook failure (`-error`), push
+confirmation for the default branch (`-push`), the pull request form (`-pr`,
+`-pr-full`), the recorded link (`-linked`, `-linked-full`) and the busy caption
+(`-busy`).
 `--work-only` renders a finished turn whose commentary and tool calls fold above
 its answer and changes (`compact-`/`full-worked-collapsed`, `-expanded`) and the
 same turn live with its interleaved text and ticking footer (`-worked-live`);

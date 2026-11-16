@@ -230,13 +230,14 @@ enum WorkspaceChanges {
     }
 
     /// `reportingErrors` throws Git's own message (worktree commands), not the review hint.
+    /// Git actions pass the user's `environment` (hooks, signing, credentials) or another `executable` (`gh`).
     static func run(_ arguments: [String], at workspace: String, acceptsDifference: Bool = false, timeout seconds: TimeInterval = 5,
-                    reportingErrors: Bool = false) throws -> String {
+                    reportingErrors: Bool = false, executable: String = "/usr/bin/git", environment: [String: String]? = nil) throws -> String {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["--no-pager", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false"] + arguments
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = (executable == "/usr/bin/git" ? ["--no-pager", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false"] : []) + arguments
         process.currentDirectoryURL = URL(fileURLWithPath: workspace, isDirectory: true)
-        process.environment = ["PATH": "/usr/bin:/bin", "HOME": FileManager.default.homeDirectoryForCurrentUser.path, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"]
+        process.environment = environment ?? ["PATH": "/usr/bin:/bin", "HOME": FileManager.default.homeDirectoryForCurrentUser.path, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"]
         process.standardInput = FileHandle.nullDevice
         let errors = reportingErrors ? Pipe() : nil
         process.standardError = errors ?? FileHandle.nullDevice
@@ -283,7 +284,7 @@ enum WorkspaceChanges {
             if errors != nil {
                 let output = String(decoding: errorData, as: UTF8.self)
                 // Progress lines ("Preparing worktree…") come first; the failure is Git's fatal/error line.
-                let failures = output.split(separator: "\n").filter { $0.hasPrefix("fatal:") || $0.hasPrefix("error:") }
+                let failures = output.split(separator: "\n").filter { $0.hasPrefix("fatal:") || $0.hasPrefix("error:") || $0.hasPrefix(" ! ") }
                 let message = (failures.isEmpty ? output : failures.joined(separator: "\n")).trimmingCharacters(in: .whitespacesAndNewlines)
                 throw AppError(message.isEmpty ? "Git exited with status \(process.terminationStatus)." : message)
             }

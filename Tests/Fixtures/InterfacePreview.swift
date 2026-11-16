@@ -753,6 +753,82 @@ import ImageIO
         try render(UnifiedNotchView(model: model), size: compact, name: "worktree-sessions-list", output: output)
     }
 
+    /// The latest finished turn's change card with Commit, Push and Open pull request, from a temporary
+    /// repository whose branch has a GitHub remote: idle, each inline form, a hook error, a linked pull request and busy.
+    @MainActor static func renderGitActions(output: URL, temporary: URL, preferences: UserDefaults) throws {
+        let model = AppModel(storageURL: temporary.appendingPathComponent("git.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
+        defer { model.shutdown() }
+        let repository = temporary.appendingPathComponent("fix-the-login-form-1a2b3c4d")
+        try FileManager.default.createDirectory(at: repository.appendingPathComponent("Sources"), withIntermediateDirectories: true)
+        func git(_ arguments: [String]) throws {
+            _ = try WorkspaceChanges.run(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false",
+                                          "-c", "core.hooksPath=/dev/null"] + arguments, at: repository.path, reportingErrors: true)
+        }
+        try Data("fixture\n".utf8).write(to: repository.appendingPathComponent("Sources/LoginForm.swift"))
+        try git(["init", "-q", "-b", "main"]); try git(["add", "."]); try git(["commit", "-q", "-m", "Validate the login form"])
+        try git(["remote", "add", "origin", "https://github.com/example/notch-companion.git"])
+        try git(["update-ref", "refs/remotes/origin/main", "main"])
+        try git(["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"])
+        try git(["checkout", "-q", "-b", "notch/fix-the-login-form-1a2b3c4d"])
+        try git(["update-ref", "refs/remotes/origin/notch/fix-the-login-form-1a2b3c4d", "HEAD"])
+        try Data("fixture\nvalidated\n".utf8).write(to: repository.appendingPathComponent("Sources/LoginForm.swift"))
+        try Data("test\n".utf8).write(to: repository.appendingPathComponent("Sources/LoginFormTests.swift"))
+        let folder = repository.path
+        var session = CompanionSession(id: "git", runtimeID: "live-git", title: "Fix the login form validation", state: .finished,
+            messages: [ChatMessage(id: "turn", role: "user", text: "Fix the login form validation.", turnID: "turn"),
+                       ChatMessage(role: "assistant", text: "The form now rejects an empty password before submitting.", turnID: "turn")],
+            workspacePath: folder)
+        session.runtime = .codex
+        session.storedID = "native-git"
+        session.worktree = SessionWorktree(repository: folder, project: folder, branch: "notch/fix-the-login-form-1a2b3c4d", path: folder, base: "main")
+        session.changes = [WorkspaceChanges.capture(WorkspaceChanges.baseline(workspace: folder, turnID: "turn"))]
+        model.sessions = [session]
+        model.currentID = "git"
+        model.connection = true
+        model.connectionMessage = "Codex connected"
+        model.reducedMotion = true
+        model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1920, height: 1080), topInset: 0,
+                                       leftArea: nil, rightArea: nil, indicatorCount: 0)
+        model.notchPresentation = .expanded(model.geometry!)
+        model.expanded = true
+        model.page = .session
+        let compact = model.geometry!.expandedFrame.size
+        let full = NSSize(width: 900, height: 660)
+        let controller = model.gitActions(for: "git")
+        controller.repository = GitActions.read(folder)
+        func both(_ name: String) throws {
+            try render(UnifiedNotchView(model: model), size: compact, name: name, output: output)
+            try render(FullSessionView(model: model), size: full, name: name + "-full", output: output)
+        }
+        try both("git-actions")
+        controller.form = .commit
+        controller.excluded = ["Sources/LoginFormTests.swift"]
+        controller.message = "Reject an empty password in the login form\n\n- Modified Sources/LoginForm.swift"
+        try both("git-actions-commit")
+        controller.error = "lint: Sources/LoginForm.swift:2: trailing whitespace\nhusky - pre-commit script failed (code 1)"
+        try render(UnifiedNotchView(model: model), size: compact, name: "git-actions-error", output: output)
+        controller.error = nil
+        // Pushing the default branch asks first.
+        try git(["checkout", "-q", "main"])
+        controller.repository = GitActions.read(folder)
+        controller.form = .confirmPush
+        try render(UnifiedNotchView(model: model), size: compact, name: "git-actions-push", output: output)
+        try git(["checkout", "-q", "notch/fix-the-login-form-1a2b3c4d"])
+        controller.repository = GitActions.read(folder)
+        controller.form = .pullRequest
+        controller.title = "Validate the login form"
+        controller.base = "main"
+        controller.body = "- Validate the login form\n- Reject an empty password in the login form"
+        try both("git-actions-pr")
+        controller.form = nil
+        controller.notice = "Pushed notch/fix-the-login-form-1a2b3c4d to origin."
+        model.update("git") { $0.pullRequest = "https://github.com/example/notch-companion/pull/42" }
+        try both("git-actions-linked")
+        controller.notice = nil
+        model.backgroundSubmissions.insert("git")
+        try render(UnifiedNotchView(model: model), size: compact, name: "git-actions-busy", output: output)
+    }
+
     @MainActor static func render<V: View>(_ content: V, size: NSSize, name: String, output: URL,
                                            settle: TimeInterval = 0.35) throws {
         // `--only a,b` renders just the fixtures whose names start with one of these prefixes.
@@ -830,6 +906,10 @@ import ImageIO
         }
         if CommandLine.arguments.contains("--worktree-only") {
             try renderWorktree(output: output, temporary: temporary, preferences: preferences)
+            return
+        }
+        if CommandLine.arguments.contains("--git-actions-only") {
+            try renderGitActions(output: output, temporary: temporary, preferences: preferences)
             return
         }
         if CommandLine.arguments.contains("--work-only") {

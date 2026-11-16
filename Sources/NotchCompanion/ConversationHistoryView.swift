@@ -73,7 +73,12 @@ struct ConversationHistoryView: View {
                                               chooseEditor: { model.openInCodeEditor($0, choose: true) },
                                               onInspect: scrolling.stopFollowing,
                                               showsFiles: shows, toggle: { model.changeDisclosure[key] = !shows },
-                                              fileLimit: inNotch ? 3 : 6)
+                                              fileLimit: inNotch ? 3 : 6,
+                                              actions: session.flatMap { session in latestChanges.contains(summary.id) ? GitActionsView(
+                                                controller: model.gitActions(for: session.id),
+                                                blocked: model.gitActionsIdle(session.id) ? nil : "Git actions wait until this session, its delegated work, sessions in the same folder and any unconfirmed send are idle.",
+                                                pullRequest: session.pullRequest, isWorktree: session.worktree != nil, harness: session.runtime.title,
+                                                openURL: { model.openExternally($0) }) : nil })
                         }
                     }
                     .animation(model.reducedMotion ? nil : .easeOut(duration: 0.18),
