@@ -361,9 +361,14 @@ final class OpenCodeClient: RuntimeTransport {
             _ = try await v2Data("POST", endpoint + "/stage", body: ["messageID": message, "files": params["files"] as? Bool == true])
             do { _ = try await rawCall("POST", endpoint + "/commit") }
             catch {
-                // A staged revert is reversible: clearing it puts the boundary (and any restored files) back.
-                _ = try? await rawCall("DELETE", endpoint)
-                throw error
+                // The acknowledgement may be lost after a commit: native history decides. Unread, the outcome stays unknown.
+                guard (try? await refresh(sid)) != nil else { throw AppError("OpenCode's rewind may or may not have been committed. Reopen the session to read its history. \(error.localizedDescription)") }
+                let committed = !(messages[sid] ?? []).contains { ($0["info"] as? [String: Any])?["id"] as? String == message }
+                if !committed {
+                    // A staged revert is reversible: clearing it puts the boundary (and any restored files) back.
+                    _ = try? await rawCall("DELETE", endpoint)
+                    throw error
+                }
             }
             // Committed: a failed read must not report failure, or the app would keep the removed turns.
             do { return try await refresh(sid, restoring: true) }

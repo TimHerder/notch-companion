@@ -149,12 +149,14 @@ extension AppModel {
             var params: [String: Any] = ["session_id": sid, "turns": point.turns, "files": files]
             if let native = point.nativeMessageID { params["message_id"] = native }
             if let keep = point.keepsNativeID { params["native_message_id"] = keep }
+            // The cut must be saved once the harness has rewound; an unwritable registry refuses before that.
+            guard save() else { throw AppError("The session registry could not be saved, so nothing was rewound.") }
             requested = true
             let result = try await client.request("session.rewind", params: params)
             applyRewind(id, at: point, result: result)
         } catch {
-            // Claude Code closed its process to reopen it at the point; the next send resumes the session as saved.
-            if requested, session.runtime == .claude { update(id) { $0.runtimeID = nil } }
+            // The native outcome may be unknown (Claude Code also closed its process): the next use resumes and restores native history.
+            if requested { update(id) { $0.runtimeID = nil } }
             errorMessage = "\(session.runtime.title) could not rewind this conversation. " + error.localizedDescription
         }
     }
@@ -207,7 +209,10 @@ extension AppModel {
             && (children.contains(child.id) || child.delegation?.wakeMessageID.map(wakes.contains) == true) {
             update(child.id) { $0.delegation?.completionWake = false }
         }
-        save()
+        guard save() else {
+            errorMessage = "The rewind happened, but it could not be saved here. Copy your message from the composer before quitting."
+            return
+        }
         if available.count < files.count {
             errorMessage = "\(files.count - available.count) of the message's attached files no longer exist, so they were not added back."
         }
