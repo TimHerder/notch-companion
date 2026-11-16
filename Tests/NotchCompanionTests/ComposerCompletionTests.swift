@@ -109,6 +109,32 @@ final class ComposerCompletionTests: XCTestCase {
         view.insertText("/", replacementRange: NSRange(location: 0, length: 0))
         view.reportCompletion()
         XCTAssertTrue(completion.isOpen, "A new word opens it again")
+
+        view.insertText("co", replacementRange: view.selectedRange())
+        view.reportCompletion()
+        view.keyDown(with: key(36, "\r", .shift))
+        XCTAssertEqual(view.string, "/co\n", "⇧↩ still inserts a newline while the list is open")
+        view.string = ""
+        view.insertText("/co", replacementRange: NSRange(location: 0, length: 0))
+        view.reportCompletion()
+        view.keyDown(with: key(125, "\u{F701}", [.function, .numericPad, .shift]))
+        XCTAssertEqual(completion.selection, 0, "Only a plain ↓ moves the selection")
+
+        view.keyDown(with: key(53, "\u{1B}"))
+        XCTAssertFalse(completion.isOpen)
+        let other = editor(completion)
+        other.insertText("/co", replacementRange: NSRange(location: 0, length: 0))
+        other.reportCompletion()
+        XCTAssertTrue(completion.isOpen, "Escape in one session's editor does not close another's")
+    }
+
+    @MainActor func testChoosingInsideAQuotedMentionReplacesTheWholeMention() {
+        let draft = "See @\"My Notes/old.md\" now"
+        let trigger = ComposerCompletionTrigger.find(in: draft, caret: 8)
+        XCTAssertEqual(trigger?.query, "My")
+        XCTAssertEqual(trigger?.range, NSRange(location: 4, length: 18))
+        XCTAssertEqual(ComposerCompletionTrigger.find(in: "@\"open quote", caret: 3)?.range, NSRange(location: 0, length: 6),
+                       "An unclosed quote ends at the word")
     }
 
     @MainActor func testMarkedTextNeverOpensOrChooses() {

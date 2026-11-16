@@ -53,6 +53,13 @@ struct ComposerCompletionTrigger: Equatable {
         guard start < caret else { return nil }
         var end = caret
         while end < string.length, !isSpace(end) { end += 1 }
+        // A quoted mention runs to its closing quote, spaces included.
+        if string.length > start + 1, string.substring(with: NSRange(location: start, length: 2)) == "@\"",
+           let close = string.substring(from: start + 2).firstIndex(where: { $0 == "\"" || $0.isNewline }),
+           string.substring(from: start + 2)[close] == "\"" {
+            let length = string.substring(from: start + 2)[..<close].utf16.count
+            end = max(end, start + 2 + length + 1)
+        }
         let typed = string.substring(with: NSRange(location: start + 1, length: caret - start - 1))
         let range = NSRange(location: start, length: end - start)
         switch string.character(at: start) {
@@ -161,8 +168,12 @@ enum ComposerCompletionRanking {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: folder, isDirectory: &isDirectory), isDirectory.boolValue,
               FileManager.default.isReadableFile(atPath: folder) else { return [] }
-        if (try? WorkspaceChanges.run(["rev-parse", "--is-inside-work-tree"], at: folder)) == "true\n",
-           let listed = try? WorkspaceChanges.run(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], at: folder) {
+        if (try? WorkspaceChanges.run(["rev-parse", "--is-inside-work-tree"], at: folder)) == "true\n" {
+            // Git decides what is ignored: a failed listing shows nothing rather than a walk that ignores `.gitignore`.
+            guard var listed = try? WorkspaceChanges.run(["ls-files", "--cached", "--others", "--exclude-standard", "-z"], at: folder, truncating: true)
+            else { return [] }
+            // A cut-off listing ends inside a path.
+            if !listed.hasSuffix("\0"), let last = listed.lastIndex(of: "\0") { listed = String(listed[...last]) }
             var seen = Set<String>()
             // Merge conflicts list a path once per stage.
             return Array(listed.split(separator: "\0").map(String.init).filter { seen.insert($0).inserted }.prefix(limit))
@@ -204,7 +215,8 @@ enum ComposerCompletionRanking {
     @Published private(set) var trigger: ComposerCompletionTrigger?
     @Published private(set) var items: [ComposerCompletionItem] = []
     @Published private(set) var selection = 0
-    weak var editor: ComposerTextView?
+    /// A new editor is another session's: an earlier Escape no longer applies.
+    weak var editor: ComposerTextView? { didSet { if editor !== oldValue { dismissed = nil; trigger = nil; items = [] } } }
     /// Escape closes the list for that token until it is gone.
     private var dismissed: NSRange?
     private var commands: [RuntimeCommand] = []

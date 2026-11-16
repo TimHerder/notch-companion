@@ -239,7 +239,8 @@ saved and never reaches a runtime.
 
 The `@` list reads the session's working folder. In a Git work tree it runs
 `git ls-files --cached --others --exclude-standard -z` (read-only, bounded by
-`WorkspaceChanges.run`'s timeout); elsewhere it walks the folder, skipping
+`WorkspaceChanges.run`'s timeout, keeping the first 4 MB of a larger listing;
+a listing Git fails shows nothing rather than ignoring `.gitignore`); elsewhere it walks the folder, skipping
 hidden files, packages and common build folders (`node_modules`, `build`,
 `dist`, `target`, `DerivedData`, `Pods`, `__pycache__`, `venv`, `out`), at most
 12 levels deep. In the home folder itself it also skips the folders macOS guards

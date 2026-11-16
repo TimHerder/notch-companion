@@ -1011,7 +1011,8 @@ identify selection.
     paths first; at most 50 rows. A row shows the file name and its folder.
     Choosing writes `@relative/path ` as text, a reference the agent reads with
     its own tools, not an attachment; a path with whitespace is written
-    `@"relative/path"`, the quoted form Claude Code reads.
+    `@"relative/path"`, the quoted form Claude Code reads; choosing inside one
+    replaces it through its closing quote.
 - **Queue.** Queued messages appear above the field in order, three visible
   rows then scrolling; hover shows the full text and file names. Each row
   offers **Steer now** while the running turn can be steered (the steering path

@@ -231,8 +231,10 @@ enum WorkspaceChanges {
 
     /// `reportingErrors` throws Git's own message (worktree commands), not the review hint.
     /// Git actions pass the user's `environment` (hooks, signing, credentials) or another `executable` (`gh`).
+    /// `truncating` returns the first 4 MB of an oversized output instead of failing.
     static func run(_ arguments: [String], at workspace: String, acceptsDifference: Bool = false, timeout seconds: TimeInterval = 5,
-                    reportingErrors: Bool = false, executable: String = "/usr/bin/git", environment: [String: String]? = nil) throws -> String {
+                    reportingErrors: Bool = false, executable: String = "/usr/bin/git", environment: [String: String]? = nil,
+                    truncating: Bool = false) throws -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = (executable == "/usr/bin/git" ? ["--no-pager", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false"] : []) + arguments
@@ -279,6 +281,7 @@ enum WorkspaceChanges {
         }
         process.waitUntilExit()
         drained.wait()
+        if oversized && truncating { return String(decoding: data, as: UTF8.self) }
         guard !oversized else { throw AppError("The diff is too large to preview. Open the project in your editor.") }
         guard process.terminationStatus == 0 || (acceptsDifference && process.terminationStatus == 1) else {
             if errors != nil {
