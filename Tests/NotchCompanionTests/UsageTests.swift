@@ -225,6 +225,10 @@ import XCTest
         model.receive("session.info", payload: ["session_id": "live", "turn_tokens": 40])
         model.receive("session.info", payload: ["session_id": "live", "turn_tokens": 90])
         XCTAssertEqual(model.current?.turnTokens, [turn: 90])
+        model.receive("session.info", payload: ["session_id": "live", "turn_usage": ["gpt-5": ModelTokens(input: 90).payload]])
+        XCTAssertEqual(model.current?.turnUsage[turn], ["gpt-5": ModelTokens(input: 90)])
+        model.receive("session.info", payload: ["session_id": "live", "turn_usage": [String: Any]()])
+        XCTAssertNil(model.current?.turnUsage[turn], "An invalidated split is removed, not left priced")
         model.shutdown()
         let restored = AppModel(storageURL: folder.appendingPathComponent("sessions.json"), playsSounds: false, client: UsageFixture(), preferences: preferences)
         defer { restored.shutdown() }
@@ -262,7 +266,9 @@ import XCTest
         claude.turnTokens = ["priced": 2_000_000, "mixed": 1_500, "old": 700]
         claude.turnUsage = ["priced": ["claude-sonnet-4-6": ModelTokens(input: 1_000_000, output: 1_000_000, cacheWriteHour: 0)],
                             "mixed": ["claude-haiku-4-5": ModelTokens(input: 1_000, cacheWriteHour: 0), "unknown-model": ModelTokens(input: 500)]]
+        claude.messages.append(ChatMessage(id: "steer", role: "user", text: "steer", createdAt: today.addingTimeInterval(120), turnID: "priced"))
         let day = UsageDay.days([claude], calendar: calendar)[0]
+        XCTAssertEqual(day.total, 2_002_200, "A steer shares its turn's report and is not counted twice")
         XCTAssertEqual(day.cost ?? 0, 18.001, accuracy: 0.000001)
         XCTAssertEqual(day.unpricedTokens, 1_200, "An unknown model and a day recorded before the split are unpriced")
         XCTAssertEqual(UsageView.describeCost(day.cost, unpriced: day.unpricedTokens), "Estimated $18.00 · 1.2k tokens unpriced")
@@ -295,11 +301,21 @@ import XCTest
 
         try state.begin("t2")
         try assistant("c", "claude-opus-5-5", write: 0, hour: nil)
+        state.pendingSteering.insert("steer") // a steer keeps the turn open past this result
         let next = try state.receive(["type": "result", "modelUsage": [
             "claude-opus-5-5": ["inputTokens": 15, "outputTokens": 20, "cacheReadInputTokens": 30, "cacheCreationInputTokens": 300],
             "claude-haiku-4-5": ["inputTokens": 5, "outputTokens": 5, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 50]]])
         let second = try XCTUnwrap(ModelTokens.decode(next.first { $0.payload["turn_usage"] != nil }?.payload["turn_usage"]))
         XCTAssertEqual(second, ["claude-opus-5-5": ModelTokens(input: 5, cacheWriteHour: 0)], "Each turn reports its own difference per model")
+
+        // A steered turn's later result covers its earlier one, never just the difference.
+        state.pendingSteering.removeAll()
+        let steered = try state.receive(["type": "result", "modelUsage": [
+            "claude-opus-5-5": ["inputTokens": 25, "outputTokens": 20, "cacheReadInputTokens": 30, "cacheCreationInputTokens": 300],
+            "claude-haiku-4-5": ["inputTokens": 5, "outputTokens": 5, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 50]]])
+        let later = try XCTUnwrap(steered.first { $0.payload["turn_tokens"] != nil }?.payload)
+        XCTAssertEqual(later["turn_tokens"] as? Int, 15)
+        XCTAssertEqual(ModelTokens.decode(later["turn_usage"]), ["claude-opus-5-5": ModelTokens(input: 15, cacheWriteHour: 0)])
     }
 
     func testCodexSplitsTurnUsageForTheTurnsModel() throws {
@@ -319,9 +335,13 @@ import XCTest
         _ = state.notifications("turn/completed", ["threadId": "t", "turn": ["id": "a", "status": "completed"]])
         _ = state.notifications("turn/started", ["threadId": "t", "turn": ["id": "b"]])
         _ = state.notifications("model/rerouted", ["threadId": "t", "turnId": "b", "toModel": "gpt-5.4-mini"])
-        XCTAssertNil(usage("b", input: 2_000, cached: 600, output: 80)["turn_usage"], "A rerouted turn cannot say which model used what")
+        let rerouted = usage("b", input: 2_000, cached: 600, output: 80)
+        XCTAssertNotNil(rerouted["turn_usage"], "An invalid turn says so, clearing an earlier split")
+        XCTAssertNil(ModelTokens.decode(rerouted["turn_usage"]), "A rerouted turn cannot say which model used what")
         _ = state.notifications("turn/completed", ["threadId": "t", "turn": ["id": "b", "status": "completed"]])
         _ = state.notifications("turn/started", ["threadId": "t", "turn": ["id": "c"]])
-        XCTAssertNil(usage("c", input: 300_000, cached: 0, output: 100, last: 290_000)["turn_usage"], "A prompt past 272K is priced at a tier left out")
+        XCTAssertNotNil(ModelTokens.decode(usage("c", input: 2_100, cached: 600, output: 90)["turn_usage"]))
+        XCTAssertNil(ModelTokens.decode(usage("c", input: 300_000, cached: 0, output: 100, last: 290_000)["turn_usage"]), "A prompt past 272K is priced at a tier left out")
+        XCTAssertNil(ModelTokens.decode(usage("c", input: 300_100, cached: 0, output: 110)["turn_usage"]), "and stays unpriced for the rest of the turn")
     }
 }

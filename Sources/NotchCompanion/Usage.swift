@@ -103,7 +103,8 @@ struct ModelTokens: Codable, Equatable {
 
     var total: Int { input + output + cacheRead + cacheWrite }
 
-    /// `session.info.turn_usage`: `{model: {input, output, cache_read, cache_write, cache_write_1h?}}`.
+    /// `session.info.turn_usage`: `{model: {input, output, cache_read, cache_write, cache_write_1h?}}`;
+    /// empty when the turn has no usable split.
     static func decode(_ value: Any?) -> [String: Self]? {
         guard let rows = value as? [String: [String: Any]], !rows.isEmpty else { return nil }
         var result: [String: Self] = [:]
@@ -204,10 +205,13 @@ struct UsageDay: Identifiable, Equatable {
     static func days(_ sessions: [CompanionSession], calendar: Calendar = .current) -> [Self] {
         var rows: [String: Self] = [:]
         for session in sessions {
+            // A steer shares its turn's ID and report: count each turn once, on its first day.
+            var counted = Set<String>()
             for message in session.messages where message.role == "user" && SessionHistory.isVisibleConversation(message) {
+                let turn = message.turnID ?? message.id
+                guard counted.insert(turn).inserted else { continue }
                 var row = Self(runtime: session.runtime, day: calendar.startOfDay(for: message.createdAt))
                 row = rows[row.id] ?? row
-                let turn = message.turnID ?? message.id
                 if let tokens = session.turnTokens[turn] {
                     row.tokens += tokens; row.reportedTurns += 1
                     var priced = 0

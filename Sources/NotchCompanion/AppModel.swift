@@ -2268,7 +2268,7 @@ final class AppModel: ObservableObject {
             sessions[index].runtimeInfo = info
             // The runtime's running total for the current turn replaces any earlier report.
             if let tokens = payload["turn_tokens"] as? Int, tokens >= 0, let turnID { sessions[index].turnTokens[turnID] = tokens }
-            if let usage = ModelTokens.decode(payload["turn_usage"]), let turnID { sessions[index].turnUsage[turnID] = usage }
+            if payload["turn_usage"] != nil, let turnID { sessions[index].turnUsage[turnID] = ModelTokens.decode(payload["turn_usage"]) }
         case "session.title":
             sessions[index].adoptRuntimeTitle(payload["title"])
         case "runtime.notice":

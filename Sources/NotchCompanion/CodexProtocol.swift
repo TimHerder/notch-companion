@@ -122,10 +122,11 @@ struct CodexProtocolState {
                     turnSplits[tid] = turn
                     let delta = ModelTokens(input: split.input - turn.base.input, output: split.output - turn.base.output,
                                             cacheRead: split.cacheRead - turn.base.cacheRead, cacheWriteHour: 0)
-                    if let model = turn.model, !turn.long, min(delta.input, delta.output, delta.cacheRead) >= 0,
-                       delta.total == info["turn_tokens"] as? Int {
-                        info["turn_usage"] = [model: delta.payload]
-                    }
+                    // Empty clears a split this turn reported before a reroute or a long prompt.
+                    info["turn_usage"] = turn.model.flatMap { model in
+                        !turn.long && min(delta.input, delta.output, delta.cacheRead) >= 0 && delta.total == info["turn_tokens"] as? Int
+                            ? [model: delta.payload] : nil
+                    } ?? [String: Any]()
                 }
                 splitTotals[tid] = split
             }

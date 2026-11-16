@@ -27,11 +27,15 @@ struct ClaudeProtocolState {
     private var contextModel: String?
     private var contextUsed: Int?
     private var contextWindow: Int?
-    /// modelUsage is cumulative for this process; each result adds the difference.
+    /// modelUsage is cumulative for this process; each result reports the
+    /// difference from where the companion turn began, so a steered turn's
+    /// later results still cover its earlier ones.
     private var processTokens = 0
+    private var turnStartTokens = 0
     /// The same per model and kind, for the turn's priced split.
     private var processModelTokens: [String: ModelTokens] = [:]
-    /// Each assistant message's model and usage since the last result, by message ID
+    private var turnStartModelTokens: [String: ModelTokens] = [:]
+    /// Each assistant message's model and usage since the turn began, by message ID
     /// (a message repeats its usage on every content block): only these tell
     /// 5-minute from 1-hour cache writes.
     private var messageUsage: [String: (model: String, usage: [String: Any])] = [:]
@@ -49,6 +53,7 @@ struct ClaudeProtocolState {
         guard !active, children.isEmpty, requests.isEmpty else { throw AppError("Claude Code still has active work or a pending interaction.") }
         active = true; turnID = id; result = nil; text = ""; failedChild = false; interrupted = false; errorCategory = nil
         partialMessages.removeAll(); tools.removeAll(); taskAliases.removeAll(); agentTools.removeAll(); messageUsage.removeAll()
+        turnStartTokens = processTokens; turnStartModelTokens = processModelTokens
         contextUsed = nil
         if nativeState != nil { nativeState = "running" }
     }
@@ -372,16 +377,16 @@ struct ClaudeProtocolState {
                     sum + ["inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"].compactMap { Self.tokenCount(row[$0]) }.reduce(0, +)
                 }
                 var info: [String: Any] = [:]
-                if total >= processTokens { info["turn_tokens"] = total - processTokens }
-                if let usage = turnUsage(rows), !usage.isEmpty, info["turn_tokens"] != nil {
-                    info["turn_usage"] = usage.mapValues(\.payload)
+                if total >= turnStartTokens {
+                    info["turn_tokens"] = total - turnStartTokens
+                    // Empty clears a split an earlier result of this turn reported.
+                    info["turn_usage"] = turnUsage(rows)?.mapValues(\.payload) ?? [:]
                 }
                 if !info.isEmpty { events.append(event("session.info", info)) }
                 processTokens = total
                 processModelTokens = Self.modelTokens(rows)
             }
             result = frame
-            messageUsage.removeAll()
             return events + completeIfSettled()
         }
         return []
@@ -400,7 +405,7 @@ struct ClaudeProtocolState {
     private func turnUsage(_ rows: [String: [String: Any]]) -> [String: ModelTokens]? {
         var usage: [String: ModelTokens] = [:]
         for (model, now) in Self.modelTokens(rows) {
-            let before = processModelTokens[model] ?? ModelTokens()
+            let before = turnStartModelTokens[model] ?? ModelTokens()
             var delta = ModelTokens(input: now.input - before.input, output: now.output - before.output,
                                     cacheRead: now.cacheRead - before.cacheRead, cacheWrite: now.cacheWrite - before.cacheWrite)
             guard min(delta.input, delta.output, delta.cacheRead, delta.cacheWrite) >= 0 else { return nil }

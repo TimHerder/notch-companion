@@ -32,7 +32,10 @@ final class SystemNotifications: NSObject, ObservableObject, UNUserNotificationC
     @Published private(set) var denied = false
     /// Clicking a notification opens its session.
     var open: ((String) -> Void)?
+    /// Sessions that may have a notification, so reads need not call macOS each time.
     private var delivered = Set<String>()
+    /// Until the last run's notifications are listed, every removal goes to macOS.
+    private var listedDelivered = false
 
     /// UserNotifications needs an app bundle with an identifier; the bare
     /// SwiftPM executable and the test runner have none and must not touch it.
@@ -46,7 +49,8 @@ final class SystemNotifications: NSObject, ObservableObject, UNUserNotificationC
         center.delegate = self
         Task {
             // Notifications from the last run can still be removed once read.
-            delivered = Set(await center.deliveredNotifications().map(\.request.identifier))
+            delivered.formUnion(await center.deliveredNotifications().map(\.request.identifier))
+            listedDelivered = true
             await refreshAuthorization()
         }
     }
@@ -66,7 +70,8 @@ final class SystemNotifications: NSObject, ObservableObject, UNUserNotificationC
     }
 
     func post(_ notice: SystemNotice) {
-        guard enabled, !denied, let center else { return }
+        // Not gated on `denied`: access granted later in System Settings applies at once.
+        guard enabled, let center else { return }
         let content = UNMutableNotificationContent()
         content.title = notice.title
         content.subtitle = notice.subtitle
@@ -78,7 +83,7 @@ final class SystemNotifications: NSObject, ObservableObject, UNUserNotificationC
     }
 
     func remove(_ sessionIDs: [String]) {
-        let ids = sessionIDs.filter { delivered.remove($0) != nil }
+        let ids = sessionIDs.filter { delivered.remove($0) != nil || !listedDelivered }
         guard !ids.isEmpty, let center else { return }
         center.removeDeliveredNotifications(withIdentifiers: ids)
         center.removePendingNotificationRequests(withIdentifiers: ids)
