@@ -740,6 +740,80 @@ import ImageIO
         try render(FullSessionView(model: model), size: full, name: "full-resume-scheduled", output: output)
     }
 
+    /// Goals: the Goal overlay new, active and paused at its cap; a goal turn working with
+    /// its footer line; and the Goal reached row.
+    @MainActor static func renderGoals(output: URL, temporary: URL, preferences: UserDefaults) throws {
+        let model = AppModel(storageURL: temporary.appendingPathComponent("goals.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
+        defer { model.shutdown() }
+        let start = Date().addingTimeInterval(-3_600)
+        func at(_ second: Double) -> Date { start.addingTimeInterval(second) }
+        let objective = "Every test in the suite passes on a clean checkout, with no skipped tests."
+        var goal = SessionGoal(objective: objective, cap: 10, limit: 10, turns: 3)
+        model.sessions[0].runtime = .codex
+        model.sessions[0].profileID = RuntimeRoute.defaultProfile(.codex)
+        model.sessions[0].title = "Make the suite green"
+        model.sessions[0].workspacePath = "/tmp/Notch"
+        model.sessions[0].storedID = "thread"
+        model.sessions[0].state = .finished
+        model.sessions[0].runtimeInfo = RuntimeSessionInfo(model: "gpt-5", context: RuntimeContextUsage(used: 64_000, limit: 200_000))
+        let first = goal.startText, next = goal.continueText
+        model.sessions[0].messages = [
+            ChatMessage(id: "g1", role: "user", text: first, createdAt: at(0), turnID: "g1", kind: ChatMessage.goal),
+            ChatMessage(id: "a1", role: "assistant", text: "Fixed the two snapshot tests; the timer test still fails.", createdAt: at(300), turnID: "g1"),
+            ChatMessage(id: "g2", role: "user", text: next, createdAt: at(320), turnID: "g2", kind: ChatMessage.goal),
+            ChatMessage(id: "a2", role: "assistant", text: "The timer test now uses an injected clock. Two integration tests are still skipped.", createdAt: at(700), turnID: "g2"),
+            ChatMessage(id: "g3", role: "user", text: next, createdAt: at(720), turnID: "g3", kind: ChatMessage.goal)]
+        model.sessions[0].tools = [
+            ToolActivity(id: "t1", name: "terminal", detail: "swift test", state: .finished, startedAt: at(20), finishedAt: at(290), turnID: "g1"),
+            ToolActivity(id: "t2", name: "terminal", detail: "swift test --filter Timer", state: .finished, startedAt: at(340), finishedAt: at(690), turnID: "g2")]
+        model.sessions[0].turnEndedAt = ["g1": at(310), "g2": at(710)]
+        model.sessions[0].turnOutcome = ["g1": .finished, "g2": .finished]
+        goal.turnID = "g3"
+        model.sessions[0].goal = goal
+        model.connection = true
+        model.reducedMotion = true
+        model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1920, height: 1080), topInset: 0, leftArea: nil, rightArea: nil)
+        model.notchPresentation = .expanded(model.geometry!)
+        model.expanded = true
+        let compact = model.geometry!.expandedFrame.size, full = NSSize(width: 900, height: 660)
+        func overlay(_ name: String) throws {
+            try render(ModelControlsView(model: model, choosingGoal: true).padding(20)
+                .frame(width: 400, height: 300, alignment: .bottom).background(CompanionStyle.background)
+                .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
+                size: NSSize(width: 400, height: 300), name: name, output: output)
+        }
+        try overlay("goal-overlay-active")
+        model.sessions[0].goal?.pause = .cap
+        model.sessions[0].goal?.turns = 10
+        try overlay("goal-overlay-cap")
+        model.sessions[0].goal = nil
+        try overlay("goal-overlay-new")
+
+        // The third goal turn is running.
+        model.sessions[0].goal = goal
+        model.sessions[0].state = .working
+        model.sessions[0].parentTurnComplete = false
+        model.sessions[0].runtimeID = "live"
+        model.sessions[0].messages.append(ChatMessage(id: "a3", role: "assistant", text: "Un-skipping the integration tests.", createdAt: at(760), turnID: "g3"))
+        model.sessions[0].tools.append(ToolActivity(id: "t3", name: "terminal", detail: "swift test --filter Integration", state: .working, startedAt: at(780), turnID: "g3"))
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-goal-working", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-goal-working", output: output)
+
+        model.sessions[0].state = .finished
+        model.sessions[0].parentTurnComplete = true
+        model.sessions[0].runtimeID = nil
+        model.sessions[0].tools[2].state = .finished
+        model.sessions[0].tools[2].finishedAt = at(1_100)
+        model.sessions[0].turnEndedAt["g3"] = at(1_120)
+        model.sessions[0].turnOutcome["g3"] = .finished
+        model.sessions[0].messages[5].text = "Both integration tests run again and pass.\n\nAll 412 tests pass on a clean checkout; none are skipped.\n\nGOAL COMPLETE"
+        model.sessions[0].messages.append(ChatMessage(id: "reached", role: "system", text: "All 412 tests pass on a clean checkout; none are skipped.",
+                                                      createdAt: at(1_121), kind: ChatMessage.goalReached))
+        model.sessions[0].goal = nil
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-goal-reached", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-goal-reached", output: output)
+    }
+
     /// A Claude parent with a native subagent and an app-owned Codex child, the
     /// child's own conversation, and the parent's Delegation result row.
     @MainActor static func renderDelegation(output: URL, temporary: URL, preferences: UserDefaults) throws {
@@ -1170,6 +1244,10 @@ import ImageIO
         }
         if CommandLine.arguments.contains("--work-only") {
             try renderWork(output: output, temporary: temporary, preferences: preferences)
+            return
+        }
+        if CommandLine.arguments.contains("--goals-only") {
+            try renderGoals(output: output, temporary: temporary, preferences: preferences)
             return
         }
         if CommandLine.arguments.contains("--session-ops-only") {

@@ -112,7 +112,9 @@ struct ConversationHistoryView: View {
                     }
                     if let session, session.isBusy {
                         LiveTurnFooter(since: SessionDigest.turnStart(session) ?? session.updatedAt,
-                                       waiting: session.state == .waiting, hint: workingHint(session), reducedMotion: model.reducedMotion)
+                                       waiting: session.state == .waiting,
+                                       hint: workingHint(session).map { hint in session.goalFooter.map { hint + " · " + $0 } ?? hint } ?? session.goalFooter,
+                                       reducedMotion: model.reducedMotion)
                     }
                     Color.clear.frame(height: 2).id("conversation-tail")
                 }
@@ -439,7 +441,7 @@ private struct TranscriptMessageView: View {
             // The session names its harness; only relayed messages carry a label.
             if let label {
                 HStack(spacing: 6) {
-                    Label(label, systemImage: "arrow.triangle.branch").font(.system(size: 11, weight: .semibold))
+                    Label(label, systemImage: message.kind == ChatMessage.goal ? "scope" : "arrow.triangle.branch").font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(CompanionStyle.secondary)
                     Spacer(minLength: 0)
                     refinedCopyButton.padding(.vertical, -4)
@@ -489,7 +491,7 @@ private struct TranscriptMessageView: View {
         return VStack(alignment: .leading, spacing: 6) {
             if let label = message.agentLabel {
                 HStack(spacing: 6) {
-                    Label(label, systemImage: "arrow.triangle.branch").font(.system(size: 12, weight: .semibold))
+                    Label(label, systemImage: message.kind == ChatMessage.goal ? "scope" : "arrow.triangle.branch").font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(CompanionStyle.secondary)
                     Spacer()
                     copyButton.padding(.vertical, -3)
@@ -515,7 +517,7 @@ private struct TranscriptMessageView: View {
             // Each entry opens on a ruled log header: who, then when.
             HStack(spacing: 8) {
                 if let label = message.agentLabel {
-                    Label(label, systemImage: "arrow.triangle.branch").font(.system(size: 11.5, weight: .semibold))
+                    Label(label, systemImage: message.kind == ChatMessage.goal ? "scope" : "arrow.triangle.branch").font(.system(size: 11.5, weight: .semibold))
                         .foregroundStyle(CompanionStyle.text)
                 } else if user {
                     Text("You").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(CompanionStyle.secondary)
@@ -754,7 +756,22 @@ private struct SessionMarkerRow: View {
 
     var body: some View {
         let summary = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if message.kind == ChatMessage.newSession {
+        if message.kind == ChatMessage.goalReached {
+            VStack(alignment: .leading, spacing: PanelTheme.pick(6, 6, 5)) {
+                DisclosureLine(title: "Goal reached", expanded: nil, symbol: ("checkmark.circle", CompanionStyle.color(.finished)), rule: true)
+                if !summary.isEmpty {
+                    Text(summary).font(PanelTheme.pick(CompanionStyle.caption, .system(size: 12), .system(size: 11.5)))
+                        .foregroundStyle(CompanionStyle.secondary).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 14)
+                        .overlay(alignment: .leading) {
+                            Rectangle().fill(PanelTheme.pick(CompanionStyle.hairline, CompanionStyle.separator, CompanionStyle.ruleStrong)).frame(width: 1)
+                        }
+                        .padding(.leading, 4.5)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        } else if message.kind == ChatMessage.newSession {
             DisclosureLine(title: "New session", expanded: nil, symbol: ("plus.bubble", CompanionStyle.secondary), rule: true)
                 .accessibilityElement(children: .combine)
                 .help("A new native session started here, with an empty context")

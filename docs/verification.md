@@ -102,6 +102,15 @@ private development hasn't been re-run against this source snapshot. Known limit
   and what its result frame holds, whether Codex reports the reached window
   before or after the failed turn, and Claude's `rate_limit` category on a real
   limit stop. Legacy Hermes, OpenCode, ACP agents and OpenClaw offer no Compact.
+- Goals (2026-11-16): the companion loop is covered by unit tests (marker
+  parsing, follow-ups through the queue, cap, Stop, failure, limit and Resume at
+  reset, open questions, busy children, launch, decoding) and offscreen renders
+  in all three designs, no live native prompt. Every harness runs the companion
+  loop. Native mechanisms found but not driven
+  ([matrix](backend-runtime.md#goals)): Codex's `thread/goal/*` (from the
+  installed 0.162.1's generated schema and the `goals` feature list) and Claude
+  Code's `/goal` Stop hook (from the installed 2.1.311's own strings). Not yet
+  checked live: how reliably each model ends with `GOAL COMPLETE`.
 - Deny reasons: Claude Code's deny `message` is covered by protocol fixtures,
   and OpenCode's reply `message` by the offline HTTP fixture and the installed
   OpenCode 2.0.30's own reply schema (read from the binary, no prompt). Not yet

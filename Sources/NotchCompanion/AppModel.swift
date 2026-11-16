@@ -319,7 +319,7 @@ final class AppModel: ObservableObject {
         submitting || !backgroundSubmissions.isEmpty || !delegationCreations.isEmpty
             || sessions.contains { $0.isBusy || ($0.pendingSubmission != nil && $0.runtimeID != nil) } || !unfinishedParents.isEmpty
             || unfinishedChildren.values.contains(where: { !$0.isEmpty })
-            || sessions.contains { $0.runtime.isSupported && $0.pendingSubmission == nil && $0.queuedSends.contains { $0.isUserMessage && $0.paused != true && $0.isDue() || $0.isAutomation && !failedDeliveries.contains($0.id) } }
+            || sessions.contains { $0.runtime.isSupported && $0.pendingSubmission == nil && $0.queuedSends.contains { $0.waitsForIdle && !$0.isAutomation && $0.paused != true && $0.isDue() || $0.isAutomation && !failedDeliveries.contains($0.id) } }
     }
     var visibleSessions: [CompanionSession] {
         let query = sessionSearch.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -457,6 +457,7 @@ final class AppModel: ObservableObject {
                     if copy.queuedSends.contains(where: { $0.id == copy.stagedSubmission?.message.id }) { copy.stagedSubmission = nil }
                     else { copy.restoreStagedSubmission() }
                 }
+                copy.pauseGoalForLaunch()
                 // Delivered before the quit, or an unconfirmed send whose staged copy holds its text for Check last send.
                 // Without staged text (an agent's message, a notice, an older registry's entry) it waits for Check last send.
                 copy.queuedSends.removeAll { queued in
@@ -1684,6 +1685,7 @@ final class AppModel: ObservableObject {
             for i in target.queuedSends.indices where target.queuedSends[i].isUserMessage && target.queuedSends[i].resumesTurnID == nil {
                 target.queuedSends[i].paused = true
             }
+            target.pauseGoal(.interrupted)
         }
     }
 
@@ -1985,7 +1987,7 @@ final class AppModel: ObservableObject {
         guard let localID = sessionID ?? currentID, let session = sessions.first(where: { $0.id == localID }) else { return }
         if let turn = session.latestUserRowID { stoppedTurns.insert(turn) }
         // Stop also ends a resume scheduled for this session, which must not outlive a restart.
-        update(localID) { $0.queuedSends.removeAll { $0.resumesTurnID != nil } }
+        update(localID) { $0.queuedSends.removeAll { $0.resumesTurnID != nil }; $0.pauseGoal(.stopped) }
         pauseQueuedSends(localID)
         save()
         if let sid = session.runtimeID { await interruptOwnWork(localID, session: session, sid: sid) }
@@ -2437,8 +2439,10 @@ final class AppModel: ObservableObject {
                 sessions[index].tools[tool].finishedAt = Date()
             }
             if sessions[index].nativeActivityUnverified == nil { requests.removeAll { $0.sessionID == sid } }
+            // A goal's next turn follows at once, so this one is not announced.
+            let goalContinues = goalTurnEnded(localID, status: status, limitReached: payload["limit_reached"] as? Bool == true)
             // A child's result reaches its parent as a wake, not as its own announcement.
-            if status == "complete", sessions[index].state == .finished, sessions[index].parentSessionID == nil,
+            if status == "complete", !goalContinues, sessions[index].state == .finished, sessions[index].parentSessionID == nil,
                Date().timeIntervalSince(lastCompletion[localID] ?? .distantPast) > 1 {
                 lastCompletion[localID] = Date(); announceCompletion(localID)
             }

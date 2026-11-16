@@ -7,7 +7,7 @@ extension ChatMessage {
     static let contextCompacted = "contextCompacted"
     /// Where Start fresh opened a new native session for this conversation.
     static let newSession = "newSession"
-    var isSessionMarker: Bool { role == "system" && [Self.contextCompacted, Self.newSession].contains(kind ?? "") }
+    var isSessionMarker: Bool { role == "system" && [Self.contextCompacted, Self.newSession, Self.goalReached].contains(kind ?? "") }
 }
 
 extension QueuedSend {
