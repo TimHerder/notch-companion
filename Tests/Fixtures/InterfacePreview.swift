@@ -1405,7 +1405,38 @@ import ImageIO
         model.snoozeChoicesShown = true
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-session-snooze", output: output)
         try render(FullSessionView(model: model), size: full, name: "full-session-snooze", output: output)
+        // A fresh reached Claude window adds Until limit resets; Custom… swaps the choices for a picker.
+        let reviewRuntime = model.sessions[0].runtime
+        model.sessions[0].runtime = .claude
+        model.receive("runtime.rateLimits", payload: ["runtime": "claude", "limits": [
+            RuntimeRateLimit(name: "5-hour", resetsAt: Date().addingTimeInterval(95 * 60), reached: true)]])
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-session-snooze-limit", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-session-snooze-limit", output: output)
+        model.customSnoozeShown = true
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-session-snooze-custom", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-session-snooze-custom", output: output)
+        model.sessions[0].runtime = reviewRuntime
         model.sessionActionsID = nil
+        // Pinned sessions group above the projects; a pinned read session stays though it is days old.
+        model.sessions.append(CompanionSession(id: "pinned-read", title: "Release checklist", state: .finished,
+                                               messages: [ChatMessage(role: "user", text: "List the release steps."), ChatMessage(role: "assistant", text: "Tag, build, verify, publish.")],
+                                               updatedAt: Date().addingTimeInterval(-2 * 86_400), workspacePath: "/tmp/Website",
+                                               completionID: "pinned-result", acknowledgedCompletionID: "pinned-result", isPinned: true))
+        model.sessions[1].isPinned = true
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-pinned", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-sessions-pinned", output: output)
+        // Its actions offer Unpin and Mark as unread.
+        model.sessionActionsID = "pinned-read"
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-session-pinned-actions", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-session-pinned-actions", output: output)
+        model.sessionActionsID = nil
+        // Archive, Snooze and Unpin leave a quiet Undo toast in the list.
+        model.undoable(.unpinned, "pinned-read") { model.setPinned("pinned-read", false) }
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-undo", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-sessions-undo", output: output)
+        model.sessionUndo = nil
+        model.sessions.removeAll { $0.id == "pinned-read" }
+        model.sessions[1].isPinned = false
         model.sessions.removeAll { snoozedIDs.contains($0.id) }
         // Nothing active: the default list says so and links to Archived.
         let caughtUp = AppModel(storageURL: temporary.appendingPathComponent("caught-up.json"), playsSounds: false,

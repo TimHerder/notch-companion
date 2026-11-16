@@ -168,7 +168,12 @@ final class AppModel: ObservableObject {
     /// The one session row whose inline actions are open.
     @Published var sessionActionsID: String? { didSet { snoozeChoicesShown = false } }
     /// That row shows its snooze choices in place of its actions.
-    @Published var snoozeChoicesShown = false
+    @Published var snoozeChoicesShown = false { didSet { customSnoozeShown = false } }
+    /// Those choices show the date-and-time picker instead.
+    @Published var customSnoozeShown = false
+    /// The latest archive, snooze or unpin, undoable for a few seconds.
+    @Published var sessionUndo: SessionUndo?
+    var sessionUndoTimer: Task<Void, Never>?
     /// Sleeps until the earliest snoozed session's wake.
     var snoozeTimer: Task<Void, Never>?
     @Published var removeWorktrees = WorktreeCleanup.archived {
@@ -302,10 +307,17 @@ final class AppModel: ObservableObject {
     func projectPath(of session: CompanionSession) -> String {
         URL(fileURLWithPath: session.worktree?.project ?? session.workspacePath ?? workspacePath).standardizedFileURL.path
     }
-    /// Visible sessions grouped by project, both in the stable session order.
+    /// Visible sessions grouped by project, both in the stable session order;
+    /// the default list puts pinned sessions in their own group first.
     var visibleProjects: [SessionProject] {
+        let pinsGrouped = sessionFilter == .all && sessionSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         var projects: [SessionProject] = []
         for session in visibleSessions {
+            if pinsGrouped && session.isPinned {
+                if projects.first?.pinned == true { projects[0].sessions.append(session) }
+                else { projects.insert(SessionProject(path: "", sessions: [session], pinned: true), at: 0) }
+                continue
+            }
             let path = projectPath(of: session)
             if let index = projects.firstIndex(where: { $0.path == path }) { projects[index].sessions.append(session) }
             else { projects.append(SessionProject(path: path, sessions: [session])) }
@@ -1109,7 +1121,7 @@ final class AppModel: ObservableObject {
 
     func archiveSession(_ id: String) {
         guard canArchiveSession(id) else { return }
-        update(id) { $0.isArchived = true; $0.snoozedUntil = nil }
+        update(id) { $0.isArchived = true; $0.snoozedUntil = nil; $0.isPinned = false }
         if currentID == id {
             page = .sessions
         }

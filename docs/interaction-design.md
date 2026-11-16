@@ -158,8 +158,8 @@ expands (or the active full-session Conversation tab) acknowledges its current
 result. Sessions, settings, activity, team views or a stored selection alone do
 not. A result arriving while its conversation is shown is acknowledged
 immediately. A locked or off-console desktop is not a check-in. Receipts persist
-across relaunch; new turns, rejected sends and late delegated results can
-produce new dots; duplicate terminal events never resurrect a read dot.
+across relaunch; new turns, rejected sends, late delegated results and
+[Mark as unread](#conversation-usability-and-session-management) can produce new dots; duplicate terminal events never resurrect a read dot.
 
 **Mark all as read** (checkmark beside Your sessions, notch and full-session
 sidebar) acknowledges every current result and saves immediately, leaving work,
@@ -1038,8 +1038,8 @@ identify selection.
     `lastSeenAt` is older than Settings → **Archive read sessions after**
     (`sessions.autoArchiveAfter`: 1 hour, 12 hours (default), 3 days, Never;
     1h, 12h, 3d where the 252-point sidebar is too narrow for the words).
-    The selection never auto-archives; `lastSeenAt` is set when a session is
-    opened, read, restored or stops being the selection. The list re-evaluates every minute. Sending,
+    The selection and pinned sessions never auto-archive; `lastSeenAt` is set
+    when a session is opened, read, restored, unpinned or stops being the selection. The list re-evaluates every minute. Sending,
     opening or Restore brings it back.
   - **Remove worktrees** (`sessions.removeWorktrees`, below it in Settings):
     **When the session is archived** (default; by hand or auto-archive),
@@ -1059,7 +1059,13 @@ identify selection.
     the archive box and snoozed ones with the moon.
   - **Snooze** (`snoozedUntil`) hides a top-level session until a time: 1 hour,
     3 hours, Tomorrow (9:00) or Next week (Monday 9:00) on the user's calendar
-    (`Calendar.app`). It is not offered on archived or auto-archived sessions
+    (`Calendar.app`); **Until limit resets**, only while the session's harness
+    reports a reached [usage](#usage) window whose reset is known and still
+    ahead (the latest such reset when several are reached; any reached window
+    without a reset time hides it); or **Custom…**, an inline date-and-time
+    picker in the same row area (`Calendar.app`, `Locale.app`) that accepts
+    future times only and starts at the first whole hour at least an hour away.
+    The right-click menu's Custom… opens that row's picker. It is not offered on archived or auto-archived sessions
     or while a question waits for an answer; archiving clears it. The Snoozed
     page lists snoozed sessions by project, each counting down to its wake
     (`45m`, `3h`, `2d`, rounded to the nearest unit) in place of the age; a
@@ -1085,11 +1091,31 @@ identify selection.
     rows share a height; a long title truncates at its end.
     The title and latest message are the tooltip and part of the accessibility label.
     Hover, focus or open swaps the age for the ellipsis, which expands Rename,
-    Snooze or Wake now, Archive or Restore (which also recreates a removed
-    [worktree](#projects), showing Git's error if it cannot), and Continue in
-    Hermes… (legacy only) inline, wrapping onto further rows in the sidebar rather than
-    truncating. Snooze swaps those actions for its four choices and Cancel
-    (wrapping the same way); the right-click menu shows them as a submenu.
+    Pin or Unpin, Mark as unread, Snooze or Wake now, Archive or Restore (which
+    also recreates a removed [worktree](#projects), showing Git's error if it
+    cannot), and Continue in Hermes… (legacy only) inline, wrapping onto further rows in the
+    sidebar rather than truncating; the right-click menu has the same actions.
+    Snooze swaps those actions for its choices and Cancel (wrapping the same
+    way); the right-click menu shows them as a submenu.
+  - **Pin** (`isPinned`) is offered on top-level sessions that are not archived
+    or auto-archived. The default list (no search) shows pinned sessions in a
+    **Pinned** group (pin glyph, count, no **+**) above the project groups, in
+    the stable order; search, Snoozed and Archived group them by project. A
+    pinned session never auto-archives; its dot, unread state and attention are
+    unchanged. Archiving unpins; snoozing hides it until it wakes, still pinned.
+  - **Mark as unread** is offered on a read, idle, unsnoozed top-level session
+    whose last turn has a result (finished or failed); waking already returns a
+    snoozed one unread. It clears the read receipt, so the
+    row, dots, glance and counts show it unread and it cannot auto-archive;
+    opening it reads it again, by the usual read-receipt rules.
+  - **Undo.** Archive, Snooze and Unpin from either browser show one quiet
+    toast at the bottom of the list (“Archived <title> · Undo”) for 5 seconds;
+    a newer one replaces it. Undo, or ⌘Z while it shows, puts back exactly the
+    archive, pin and snooze state that action changed (Restore, clear the
+    snooze, pin again), and does nothing if the session has moved since (woken,
+    restored, sent to). It fades without its offset under Reduce Motion.
+    Automatic changes (auto-archive, waking) and Pin, Wake now, Restore and
+    Mark as unread show no toast.
   - Order keeps the stable order used by the dots. Archiving keeps history,
     drafts, selection and receipts; active work cannot be archived. Sending
     restores an archived session.
