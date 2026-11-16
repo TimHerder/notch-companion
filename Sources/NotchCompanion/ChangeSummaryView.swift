@@ -166,7 +166,7 @@ struct ChangeSummaryView: View {
             switch item {
             case .changes(let changes): result.insert(changes.id)
             // Only a user row that starts its own turn ends this one; a steer belongs to the turn it joined.
-            case .message(let message) where message.role == "user" && message.kind == nil && (message.turnID ?? message.id) == message.id:
+            case .message(let message) where message.role == "user" && (message.kind == nil || message.isScheduledRun) && (message.turnID ?? message.id) == message.id:
                 return result
             default: continue
             }

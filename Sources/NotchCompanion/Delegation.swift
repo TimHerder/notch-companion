@@ -790,7 +790,7 @@ extension AppModel {
     /// or steers that turn where the harness supports it. Queued messages
     /// and question notices go after the turn.
     func processDelegationWakes() {
-        for session in sessions where session.queuedSends.contains(where: { !failedDeliveries.contains($0.id) && $0.paused != true && $0.isDue() && (!$0.isUserMessage || !session.isBusy) }) && acceptsDelegationSend(session) {
+        for session in sessions where session.queuedSends.contains(where: { !failedDeliveries.contains($0.id) && $0.paused != true && $0.isDue() && (!($0.isUserMessage || $0.isAutomation) || !session.isBusy) }) && acceptsDelegationSend(session) {
             Task { @MainActor in await self.deliverQueued(session.id) }
         }
         for child in sessions {
@@ -814,7 +814,7 @@ extension AppModel {
 
     private func deliverQueued(_ id: String) async {
         guard let session = sessions.first(where: { $0.id == id }), acceptsDelegationSend(session),
-              var next = session.queuedSends.first(where: { $0.paused != true && $0.isDue() && !failedDeliveries.contains($0.id) && (!$0.isUserMessage || !session.isBusy) }) else { return }
+              var next = session.queuedSends.first(where: { $0.paused != true && $0.isDue() && !failedDeliveries.contains($0.id) && (!($0.isUserMessage || $0.isAutomation) || !session.isBusy) }) else { return }
         // Already delivered before a restart, or a question answered meanwhile.
         let answered = next.requestID.map { request in
             let asker = sessions.first { $0.id == next.questionSessionID }?.runtimeID
@@ -846,6 +846,8 @@ extension AppModel {
             failedDeliveries.insert(next.id)
             if next.isUserMessage { pauseQueuedSends(id); save() }
         }
+        // A failed automation no longer holds a deferred Quit or Reconnect.
+        scheduleDeferredOperationIfIdle()
         processDelegationWakes()
     }
 

@@ -202,6 +202,23 @@ is not the turn's. Session-state events are
 enabled process-locally, and Stop sends `cancel_queued` so pending steering
 cannot restart work.
 
+[Scheduled tasks](interaction-design.md#scheduled-tasks) and PR watch
+messages ([Git actions](interaction-design.md#change-summaries)) are agent-kind
+queue entries (`scheduled:<name>`, `scheduledLate:<name>`, `prWatch`): unlike
+other agent messages they wait, as user messages do, for the session's own
+turn and its app-owned children, are not
+paused by Stop, keep Quit/Reconnect waiting until sent (unless their delivery
+failed), and are delivered on launch. Their IDs derive from the task and
+occurrence, or from the watch and its message count (`Delegation.derivedID`),
+so a restart finds one already queued or sent and adopts it as the task's last
+run instead of adding another. A failed delivery releases a deferred
+Quit/Reconnect. A
+scheduled run starts its own turn for change cards, like the user's prompt.
+Scheduled tasks live in `scheduled-tasks.json` beside the registry (mode 0600;
+a file that exists but cannot be read or decoded is left untouched and not
+overwritten); a task stores its next occurrence and the latest calendar day a
+run, catch-up or skip covered.
+
 Queue entries' attachment and pause fields are optional for older registries.
 Stop, failure, disconnect and restart pause the queue (with resume/cancel
 controls); a failed head blocks later entries. Delivery uses the ordinary
@@ -295,6 +312,9 @@ worktree base) and `worktree` (the app-created worktree) are optional, so older
 registries decode without them; neither reaches a runtime, which sees only the
 working folder. `forkedFrom` and a message's `nativeID` are optional too (see
 [forks](#forks-and-side-chats)).
+`pullRequestWatch` (optional) holds a watched pull request's
+reported check, review and comment IDs; it calls only the user's `gh`, never a
+runtime.
 
 Only companion-created entries (and their delegated children) appear in lists,
 search, navigation and indicators. The router refuses `session.list`, ignores

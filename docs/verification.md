@@ -140,6 +140,14 @@ private development hasn't been re-run against this source snapshot. Known limit
 - The island update, stage, "Worked for" fold, context bubble and session list
   are covered by offscreen fixtures in all three designs. No physical-notch,
   live-hover or VoiceOver acceptance has been done for them.
+- Scheduled tasks and PR watch: schedule arithmetic (DST in both directions,
+  time-zone change, clock set back, weekly, hourly, once), missed-run catch-up
+  and skipping, waiting on a busy destination and on the previous run, restart
+  deduplication, the send path's label, and PR events, deduplication, back-off
+  and merge stop with a fake `gh` are covered by unit tests; the pages by the
+  `--automations-only` and `--git-actions-only` offscreen fixtures in all three
+  designs. Not yet checked live: a run across real sleep and wake, a real
+  time-zone change, and `gh pr view` against a real pull request.
 - Markdown tables, the deny reason field and Find in the full-session window
   are covered by offline tests and the `--transcript-only` offscreen fixtures in
   all three designs. Not yet checked live: ⌘F/⌘G through the menu, Return,

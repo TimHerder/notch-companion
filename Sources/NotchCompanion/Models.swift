@@ -47,7 +47,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         case Self.delegationNotice: return "Delegated question"
         case Self.agentMessage: return from.map { "From \($0)" } ?? "From another session"
         case Self.sideChatMessage: return "From side chat"
-        default: return nil
+        default: return Self.automationLabel(kind)
         }
     }
 }
@@ -336,6 +336,8 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var limitResets: [String: Date] = [:]
     /// Began as a native fork of another session: Fork from here, or a side chat (with `parentSessionID`).
     var forkedFrom: ForkRecord? = nil
+    /// Watching that pull request for checks, reviews and comments.
+    var pullRequestWatch: PullRequestWatch? = nil
     var queuedSends: [QueuedSend] = []
     /// The mode in use when Plan was chosen, for Plan ready's Implement; nil is Default permissions.
     var prePlanPermissionMode: PermissionMode? = nil
@@ -428,7 +430,7 @@ struct SessionProject: Identifiable {
 }
 
 enum PanelPage: Equatable {
-    case session, sessions, team, agent(String), activity, settings, usage, runtimeSetup(RuntimeKind), runtimeChooser(defaultSelection: Bool)
+    case session, sessions, team, agent(String), activity, settings, usage, scheduled, runtimeSetup(RuntimeKind), runtimeChooser(defaultSelection: Bool)
     /// First-run choices, one step at a time; the step survives the panel closing for a preview.
     case welcome(step: Int)
     var isRuntimeSetup: Bool {
@@ -502,7 +504,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnUsage, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, isPinned, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic, worktreeBase, worktree, pullRequest, earlierStoredIDs, limitResets, forkedFrom
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnUsage, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, isPinned, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic, worktreeBase, worktree, pullRequest, earlierStoredIDs, limitResets, forkedFrom, pullRequestWatch
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -556,6 +558,7 @@ extension CompanionSession {
         earlierStoredIDs = try values.decodeIfPresent([String].self, forKey: .earlierStoredIDs)
         limitResets = try values.decodeIfPresent([String: Date].self, forKey: .limitResets) ?? [:]
         forkedFrom = try values.decodeIfPresent(ForkRecord.self, forKey: .forkedFrom)
+        pullRequestWatch = try? values.decodeIfPresent(PullRequestWatch.self, forKey: .pullRequestWatch)
         queuedSends = try values.decodeIfPresent([QueuedSend].self, forKey: .queuedSends) ?? []
         lastSeenAt = try values.decodeIfPresent(Date.self, forKey: .lastSeenAt)
         snoozedUntil = try values.decodeIfPresent(Date.self, forKey: .snoozedUntil)

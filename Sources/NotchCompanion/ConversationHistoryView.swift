@@ -87,7 +87,8 @@ struct ConversationHistoryView: View {
                                               actions: session.flatMap { session in latestChanges.contains(summary.id) ? GitActionsView(
                                                 controller: model.gitActions(for: session.id),
                                                 blocked: model.gitActionsIdle(session.id) ? nil : "Git actions wait until this session, its delegated work, sessions in the same folder and any unconfirmed send are idle.",
-                                                pullRequest: session.pullRequest, isWorktree: session.worktree != nil, harness: session.runtime.title,
+                                                pullRequest: session.pullRequest, isWorktree: session.worktree != nil,
+                                                watching: session.pullRequestWatch != nil, watchError: model.pullRequestPolls[session.id]?.error, harness: session.runtime.title,
                                                 openURL: { model.openExternally($0) }) : nil })
                         }
                     }

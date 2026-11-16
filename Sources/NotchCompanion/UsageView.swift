@@ -275,7 +275,7 @@ struct UsageLimitRow: View {
 }
 
 /// Refined fades both scroll edges, Tahoe softens the top, Instrument cuts.
-private struct UsageScrollEdge: ViewModifier {
+struct UsageScrollEdge: ViewModifier {
     func body(content: Content) -> some View {
         switch PanelTheme.current {
         case .refined: content.scrollEdgeFade()

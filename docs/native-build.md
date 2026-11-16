@@ -257,7 +257,13 @@ renders the latest change card's Git actions (`git-actions`, `-full`), the
 commit form (`-commit`, `-commit-full`), a hook failure (`-error`), push
 confirmation for the default branch (`-push`), the pull request form (`-pr`,
 `-pr-full`), the recorded link (`-linked`, `-linked-full`) and the busy caption
-(`-busy`).
+(`-busy`), a watched link (`-watching`, `-watching-full`) and Watch without a
+signed-in GitHub CLI (`-watch-unavailable`).
+`--automations-only` renders the Scheduled page empty (`compact-`/`full-scheduled-empty`),
+with a late run, a refused send and a paused task (`-scheduled`), editing a
+weekly task (`-scheduled-edit`), a new one-time task (`-scheduled-new`) and an
+inline delete (`-scheduled-delete`), plus the sessions title row with its
+button (`compact-sessions-scheduled`).
 `--work-only` renders a finished turn whose commentary and tool calls fold above
 its answer and changes (`compact-`/`full-worked-collapsed`, `-expanded`) and the
 same turn live with its interleaved text and ticking footer (`-worked-live`);
