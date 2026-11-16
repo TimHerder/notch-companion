@@ -565,6 +565,58 @@ import ImageIO
 
     /// Markdown tables in an answer, a deny reason on a Claude approval, and Find
     /// in the full-session window selecting a call inside a folded turn.
+    /// Settings → Outside MCP clients: a new token with its snippets, the
+    /// client list with one client's setup and a moved port, naming a new
+    /// client, and a message an outside client sent.
+    @MainActor static func renderOutsideClients(output: URL, temporary: URL, preferences: UserDefaults) throws {
+        let model = AppModel(storageURL: temporary.appendingPathComponent("outside.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
+        defer { model.shutdown() }
+        model.outsideClientsEnabled = true
+        // Let the real loopback start settle, then show a fixed URL.
+        while model.outsideURL == nil { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        model.outsideURL = URL(string: "http://127.0.0.1:52817/mcp")
+        func settings(_ view: OutsideClientsSettingsView, name: String, height: CGFloat = 1100) throws {
+            for width: CGFloat in [560, 252] {
+                try render(SettingsGroup("Composer") {
+                    SettingsRow("Outside MCP clients", symbol: "point.3.connected.trianglepath.dotted", tint: .purple) {
+                        Toggle("Outside MCP clients", isOn: .constant(true)).toggleStyle(NotchSwitchStyle())
+                    }
+                    view
+                }.padding(20)
+                    .frame(width: width, height: height, alignment: .top)
+                    .background(CompanionStyle.background).foregroundStyle(CompanionStyle.text)
+                    .environment(\.colorScheme, .dark),
+                    size: NSSize(width: width, height: height), name: "\(name)-\(Int(width))", output: output)
+            }
+        }
+        model.createOutsideClient(name: "Claude Desktop")
+        try settings(OutsideClientsSettingsView(model: model), name: "outside-clients-token", height: 1500)
+        model.revealedOutsideToken = nil
+        model.createOutsideClient(name: "Codex")
+        model.revealedOutsideToken = nil
+        model.outsideClients[0].lastUsedAt = Date().addingTimeInterval(-7200)
+        preferences.set(41_000, forKey: OutsideClients.seenPortKey)
+        model.outsideURL = URL(string: "http://127.0.0.1:52817/mcp")
+        try settings(OutsideClientsSettingsView(model: model, selected: model.outsideClients[1].id), name: "outside-clients-setup", height: 1300)
+        try settings(OutsideClientsSettingsView(model: model, naming: "Cursor"), name: "outside-clients-naming", height: 600)
+        model.sessions[0].title = "Release checklist"
+        model.sessions[0].messages = [
+            ChatMessage(id: "ask", role: "user", text: "Draft the release checklist.", turnID: "ask"),
+            ChatMessage(id: "draft", role: "assistant", text: "Here is a first checklist: build, notarize, tag.", turnID: "ask"),
+            ChatMessage(id: "outside", role: "user", text: "Add a step for the changelog.", turnID: "outside", kind: ChatMessage.agentMessage, from: "Claude Desktop"),
+            ChatMessage(id: "reply", role: "assistant", text: "Added: update the changelog before tagging.", turnID: "outside")]
+        model.sessions[0].state = .finished
+        model.currentID = model.sessions[0].id
+        model.reducedMotion = true
+        model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1920, height: 1080), topInset: 0,
+                                       leftArea: nil, rightArea: nil, indicatorCount: model.sessionIndicators.count)
+        model.notchPresentation = .expanded(model.geometry!)
+        model.expanded = true
+        model.page = .session
+        try render(UnifiedNotchView(model: model), size: model.geometry!.expandedFrame.size, name: "outside-clients-message", output: output)
+        try render(FullSessionView(model: model), size: NSSize(width: 900, height: 660), name: "outside-clients-message-full", output: output)
+    }
+
     @MainActor static func renderTranscript(output: URL, temporary: URL, preferences: UserDefaults) throws {
         let model = AppModel(storageURL: temporary.appendingPathComponent("transcript.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
         defer { model.shutdown() }
@@ -982,6 +1034,10 @@ import ImageIO
         }
         if CommandLine.arguments.contains("--session-ops-only") {
             try renderSessionOps(output: output, temporary: temporary, preferences: preferences)
+            return
+        }
+        if CommandLine.arguments.contains("--outside-clients-only") {
+            try renderOutsideClients(output: output, temporary: temporary, preferences: preferences)
             return
         }
         if CommandLine.arguments.contains("--transcript-only") {

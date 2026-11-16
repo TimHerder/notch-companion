@@ -923,6 +923,11 @@ struct SettingsContent: View {
                     Toggle("Resume automatically after limit resets", isOn: $model.resumeAutomatically).toggleStyle(NotchSwitchStyle())
                         .help("When a turn stops at an account limit with a known reset, send “\(QueuedSend.resumeText)” at the reset, unless you send something first. Codex and Claude Code report limits.")
                 }
+                SettingsRow("Outside MCP clients", symbol: "point.3.connected.trianglepath.dotted", tint: .purple, divider: true) {
+                    Toggle("Outside MCP clients", isOn: $model.outsideClientsEnabled).toggleStyle(NotchSwitchStyle())
+                        .help("Let MCP clients on this Mac read your sessions and send to them, with a token you create. Only on 127.0.0.1; never approvals.")
+                }
+                if model.outsideClientsEnabled { OutsideClientsSettingsView(model: model) }
             }
             SettingsGroup(PanelTheme.pick(nil, "Notch", "Notch")) {
                 SettingsRow("Open on hover", symbol: "cursorarrow.rays", tint: .blue) {

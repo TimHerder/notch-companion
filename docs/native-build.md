@@ -265,6 +265,10 @@ the full render includes them.
 `--completion-only` renders the composer's `/` command list
 (`completion-commands`, `-full`) and `@` file list (`completion-files`, `-full`)
 from a synthetic catalog and a temporary folder.
+`--outside-clients-only` renders Settings → Outside MCP clients at 560 and 252
+points: a new token with its snippets (`outside-clients-token-*`), the client
+list with one client's setup and a moved port (`-setup-*`), naming a new client
+(`-naming-*`), and a message an outside client sent (`-message`, `-message-full`).
 `--transcript-only` renders an answer with a narrow and a wide Markdown table
 (`compact-table`, `full-table`, `markdown-table-narrow`), the full-session
 window's Find selecting a call inside a folded turn (`full-find-folded`) and

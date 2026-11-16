@@ -798,10 +798,13 @@ shapes, error codes and limits follow T3 Code's `orchestratorMcp.ts`. Native
 subagents (`subagent.*` events, `ChildAgent` without a session) are separate;
 this adds app-owned children.
 
-**Server.** `DelegationServer` listens on `127.0.0.1` only, OS-chosen port,
+**Server.** `DelegationServer` listens on `127.0.0.1` only, OS-chosen port
+(the saved one while [outside clients](#outside-mcp-clients) are on),
 `/mcp`, server name `notch`: minimal MCP Streamable HTTP (`initialize`, `ping`,
 `tools/list`, `tools/call` as JSON-RPC `POST`, single or batch; notifications
-get 202; `GET`/`DELETE` get 405). `initialize` returns the delegation
+get 202; `GET`/`DELETE` get 405). Every request needs exactly one `Host` of
+`127.0.0.1:<port>` or `localhost:<port>` and no `Origin` but `null`, else 403,
+so browser pages and DNS-rebound names never reach it. `initialize` returns the delegation
 instructions (empty for OpenCode, whose session instruction entry carries them).
 Each native session gets one token (32 random bytes, base64url);
 only its SHA-256 is kept, in memory, scoped to the companion session, harness
@@ -964,6 +967,39 @@ then says its children cannot delegate:
 | OpenCode 2.0.30 | One runtime server per session, `notch-<first 16 hex of SHA-256(native ID)>`, added with `PUT /api/experimental/mcp/{server}?location[directory]=<session folder>` (`type: remote`, bearer header, `oauth: false`); runtime-only, so it ends with the owned server and nothing is written to configuration. Added when the session opens and again before each prompt, because an idle folder drops runtime servers. Every server at a folder is visible there, so each session's rules (`PATCH /api/session/{id}` `permissions`, its other rules kept) end with deny `notch-????????????????_*` (one `?` per hex digit, so a user's own `notch-…` server stays usable), then allow its own `<server>_*`; earlier companion rules, the old `notch-*` deny included, are replaced. A session opened without delegation gets the deny alone and loses a stale `notch` instruction entry. Instructions as session instruction entry `notch`. A failure leaves the session usable with a notice. OpenCode 1.x reports `hosts_delegation: false`. |
 | Hermes 0.22.3 | No per-session MCP option on `hermes serve`, so the companion's `hermes_frontend.py` registers native tools `mcp__notch__<tool>` in a `notch` toolset (`execution_timeout` 3900). Before a frontend's first delegating `session.create`/`session.resume`, the client writes the tools and instructions as a JSON line on the ownership pipe and waits for `NOTCH_DELEGATION {"ready": true}`; after each reply it writes `{"bind": <live session id>, url, token}`. Tokens stay in the frontend's memory, out of argv, environment, disk and `session.*` params. A call finds its live session by the agent's stored key (also after a compression rotation) and posts `tools/call` with that session's bearer; unbound callers, Hermes subagents and revoked tokens (401 forgets the binding) get `capability_denied`; Stop closes the request. `notch` joins an explicit toolset list (`tui_gateway.server._load_enabled_toolsets`); `None` already means all, `[]` stays empty. Instructions extend the `notch_companion` platform hint; tool search may defer the tools as it does MCP tools. Changed internals or a name clash (a user MCP server called `notch`) fail closed with a notice; the session stays usable. Nothing is written to the profile. Legacy Hermes does not host. |
 | OpenClaw (Gateway protocol 4) | A second Gateway connection with role and client mode `node`, the same Keychain device, no operator scopes and its own per-role device token in Keychain. Every agent profile of one Gateway shares that device, so their connections share one node link: it opens with the first session launched with delegation, serves the delegating sessions of every profile, and closes when the last operator connection that launched a delegating session disconnects, so the Gateway withdraws the tools. It declares only `mcp.tools.call.v1` and publishes every tool with `node.pluginTools.update` as `notch_<tool>` (`pluginId: node-mcp`, `mcp {server: notch, tool}`). A `node.invoke.request` runs only for a companion-owned session key that was launched with delegation, as that session through the loopback server with its own token; any other caller gets `capability_denied`. The Gateway's invoke deadline bounds the call, and a cancelled invoke cancels it. Instructions come in the `orchestrator_capabilities` result. Node pairing and command approval stay with OpenClaw (silent for a local Gateway by default). A required pairing, filtered tools (unapproved commands or `gateway.nodes.pluginTools.enabled: false`) or a dropped link become notices; chat keeps working and the next session launch retries. The Gateway lists the tools for every agent while the node is connected. Nothing in the OpenClaw configuration is written. |
+
+### Outside MCP clients
+
+Settings → **Outside MCP clients** (default off) lets MCP clients outside the
+app use the same server with a token the user creates in Settings. While off,
+no outside token is accepted and the port is OS-chosen as before; turning it
+off closes their open requests. While on, the server starts at launch on the
+last saved port (`outside.port`), or a new OS-chosen one that is then saved;
+Settings flags a port that differs from the one the user last saw.
+
+Each token (32 random bytes, base64url) is shown once. Only its SHA-256 is
+kept, with its name, creation and last use (saved at most once a minute), in
+preferences; every saved hash is compared in constant time. Tokens survive
+restart, are independent of session tokens, and the Cross-agent delegation
+switch does not affect them. Revoking one deletes it and closes that client's
+open requests.
+
+An outside caller owns no session (`outside:<token ID>`). `initialize` returns
+instructions for this narrower set and `tools/list` lists only:
+
+| Tool | Outside behavior |
+| --- | --- |
+| `notch_session_list` | Top-level sessions of every project, or one `projectPath`; children only with `includeSubagents`. |
+| `notch_session_read` / `notch_session_wait` | Any session by `sessionId` (required). A read never acknowledges a child's result. |
+| `notch_session_send` | `auto`, `queue` or `steer` to a top-level session, with the same staging, intent, duplicate and receipt protections; in its own mode, never widened. Shown as “From <client name>”. |
+| `create_sessions {sessions[]{prompt?, title?}, projectPath?, clientRequestId?}` | In the default folder or a project with sessions, with the default harness, its profile and default permission settings, and the user's project trust; the prompt is shown as from the client. |
+| `pending_request_list` / `pending_request_read` | Questions only, by `sessionId`. |
+
+Anything else is `capability_denied`: `orchestrator_capabilities`,
+`delegate_task`, `task_*`, `notch_session_interrupt`, `notch_session_update`,
+`pending_request_respond`, `restart`, a send to a child, any `runtimeMode`,
+`interactionMode` or `target`, and another folder for `create_sessions`. No
+OpenCode `_meta` session check applies to them.
 
 ## Capability boundaries
 

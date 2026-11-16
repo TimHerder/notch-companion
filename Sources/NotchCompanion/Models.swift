@@ -15,6 +15,8 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     /// A message the companion sent for an agent rather than the user.
     /// A string, so a kind from a newer build cannot discard the registry.
     var kind: String? = nil
+    /// The outside MCP client that sent an `agentMessage`, by the name its token was given.
+    var from: String? = nil
     static let delegationResult = "delegationResult"
     /// A delegated child's question, relayed to its parent.
     static let delegationNotice = "delegationNotice"
@@ -39,7 +41,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         switch kind {
         case Self.delegationResult: return "Delegation result"
         case Self.delegationNotice: return "Delegated question"
-        case Self.agentMessage: return "From another session"
+        case Self.agentMessage: return from.map { "From \($0)" } ?? "From another session"
         default: return nil
         }
     }
@@ -164,6 +166,7 @@ struct QueuedSend: Codable, Equatable {
     var notBefore: Date? = nil
     /// Resume at reset: the limit-stopped turn (its visible user row) this message continues.
     var resumesTurnID: String? = nil
+    var from: String? = nil
 
     var isUserMessage: Bool { kind == nil }
 }
@@ -928,7 +931,7 @@ enum SessionHistory {
                                createdAt: createdAt,
                                turnID: prior?.turnID ?? currentTurnID,
                                questions: role == "assistant" ? AsyncQuestion.decode(row["questions"]) ?? prior?.questions : nil,
-                               kind: prior?.kind)
+                               kind: prior?.kind, from: prior?.from)
         }
     }
 }

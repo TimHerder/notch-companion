@@ -3,11 +3,13 @@ import Network
 import CryptoKit
 
 /// Who called a companion tool: the token's companion session, its harness and
-/// whether that session is an app-owned child.
+/// whether that session is an app-owned child. An outside MCP client has a
+/// `client` name and the session ID `outside:<its token's ID>`, which owns no session.
 struct DelegationCaller: Equatable {
     var sessionID: String
     var runtime: RuntimeKind
     var subagent: Bool
+    var client: String? = nil
 }
 
 /// A tool failure the agent reads, with T3 Code's error codes.
@@ -42,6 +44,8 @@ final class DelegationServer {
     var isActive: ((String) -> Bool)?
     /// Whether a native session ID the harness names on a call is the caller's own (or its native child's).
     var ownsNative: ((DelegationCaller, String) -> Bool)?
+    /// An outside client's token, while outside clients are allowed.
+    var outsideCaller: ((String) -> DelegationCaller?)?
     var now: () -> Date = Date.init
 
     private struct Grant { var caller: DelegationCaller; var lastUsed: Date }
@@ -49,23 +53,38 @@ final class DelegationServer {
     private var listener: NWListener?
     private var starting: Task<URL, Error>?
     private var connections: [ObjectIdentifier: (NWConnection, Task<Void, Never>?)] = [:]
+    /// The caller each open request authenticated as, so revoking it closes them.
+    private var connectionCallers: [ObjectIdentifier: String] = [:]
     private(set) var url: URL?
 
-    /// Starts once on an OS-chosen loopback port.
-    func start() async throws -> URL {
+    /// Starts once on a loopback port: `preferredPort` when it is free (outside
+    /// clients keep their URL), else an OS-chosen one.
+    func start(preferredPort: UInt16? = nil) async throws -> URL {
         if let url { return url }
         if let starting { return try await starting.value }
+        let task = Task { @MainActor () throws -> URL in
+            if let preferredPort, let port = NWEndpoint.Port(rawValue: preferredPort), let url = try? await self.listen(on: port) { return url }
+            return try await self.listen(on: .any)
+        }
+        starting = task
+        defer { starting = nil }
+        let url = try await task.value
+        self.url = url
+        return url
+    }
+
+    private func listen(on requested: NWEndpoint.Port) async throws -> URL {
         let parameters = NWParameters.tcp
-        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
+        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: requested)
         parameters.acceptLocalOnly = true
         let listener = try NWListener(using: parameters)
         self.listener = listener
         listener.newConnectionHandler = { [weak self] connection in
             MainActor.assumeIsolated { self?.accept(connection) }
         }
-        let task = Task { @MainActor () throws -> URL in
-            final class Once { var done = false }
-            let once = Once()
+        final class Once { var done = false }
+        let once = Once()
+        do {
             let port: UInt16 = try await withCheckedThrowingContinuation { continuation in
                 listener.stateUpdateHandler = { state in
                     MainActor.assumeIsolated {
@@ -73,6 +92,8 @@ final class DelegationServer {
                         switch state {
                         case .ready: once.done = true; continuation.resume(returning: listener.port?.rawValue ?? 0)
                         case .failed(let error): once.done = true; continuation.resume(throwing: error)
+                        // A taken fixed port waits for it to free up; take another instead.
+                        case .waiting(let error) where requested != .any: once.done = true; continuation.resume(throwing: error)
                         case .cancelled: once.done = true; continuation.resume(throwing: AppError("The delegation server stopped."))
                         default: break
                         }
@@ -82,13 +103,6 @@ final class DelegationServer {
             }
             guard port > 0 else { throw AppError("The delegation server has no port.") }
             return URL(string: "http://127.0.0.1:\(port)/mcp")!
-        }
-        starting = task
-        defer { starting = nil }
-        do {
-            let url = try await task.value
-            self.url = url
-            return url
         } catch {
             listener.cancel(); self.listener = nil
             throw error
@@ -99,16 +113,22 @@ final class DelegationServer {
         listener?.cancel(); listener = nil; url = nil
         for (connection, task) in connections.values { task?.cancel(); connection.cancel() }
         connections.removeAll()
+        connectionCallers.removeAll()
         grants.removeAll()
+    }
+
+    /// Ends every open request of a caller, such as an outside client whose token was revoked.
+    func disconnect(sessionID: String) {
+        for (key, caller) in connectionCallers where caller == sessionID {
+            connectionCallers.removeValue(forKey: key)
+            if let (connection, task) = connections.removeValue(forKey: key) { task?.cancel(); connection.cancel() }
+        }
     }
 
     /// One token per native session; a new one replaces the session's old token.
     func issueToken(for caller: DelegationCaller) -> String {
         revoke(sessionID: caller.sessionID)
-        var random = SystemRandomNumberGenerator() // arc4random: cryptographically secure
-        let bytes = (0..<32).map { _ in UInt8.random(in: .min ... .max, using: &random) }
-        let token = Data(bytes).base64EncodedString().replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        let token = Self.newToken()
         grants[Self.hash(token)] = Grant(caller: caller, lastUsed: now())
         return token
     }
@@ -119,7 +139,7 @@ final class DelegationServer {
 
     func caller(token: String) -> DelegationCaller? {
         let key = Self.hash(token)
-        guard var grant = grants[key] else { return nil }
+        guard var grant = grants[key] else { return outsideCaller?(token) }
         if now().timeIntervalSince(grant.lastUsed) > Self.idleExpiry, isActive?(grant.caller.sessionID) != true {
             grants.removeValue(forKey: key)
             return nil
@@ -129,17 +149,39 @@ final class DelegationServer {
         return grant.caller
     }
 
-    private static func hash(_ token: String) -> Data { Data(SHA256.hash(data: Data(token.utf8))) }
+    static func hash(_ token: String) -> Data { Data(SHA256.hash(data: Data(token.utf8))) }
+
+    /// 32 random bytes, base64url.
+    static func newToken() -> String {
+        var random = SystemRandomNumberGenerator() // arc4random: cryptographically secure
+        let bytes = (0..<32).map { _ in UInt8.random(in: .min ... .max, using: &random) }
+        return Data(bytes).base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+    }
+
+    /// Only a loopback `Host` with this server's port, and no browser `Origin`
+    /// (`null` is a sandboxed or file context's): a web page, even one whose
+    /// name was rebound to 127.0.0.1, cannot reach the tools. Before the
+    /// server listens (tests call `respond` directly) there is no port to match.
+    nonisolated static func admits(_ headers: [String: String], port: Int?) -> Bool {
+        let origins = headers.filter { $0.key.lowercased() == "origin" }.map(\.value)
+        guard origins.allSatisfy({ $0 == "null" }) else { return false }
+        guard let port else { return true }
+        let hosts = headers.filter { $0.key.lowercased() == "host" }.map { $0.value.lowercased() }
+        return hosts.count == 1 && ["127.0.0.1:\(port)", "localhost:\(port)"].contains(hosts[0])
+    }
 
     // MARK: MCP over HTTP
 
-    func respond(method: String, path: String, headers: [String: String], body: Data) async -> Response {
+    func respond(method: String, path: String, headers: [String: String], body: Data, connection: ObjectIdentifier? = nil) async -> Response {
+        guard Self.admits(headers, port: url?.port) else { return Response(status: 403) }
         guard path.split(separator: "?").first == "/mcp" else { return Response(status: 404) }
         let authorization = headers.first { $0.key.lowercased() == "authorization" }?.value ?? ""
         guard authorization.lowercased().hasPrefix("bearer "),
               let caller = caller(token: String(authorization.dropFirst(7)).trimmingCharacters(in: .whitespaces)) else {
             return Response(status: 401, headers: ["WWW-Authenticate": "Bearer"])
         }
+        if let connection, connections[connection] != nil { connectionCallers[connection] = caller.sessionID }
         // No server-initiated stream and no session to end: Streamable HTTP allows 405.
         guard method == "POST" else { return Response(status: 405, headers: ["Allow": "POST"]) }
         guard let message = try? JSONSerialization.jsonObject(with: body) else {
@@ -147,7 +189,8 @@ final class DelegationServer {
         }
         if let batch = message as? [[String: Any]] {
             var replies: [[String: Any]] = []
-            for request in batch { if let reply = await handle(request, caller: caller) { replies.append(reply) } }
+            // A revoked client's closed request runs nothing more of its batch.
+            for request in batch where !Task.isCancelled { if let reply = await handle(request, caller: caller) { replies.append(reply) } }
             return replies.isEmpty ? Response(status: 202) : json(replies)
         }
         guard let request = message as? [String: Any] else { return json(Self.error(id: NSNull(), code: -32600, message: "Invalid request")) }
@@ -175,16 +218,17 @@ final class DelegationServer {
                            "capabilities": ["tools": ["listChanged": false]],
                            "serverInfo": ["name": Self.name, "title": "Notch Companion", "version": "0.2.0"],
                            // OpenCode adds every server's instructions at a folder to each prompt; its session entry carries them once.
-                           "instructions": caller.runtime == .opencode ? "" : instructions])
+                           "instructions": caller.client != nil ? OutsideClients.instructions : caller.runtime == .opencode ? "" : instructions])
         case "ping": return result([:])
         case "tools/list": return result(["tools": tools?(caller) ?? []])
         case "tools/call":
-            guard let name = params["name"] as? String, (tools?(caller) ?? []).contains(where: { $0["name"] as? String == name }) else {
-                return Self.error(id: id, code: -32602, message: "Unknown tool")
-            }
+            guard let name = params["name"] as? String else { return Self.error(id: id, code: -32602, message: "Unknown tool") }
+            let listed = (tools?(caller) ?? []).contains { $0["name"] as? String == name }
+            guard listed || caller.client != nil else { return Self.error(id: id, code: -32602, message: "Unknown tool") }
             do {
+                guard listed else { throw DelegationFailure("capability_denied", OutsideClients.denied) }
                 // OpenCode names the session running the tool; one session cannot use another's server.
-                if let native = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String, ownsNative?(caller, native) == false {
+                if caller.client == nil, let native = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String, ownsNative?(caller, native) == false {
                     throw DelegationFailure("capability_denied", "These tools belong to a different session.")
                 }
                 let value = try await call?(caller, name, params["arguments"] as? [String: Any] ?? [:]) ?? [:]
@@ -210,6 +254,7 @@ final class DelegationServer {
                 MainActor.assumeIsolated {
                     // A closed request ends its tool call, including a blocking wait.
                     self?.connections.removeValue(forKey: key)?.1?.cancel()
+                    self?.connectionCallers.removeValue(forKey: key)
                 }
             default: break
             }
@@ -235,7 +280,8 @@ final class DelegationServer {
                 case .request(let method, let path, let headers, let body):
                     let task = Task { @MainActor [weak self] in
                         guard let self else { return }
-                        let response = await self.respond(method: method, path: path, headers: headers, body: body)
+                        let response = await self.respond(method: method, path: path, headers: headers, body: body,
+                                                          connection: ObjectIdentifier(connection))
                         guard !Task.isCancelled else { return }
                         self.send(response, on: connection)
                     }
@@ -258,6 +304,7 @@ final class DelegationServer {
                     return
                 }
                 self.connections.removeValue(forKey: key)?.1?.cancel()
+                self.connectionCallers.removeValue(forKey: key)
                 connection.cancel()
             }
         }
@@ -280,7 +327,11 @@ final class DelegationServer {
         var headers: [String: String] = [:]
         for line in lines.dropFirst() {
             guard let colon = line.firstIndex(of: ":") else { continue }
-            headers[String(line[..<colon]).trimmingCharacters(in: .whitespaces)] = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            let name = String(line[..<colon]).trimmingCharacters(in: .whitespaces)
+            // A repeated security header is ambiguous, so it cannot slip a foreign Host or Origin past `admits`.
+            if ["host", "origin", "authorization", "content-length"].contains(name.lowercased()),
+               headers.keys.contains(where: { $0.lowercased() == name.lowercased() }) { return .invalid(400) }
+            headers[name] = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
         }
         if headers.contains(where: { $0.key.lowercased() == "transfer-encoding" }) { return .invalid(411) }
         let length = Int(headers.first { $0.key.lowercased() == "content-length" }?.value ?? "0") ?? -1
@@ -292,7 +343,7 @@ final class DelegationServer {
     }
 
     private func send(_ response: Response, on connection: NWConnection) {
-        let reasons = [200: "OK", 202: "Accepted", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found",
+        let reasons = [200: "OK", 202: "Accepted", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
                        405: "Method Not Allowed", 411: "Length Required", 413: "Payload Too Large", 431: "Request Header Fields Too Large"]
         var head = "HTTP/1.1 \(response.status) \(reasons[response.status] ?? "Error")\r\nContent-Length: \(response.body.count)\r\nConnection: close\r\n"
         for (key, value) in response.headers { head += "\(key): \(value)\r\n" }

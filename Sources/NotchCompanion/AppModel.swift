@@ -252,11 +252,22 @@ final class AppModel: ObservableObject {
     /// Delegation sends to sessions other than the composer's.
     var backgroundSubmissions: Set<String> = []
     var backgroundSendErrors: [String: String] = [:]
+    /// Keyed agent sends under way, so a concurrent retry sends nothing new.
+    var sendsInFlight: Set<String> = []
     func isSubmitting(_ id: String) -> Bool { submittingSessionID == id || backgroundSubmissions.contains(id) }
     @Published var delegationEnabled = true {
         didSet { preferences.set(delegationEnabled, forKey: "delegation.enabled") }
     }
     let delegationServer = DelegationServer()
+    /// MCP clients outside the app (Settings → Outside MCP clients), off by default.
+    @Published var outsideClientsEnabled = false {
+        didSet { preferences.set(outsideClientsEnabled, forKey: OutsideClients.enabledKey); outsideClientsChanged() }
+    }
+    @Published var outsideClients: [OutsideClient] = []
+    /// The loopback endpoint outside clients use, while they are allowed.
+    @Published var outsideURL: URL?
+    /// A token just created, shown once until the user dismisses it; never saved.
+    @Published var revealedOutsideToken: RevealedOutsideToken?
     /// Sessions blocked on a delegation wait, counted per open wait.
     @Published var delegationWaits: [String: Int] = [:]
     /// Sessions being waited on; their questions reach the waiter, not a notice.
@@ -473,6 +484,7 @@ final class AppModel: ObservableObject {
         if sessions.isEmpty { var session = CompanionSession(); session.runtime = newDraftRuntime; session.profileID = RuntimeRoute.defaultProfile(session.runtime, defaults: preferences); applyNativeWorkspace(to: &session); sessions = [session]; currentID = session.id }
         delegationEnabled = preferences.object(forKey: "delegation.enabled") as? Bool ?? true
         configureDelegation()
+        loadOutsideClients()
         startWorktreeCleanup()
         self.client.onEvent = { [weak self] name, payload in self?.receive(name, payload: payload) }
         self.client.onConnectionChange = { [weak self] connected, message in
@@ -527,7 +539,7 @@ final class AppModel: ObservableObject {
         current.map { canChangeRuntime($0.id) && !readyRuntimes.contains($0.runtime) } ?? true
     }
 
-    private var newDraftRuntime: RuntimeKind {
+    var newDraftRuntime: RuntimeKind {
         readyRuntimes.contains(defaultRuntime) ? defaultRuntime : readyRuntimes.first ?? defaultRuntime
     }
 
@@ -1733,7 +1745,7 @@ final class AppModel: ObservableObject {
     /// reports failures in `backgroundSendErrors`, and live app-owned
     /// children do not block it.
     @discardableResult
-    func submit(reply: String?, target: String? = nil, kind: String? = nil, turnID fixedTurnID: String? = nil, queuedAttachments: [Attachment]? = nil) async -> Bool {
+    func submit(reply: String?, target: String? = nil, kind: String? = nil, from: String? = nil, turnID fixedTurnID: String? = nil, queuedAttachments: [Attachment]? = nil) async -> Bool {
         let background = target != nil
         guard let localID = target ?? currentID, let session = sessions.first(where: { $0.id == localID }) else { return false }
         guard !(background ? session.isBusyIgnoringDelegates : session.isBusy), !(background ? isSubmitting(localID) : submitting || isSubmitting(localID)),
@@ -1789,6 +1801,7 @@ final class AppModel: ObservableObject {
             text: text + (attachments.isEmpty ? "" : "\n\nAttached: " + attachments.map(\.name).joined(separator: ", ")),
             turnID: turnID)
         message.kind = kind
+        message.from = from
         update(localID) { target in
             target.stagedSubmission = StagedSubmission(message: message, draft: queuedAttachments != nil ? reply : reply == nil ? session.draft : nil,
                                                         attachments: attachments)
