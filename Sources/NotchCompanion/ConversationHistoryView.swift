@@ -237,7 +237,11 @@ extension ConversationHistoryView {
                               fork: commentary ? nil : session.flatMap { session in
                                   model.forkPoint(message.id, in: session).map { _ in { Task { await model.forkFromHere(message.id, in: session.id) } } }
                               },
-                              forkBlocker: session.flatMap(model.forkBlocker))
+                              forkBlocker: session.flatMap(model.forkBlocker),
+                              edit: commentary ? nil : session.flatMap { session in
+                                  model.rewindPoint(message.id, in: session).map { _ in { Task { await model.editFromHere(message.id, in: session.id) } } }
+                              },
+                              editBlocker: session.flatMap { model.rewindBlocker($0) })
             .transcriptFindRow("message:\(message.id)")
     }
 
@@ -295,14 +299,20 @@ private struct TranscriptMessageView: View {
     /// Fork from here, where the harness can fork at this answer; disabled with the reason while it must wait.
     var fork: (() -> Void)? = nil
     var forkBlocker: String? = nil
+    /// Edit from here, on your own messages where the harness can rewind to before them.
+    var edit: (() -> Void)? = nil
+    var editBlocker: String? = nil
     @State private var hovering = false
     @FocusState private var copyFocused: Bool
     @FocusState private var quoteFocused: Bool
     @FocusState private var forkFocused: Bool
+    @FocusState private var editFocused: Bool
 
     /// Hover or keyboard focus shows Copy (and Quote in reply).
     private var revealed: Bool { hovering || copyFocused || quoteFocused || forkFocused || ConversationHistoryView.revealsHoverControls }
     private var forks: Bool { quotes && fork != nil }
+    private var edits: Bool { edit != nil && isOwnMessage }
+    private var editRevealed: Bool { hovering || editFocused || ConversationHistoryView.revealsHoverControls }
     /// An agent's own answer can be quoted into the reply; commentary and relayed messages cannot.
     private var quotes: Bool {
         quote != nil && !commentary && message.role == "assistant" && !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -322,6 +332,15 @@ private struct TranscriptMessageView: View {
                 .accessibilityAction(named: "Quote in reply") { quote?(message.text) }
                 .accessibilityActions {
                     if forks { Button("Fork from here") { if forkBlocker == nil { fork?() } } }
+                }
+        } else if edits {
+            entry
+                .contextMenu {
+                    Button("Edit from here", systemImage: "pencil") { edit?() }.disabled(editBlocker != nil)
+                    Button("Copy message", systemImage: "doc.on.doc", action: copy)
+                }
+                .accessibilityActions {
+                    Button("Edit from here") { if editBlocker == nil { edit?() } }
                 }
         } else {
             entry
@@ -410,6 +429,13 @@ private struct TranscriptMessageView: View {
             .help(forkBlocker.map { "Fork from here: \($0)" } ?? "Fork from here").accessibilityLabel("Fork from here")
     }
 
+    private var editButton: some View {
+        Button { edit?() } label: { Image(systemName: "pencil").font(.system(size: 10)) }
+            .buttonStyle(NotchIconButtonStyle(size: 22))
+            .disabled(editBlocker != nil)
+            .help(editBlocker.map { "Edit from here: \($0)" } ?? "Edit from here").accessibilityLabel("Edit from here")
+    }
+
     private func copy() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(message.text, forType: .string)
@@ -422,6 +448,11 @@ private struct TranscriptMessageView: View {
         HStack(alignment: .top, spacing: 6) {
             Spacer(minLength: 48)
             refinedCopyButton.padding(.top, 5)
+            if edits {
+                editButton.focused($editFocused).padding(.top, 5)
+                    .opacity(editRevealed ? 1 : 0)
+                    .animation(.easeOut(duration: 0.12), value: editRevealed)
+            }
             Text(verbatim: message.text)
                 .font(CompanionStyle.body).lineSpacing(4)
                 .textSelection(.enabled)
@@ -472,6 +503,7 @@ private struct TranscriptMessageView: View {
             Spacer(minLength: 64)
             // Copy shows beside the bubble while the pointer is over it.
             copyButton.opacity(hovering ? 1 : 0)
+            if edits { editButton.focused($editFocused).opacity(editRevealed ? 1 : 0) }
             Text(verbatim: message.text)
                 .font(.system(size: 13)).lineSpacing(3)
                 .textSelection(.enabled)
@@ -531,6 +563,7 @@ private struct TranscriptMessageView: View {
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(CompanionStyle.faint)
                 if quotes { quoteButton.padding(.vertical, -4) }
                 if forks { forkButton.padding(.vertical, -4) }
+                if edits { editButton.padding(.vertical, -4) }
                 copyButton.padding(.vertical, -4)
             }
             messageBody(content, interpretsMarkdown: message.role != "user" || message.agentLabel != nil, questionGap: 3)

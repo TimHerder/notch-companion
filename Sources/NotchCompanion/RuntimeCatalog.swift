@@ -18,6 +18,8 @@ struct RuntimeCapabilities: Codable, Equatable {
     var rateLimits: Bool? = nil
     /// Native input priority support, when it depends on the connected CLI.
     var steering: Bool? = nil
+    /// Native conversation rewind, when it depends on the connected version (OpenCode 2's staged revert).
+    var rewind: Bool? = nil
 
     var supportedPermissionModes: [PermissionMode] { (permissionModes ?? []).compactMap(PermissionMode.init(rawValue:)) }
 
@@ -33,6 +35,7 @@ struct RuntimeCapabilities: Codable, Equatable {
         if let value = values["permissionModes"] as? [String] { permissionModes = value }
         if let value = values["rateLimits"] as? Bool { rateLimits = value }
         if let value = values["steering"] as? Bool { steering = value }
+        if let value = values["rewind"] as? Bool { rewind = value }
     }
 }
 

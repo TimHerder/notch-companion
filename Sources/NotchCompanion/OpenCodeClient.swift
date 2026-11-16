@@ -32,6 +32,8 @@ final class OpenCodeClient: RuntimeTransport {
     private var isV2 = false
     /// OpenCode 2 can add a runtime MCP server per session; 1.x cannot.
     private var hostsMCP = false
+    /// OpenCode 2 stages and commits a revert to before a user message, with or without its file snapshots.
+    private var reverts = false
     /// Hosting sessions: their native folder and delegation launch.
     private var delegations: [String: (location: String, launch: [String: Any])] = [:]
     private var opening: CheckedContinuation<URL, Error>?
@@ -134,6 +136,7 @@ final class OpenCodeClient: RuntimeTransport {
             let required = isV2 ? OpenCodeV2.requiredPaths : ["/session", "/session/status", "/session/{sessionID}", "/session/{sessionID}/children", "/session/{sessionID}/message", "/session/{sessionID}/prompt_async", "/session/{sessionID}/abort", "/event", "/permission", "/permission/{requestID}/reply", "/question", "/question/{requestID}/reply", "/question/{requestID}/reject", "/provider", "/config"]
             guard required.allSatisfy({ paths[$0] != nil }) else { throw AppError("OpenCode's native HTTP schema is missing required conversation, model, or interaction endpoints.") }
             hostsMCP = isV2 && Self.delegationPaths.allSatisfy { paths[$0] != nil }
+            reverts = isV2 && Self.revertPaths.allSatisfy { paths[$0] != nil }
             guard generation == run else { throw AppError("The OpenCode connection changed during initialization.") }
             ready = true; onConnectionChange?(true, "OpenCode \(version) native HTTP server connected. Provider authentication is checked on Send.")
         } catch { if generation == run { fail(error) }; throw error }
@@ -203,6 +206,7 @@ final class OpenCodeClient: RuntimeTransport {
             }
             var sessionInfo: [String: Any] = ["capabilities": ["resume": true, "attachments": true, "images": true, "approvals": true, "questions": true, "modelSelection": true, "contextUsage": true, "delegation": true], "capability_note": "Native OpenCode V1 HTTP frontend with authoritative parent and child activity. Provider accounts and project resources stay in OpenCode."]
             sessionInfo["interface"] = isV2 ? "opencode-http-v2" : "opencode-http-v1"
+            if reverts, var capabilities = sessionInfo["capabilities"] as? [String: Any] { capabilities["rewind"] = true; sessionInfo["capabilities"] = capabilities }
             sessionInfo["capability_note"] = "Native OpenCode HTTP frontend with parent and child activity. Context is an estimate from the latest native model request; accounts and project resources stay in OpenCode."
             if let nativeModel = info["model"] as? [String: Any] { sessionInfo["model"] = nativeModel["id"]; sessionInfo["provider"] = nativeModel["providerID"] }
             sessionInfo.merge(snapshot["info"] as? [String: Any] ?? [:]) { _, new in new }
@@ -337,6 +341,32 @@ final class OpenCodeClient: RuntimeTransport {
             throw AppError("OpenCode accepted cancellation but still reports native work. Its activity remains visible.")
         case "approval.respond", "clarify.respond":
             return try await answer(params, approval: method == "approval.respond", sid: sid, cwd: cwd)
+        case "session.rewind":
+            guard reverts else { throw AppError("This OpenCode version cannot rewind through Notch Companion; OpenCode 2 can.") }
+            guard let message = params["message_id"] as? String, message.hasPrefix("msg_"), let turns = params["turns"] as? Int else {
+                throw AppError("Missing the OpenCode message to rewind to.")
+            }
+            // A fresh snapshot: the revert must remove exactly the turns the conversation shows, from an idle tree.
+            let snapshot = try await refresh(sid)
+            try requireGeneration(operation)
+            guard snapshot["running"] as? Bool != true, !isBusy(sid) else { throw AppError("OpenCode reports active work, so nothing was rewound.") }
+            let roles = (messages[sid] ?? []).compactMap { $0["info"] as? [String: Any] }
+            guard let start = roles.firstIndex(where: { $0["id"] as? String == message && $0["role"] as? String == "user" }) else {
+                throw AppError("OpenCode's history no longer has this message, so nothing was rewound.")
+            }
+            guard roles[start...].filter({ $0["role"] as? String == "user" }).count == turns else {
+                throw AppError("OpenCode's history after this message differs from the conversation shown here, so nothing was rewound.")
+            }
+            let endpoint = "/api/session/\(component(sid))/revert"
+            _ = try await v2Data("POST", endpoint + "/stage", body: ["messageID": message, "files": params["files"] as? Bool == true])
+            do { _ = try await rawCall("POST", endpoint + "/commit") }
+            catch {
+                // A staged revert is reversible: clearing it puts the boundary (and any restored files) back.
+                _ = try? await rawCall("DELETE", endpoint)
+                throw error
+            }
+            try requireGeneration(operation)
+            return try await refresh(sid, restoring: true)
         case "session.rename":
             _ = try await call("PATCH", "/session/\(component(sid))", cwd: cwd, body: ["title": params["title"] as? String ?? ""]); return [:]
         default: throw AppError("OpenCode's native HTTP interface does not implement \(method) here.")
@@ -944,6 +974,7 @@ extension OpenCodeClient {
 /// that deny every companion server but the session's own, and a session
 /// instruction entry. Nothing is written to OpenCode's configuration.
 extension OpenCodeClient {
+    nonisolated static let revertPaths = ["/api/session/{sessionID}/revert/stage", "/api/session/{sessionID}/revert/commit", "/api/session/{sessionID}/revert"]
     nonisolated static let delegationPaths = ["/api/experimental/mcp/{server}", "/api/experimental/session/{sessionID}/instructions/entries",
                                               "/api/experimental/session/{sessionID}/instructions/entries/{key}"]
     nonisolated static let delegationNotice = "OpenCode did not add Notch Companion's delegation tools to this session."

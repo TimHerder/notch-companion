@@ -57,6 +57,20 @@ private development hasn't been re-run against this source snapshot. Known limit
   stream `uuid` always matches its transcript, are unverified. OpenCode, Pi and
   shared Hermes fork natively but aren't wired yet
   ([matrix](backend-runtime.md#forks-and-side-chats)).
+- Edit from here (2026-11-17): offered for Claude Code (conversation only),
+  shared Hermes (its latest turn only) and OpenCode 2 (conversation, or
+  conversation and files). Claude Code's hidden `--resume-session-at` and
+  `--rewind-files` options and the `rewind_files` control request were read
+  from the installed 2.1.311 binary; Hermes's `session.undo` from the installed
+  0.22.3 gateway source; OpenCode's `revert/stage`, `revert/commit` and
+  `revert` endpoints from the installed 2.0.30 binary. Covered by unit tests,
+  argument fixtures and offscreen renders in all three designs; no live native
+  rewind or physical interaction has been run. Unverified: whether Claude's
+  truncating resume rewrites its transcript on disk or only branches it at the
+  next send (the app resumes at the same answer until a send either way), and
+  OpenCode's `files` flag on a real snapshot. Codex 0.162.1 has no rewind for
+  the legacy-history threads this app opens, and Pi, ACP, OpenClaw, Legacy
+  Hermes and OpenCode 1.x aren't offered ([matrix](backend-runtime.md#edit-from-here)).
 - Cursor CLI: not installed here, so prompts and delegation hosting are covered
   by protocol fixtures only. ACP has no pre-approval, so it may ask before every
   companion tool call, and its tool rows may miss the delegation labels.

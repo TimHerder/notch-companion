@@ -947,6 +947,51 @@ import ImageIO
         try render(UnifiedNotchView(model: model), size: compact, name: "side-chat-team", output: output)
     }
 
+    /// Edit from here on your own messages (not the first, whose kept answer Claude Code lacks), disabled while
+    /// a child works, and the composer after a rewind with the message and its file back ahead of a newer draft.
+    @MainActor static func renderRewind(output: URL, temporary: URL, preferences: UserDefaults) throws {
+        let model = AppModel(storageURL: temporary.appendingPathComponent("rewind.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
+        defer { model.shutdown() }
+        let spec = temporary.appendingPathComponent("grammar.md")
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        try Data("grammar".utf8).write(to: spec)
+        var fix = ChatMessage(id: "fix", role: "user", text: "Accept them, and add a test.\n\nAttached: grammar.md", turnID: "fix")
+        fix.attachments = [Attachment(url: spec)]
+        var parent = CompanionSession(id: "parent", runtimeID: "live", storedID: "8a7c9e3d-1f2b-4c5d-8e9f-0a1b2c3d4e5f", title: "Parser fix", state: .finished,
+            messages: [ChatMessage(id: "ask", role: "user", text: "Why does the parser reject trailing commas?", turnID: "ask"),
+                       ChatMessage(id: "why", role: "assistant", text: "The tokenizer ends a list at the first comma that has no value after it, so `[1, 2,]` reads as an error.",
+                                   turnID: "ask", nativeID: "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"),
+                       fix,
+                       ChatMessage(id: "done", role: "assistant", text: "Done: the tokenizer now skips one trailing comma, and `ParserTests` covers lists and objects.", turnID: "fix")],
+            workspacePath: "/tmp/Parser")
+        parent.runtime = .claude
+        parent.turnEndedAt = ["ask": Date(), "fix": Date()]
+        parent.completionID = "seen"
+        parent.acknowledgedCompletionID = "seen"
+        model.sessions = [parent]
+        model.currentID = "parent"
+        model.connection = true
+        model.reducedMotion = true
+        model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1920, height: 1080), topInset: 0,
+                                       leftArea: nil, rightArea: nil, indicatorCount: model.sessionIndicators.count)
+        model.notchPresentation = .expanded(model.geometry!)
+        model.expanded = true
+        model.page = .session
+        let compact = model.geometry!.expandedFrame.size
+        let full = NSSize(width: 900, height: 660)
+        ConversationHistoryView.revealsHoverControls = true
+        try render(UnifiedNotchView(model: model), size: compact, name: "edit-from-here", output: output)
+        try render(FullSessionView(model: model), size: full, name: "edit-from-here-full", output: output)
+        model.sessions[0].queuedSends = [QueuedSend(id: "later", text: "Then update the changelog.")]
+        try render(UnifiedNotchView(model: model), size: compact, name: "edit-from-here-blocked", output: output)
+        model.sessions[0].queuedSends = []
+        ConversationHistoryView.revealsHoverControls = false
+        model.sessions[0].draft = "Also cover nested lists."
+        model.applyRewind("parent", at: model.rewindPoint("fix", in: model.sessions[0])!, result: ["resume_at": "1b2c3d4e-5f6a-4b7c-8d9e-0f1a2b3c4d5e"])
+        try render(UnifiedNotchView(model: model), size: compact, name: "edit-from-here-rewound", output: output)
+        try render(FullSessionView(model: model), size: full, name: "edit-from-here-rewound-full", output: output)
+    }
+
     /// A Git draft's Local / New worktree choice, its base-branch picker, a failed
     /// creation, and a started worktree session's branch chip, from a temporary repository.
     @MainActor static func renderWorktree(output: URL, temporary: URL, preferences: UserDefaults) throws {
@@ -1228,6 +1273,10 @@ import ImageIO
         }
         if CommandLine.arguments.contains("--fork-only") {
             try renderFork(output: output, temporary: temporary, preferences: preferences)
+            return
+        }
+        if CommandLine.arguments.contains("--rewind-only") {
+            try renderRewind(output: output, temporary: temporary, preferences: preferences)
             return
         }
         if CommandLine.arguments.contains("--worktree-only") {
@@ -2123,6 +2172,7 @@ import ImageIO
         try renderIsland(output: output, temporary: temporary, preferences: preferences)
         try renderDelegation(output: output, temporary: temporary, preferences: preferences)
         try renderFork(output: output, temporary: temporary, preferences: preferences)
+        try renderRewind(output: output, temporary: temporary, preferences: preferences)
     }
 
     @MainActor static func image<V: View>(_ content: V, size: NSSize) throws -> NSImage {
