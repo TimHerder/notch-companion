@@ -1642,7 +1642,7 @@ struct FullSessionView: View {
             FailedAgentBanner(model: model) { selectedTab = "Team" }
         }.readable().padding(.horizontal, 22)
         Group {
-            if selectedTab == "Conversation" { ConversationHistoryView(model: model, inNotch: false, find: findCurrent.map { matches[$0] }) }
+            if selectedTab == "Conversation" { ConversationHistoryView(model: model, inNotch: false, findOpen: findQuery != nil, find: findCurrent.map { matches[$0] }) }
             else if selectedTab == "Activity" { fullActivity }
             else { fullTeam }
         }.readable().padding(.horizontal, 22).frame(maxHeight: .infinity)

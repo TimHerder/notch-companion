@@ -114,18 +114,6 @@ enum MarkdownDocument {
                 append(.quote(parse(quoted, depth: depth + 1)), kind: "quote", source: line.source)
                 continue
             }
-            if let table = tableStart(lines, at: index) {
-                index += 2
-                var rows: [[String]] = []
-                while index < lines.count, !lines[index].isBlank, !startsBlock(lines[index]) {
-                    // Short rows are padded and long ones cut to the header's columns, as on GitHub.
-                    let cells = tableCells(lines[index].trimmed)
-                    rows.append((0..<table.header.count).map { $0 < cells.count ? cells[$0] : "" })
-                    index += 1
-                }
-                append(.table(alignments: table.alignments, header: table.header, rows: rows), kind: "table", source: line.source)
-                continue
-            }
             if let first = listMarker(line), first.indent <= 3 {
                 var items: [MarkdownListItem] = []
                 while index < lines.count, let marker = listMarker(lines[index]), marker.indent == first.indent, marker.ordered == first.ordered {
@@ -150,6 +138,19 @@ enum MarkdownDocument {
                 continue
             }
 
+            // After lists: a list item parses its own table.
+            if let table = tableStart(lines, at: index) {
+                index += 2
+                var rows: [[String]] = []
+                while index < lines.count, !lines[index].isBlank, !startsBlock(lines[index]) {
+                    // Short rows are padded and long ones cut to the header's columns, as on GitHub.
+                    let cells = tableCells(lines[index].trimmed)
+                    rows.append((0..<table.header.count).map { $0 < cells.count ? cells[$0] : "" })
+                    index += 1
+                }
+                append(.table(alignments: table.alignments, header: table.header, rows: rows), kind: "table", source: line.source)
+                continue
+            }
             var paragraph = [line.text]
             index += 1
             var setextLevel: Int?
@@ -180,8 +181,9 @@ enum MarkdownDocument {
         guard !header.isEmpty, header.count == marks.count else { return nil }
         var alignments: [MarkdownTableAlignment] = []
         for mark in marks {
-            let dashes = mark.trimmingCharacters(in: CharacterSet(charactersIn: ":"))
-            guard !dashes.isEmpty, dashes.allSatisfy({ $0 == "-" }), mark.count - dashes.count <= 2 else { return nil }
+            // At most one colon at each end.
+            let dashes = mark.dropFirst(mark.hasPrefix(":") ? 1 : 0).dropLast(mark.hasSuffix(":") ? 1 : 0)
+            guard !dashes.isEmpty, dashes.allSatisfy({ $0 == "-" }) else { return nil }
             switch (mark.hasPrefix(":"), mark.hasSuffix(":")) {
             case (true, true): alignments.append(.center)
             case (false, true): alignments.append(.trailing)

@@ -5,7 +5,9 @@ import AppKit
 struct ConversationHistoryView: View {
     @ObservedObject var model: AppModel
     var inNotch = true
-    /// The full-session window's current find match, revealed and highlighted.
+    /// The full-session window's find field is open; closing it resumes following.
+    var findOpen = false
+    /// Its current match, revealed and highlighted.
     var find: TranscriptFindMatch? = nil
     @StateObject private var scrolling = HistoryScrollCoordinator()
 
@@ -32,6 +34,7 @@ struct ConversationHistoryView: View {
                             let childID = message.delegationChildID.flatMap { id in model.sessions.contains { $0.id == id } ? id : nil }
                             DelegationResultRow(summary: message.delegationSummary ?? "", failed: message.delegationSummary?.hasSuffix(" failed") == true,
                                                 open: childID.map { id in { model.openDelegatedSession(id) } })
+                                .transcriptFindRow("message:\(message.id)")
                         case .message(let message):
                             messageView(message, commentary: false)
                                 .transition(message.id == session?.stagedSubmission?.message.id && !model.reducedMotion
@@ -138,12 +141,10 @@ struct ConversationHistoryView: View {
             }
         }
         .onDisappear { scrolling.removeScrollAction() }
-        .onChange(of: find, initial: true) { old, new in
-            guard let new else {
-                // Closing find resumes following, as Jump to latest does.
-                if old != nil { scrolling.jumpToLatest() }
-                return
-            }
+        // Closing find resumes following, as Jump to latest does, whether or not anything matched.
+        .onChange(of: findOpen) { _, open in if !open { scrolling.jumpToLatest() } }
+        .onChange(of: find, initial: true) { _, new in
+            guard let new else { return }
             scrolling.stopFollowing()
             if let work = new.work { model.expandedWork.insert(work) }
             // The lazy item is realized first, then the row inside it is centred.

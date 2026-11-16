@@ -121,12 +121,15 @@ final class MarkdownDocumentTests: XCTestCase {
         guard case .list(_, let items) = MarkdownDocument.parse("- Results:\n\n  | k | v |\n  |---|---|\n  | x | y |").first?.content,
               case .table(_, let header, let rows) = items.first?.blocks.last?.content else { return XCTFail("Expected a table in the list item") }
         XCTAssertEqual(header, ["k", "v"]); XCTAssertEqual(rows, [["x", "y"]])
+        guard case .list(_, let marked) = MarkdownDocument.parse("- A | B\n  --- | ---\n  x | y").first?.content,
+              case .table(_, let markedHeader, _) = marked.first?.blocks.first?.content else { return XCTFail("A list marker stays a list") }
+        XCTAssertEqual(markedHeader, ["A", "B"])
         guard case .quote(let quoted) = MarkdownDocument.parse("> | k |\n> |---|\n> | x |").first?.content else { return XCTFail("Expected a quote") }
         XCTAssertEqual(quoted.map(\.content), [.table(alignments: [.leading], header: ["k"], rows: [["x"]])])
     }
 
     func testMalformedTablesStayParagraphs() {
-        for source in ["| a | b |\n|---|\n| 1 | 2 |", "| a | b |\n| x | y |", "| a | b |\n|-:-|---|", "a | b"] {
+        for source in ["| a | b |\n|---|\n| 1 | 2 |", "| a | b |\n| x | y |", "| a | b |\n|-:-|---|", "| a | b |\n|::---|---|", "| a | b |\n|---::|---|", "| a |\n|:|", "a | b"] {
             XCTAssertEqual(MarkdownDocument.parse(source).map(\.content), [.paragraph(source)], source)
         }
         XCTAssertEqual(MarkdownDocument.parse("Title | here\n---").map(\.content), [.heading(level: 2, text: "Title | here")],
