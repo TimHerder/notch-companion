@@ -76,6 +76,16 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(.separator())
+        // Find in the full-session window's conversation; the nonactivating notch has none.
+        let findItem = NSMenuItem(title: "Find", action: nil, keyEquivalent: "")
+        let find = NSMenu(title: "Find")
+        find.addItem(withTitle: "Find…", action: #selector(NativeHost.showTranscriptFind(_:)), keyEquivalent: "f")
+        find.addItem(withTitle: "Find Next", action: #selector(NativeHost.findNextInTranscript(_:)), keyEquivalent: "g")
+        let previous = find.addItem(withTitle: "Find Previous", action: #selector(NativeHost.findPreviousInTranscript(_:)), keyEquivalent: "g")
+        previous.keyEquivalentModifierMask = [.command, .shift]
+        findItem.submenu = find
+        edit.addItem(findItem)
         editItem.submenu = edit
         mainMenu.addItem(editItem)
         NSApp.mainMenu = mainMenu

@@ -276,6 +276,7 @@ enum SessionDigest {
             case .list(_, let items): parts.append(items.map { blockText($0.blocks) }.joined(separator: " "))
             case .quote(let nested): parts.append(blockText(nested))
             case .rule: break
+            case .table(_, let header, let rows): parts.append((header + rows.joined()).joined(separator: " "))
             }
         }
         return parts.joined(separator: " ")

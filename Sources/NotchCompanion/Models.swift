@@ -226,6 +226,8 @@ struct PendingRequest: Identifiable, Equatable {
     var choiceDetails: [String: String] = [:]
     /// The turn's native plan approval (Claude `ExitPlanMode`, Cursor `create_plan`).
     var isPlan: Bool = false
+    /// The native deny reply carries a message to the agent (Claude Code, OpenCode).
+    var acceptsDenyReason: Bool = false
 }
 
 struct Attachment: Identifiable, Codable, Equatable {

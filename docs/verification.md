@@ -81,6 +81,11 @@ private development hasn't been re-run against this source snapshot. Known limit
   doesn't host. The child-discovery race and the unstable pre-send snapshot are
   covered by offline fixtures only, not live OpenCode.
 - Pi: no terminal-rendered extension UI and no built-in tool approvals.
+- Deny reasons: Claude Code's deny `message` is covered by protocol fixtures,
+  and OpenCode's reply `message` by the offline HTTP fixture and the installed
+  OpenCode 2.0.30's own reply schema (read from the binary, no prompt). Not yet
+  checked with a live prompt: how either agent words its response to a reason,
+  and OpenCode 1.x.
 - Session titles: a session sent without a chosen title took its runtime's name
   in a live native prompt (macOS 27.2, arm64, 2026-11-11) on Claude Code
   2.1.311, OpenCode 2.0.30 and Antigravity CLI 1.5.3. The same prompt showed
@@ -114,6 +119,11 @@ private development hasn't been re-run against this source snapshot. Known limit
 - The island update, stage, "Worked for" fold, context bubble and session list
   are covered by offscreen fixtures in all three designs. No physical-notch,
   live-hover or VoiceOver acceptance has been done for them.
+- Markdown tables, the deny reason field and Find in the full-session window
+  are covered by offline tests and the `--transcript-only` offscreen fixtures in
+  all three designs. Not yet checked live: ⌘F/⌘G through the menu, Return,
+  ⇧Return and Escape in the find field, trackpad scrolling of a wide table, and
+  VoiceOver reading a table.
 - The composer's settings row under the field, the draft's centred harness and
   folder choosers and the file drop list (current, recent and New session) are
   covered by offline tests and offscreen fixtures in all three designs. Not yet

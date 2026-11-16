@@ -136,7 +136,7 @@ struct ClaudeProtocolState {
         }
         requests[id] = Interaction(input: input, tool: name)
         return ([event("approval.request", ["request_id": id, "choices": ["once", "deny"],
-            "command": Self.describeTool(name, input), "plan": name == "ExitPlanMode"])], nil)
+            "command": Self.describeTool(name, input), "plan": name == "ExitPlanMode", "deny_reason": true])], nil)
     }
 
     /// What a permission request will do, in the words of its arguments. Known
@@ -218,7 +218,9 @@ struct ClaudeProtocolState {
             if computerUse {
                 return Self.response(id, ["behavior": "completed", "result": Self.computerUseGrant(choice == "session" ? pending.input : nil)])
             }
-            return Self.response(id, choice == "once" ? ["behavior": "allow", "updatedInput": pending.input] : ["behavior": "deny", "message": "The user denied this action."])
+            let reason = (params["reason"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            return Self.response(id, choice == "once" ? ["behavior": "allow", "updatedInput": pending.input]
+                : ["behavior": "deny", "message": reason.map { "The user denied this action: \($0)" } ?? "The user denied this action."])
         }
         let questions = pending.input["questions"] as? [[String: Any]] ?? []
         guard pending.tool == "AskUserQuestion", let index = Int(params["question_id"] as? String ?? ""), questions.indices.contains(index),

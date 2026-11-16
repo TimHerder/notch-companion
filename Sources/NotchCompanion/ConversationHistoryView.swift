@@ -5,6 +5,8 @@ import AppKit
 struct ConversationHistoryView: View {
     @ObservedObject var model: AppModel
     var inNotch = true
+    /// The full-session window's current find match, revealed and highlighted.
+    var find: TranscriptFindMatch? = nil
     @StateObject private var scrolling = HistoryScrollCoordinator()
 
     private var session: CompanionSession? { model.current }
@@ -39,7 +41,7 @@ struct ConversationHistoryView: View {
                             messageView(message, commentary: true)
                         case .tools(let group):
                             TranscriptToolGroup(group: group, reducedMotion: model.reducedMotion,
-                                                onInspect: scrolling.stopFollowing)
+                                                onInspect: scrolling.stopFollowing, reveal: find?.group == group.id)
                         case .work(let work):
                             TurnWorkView(work: work, expanded: !work.folds || model.expandedWork.contains(work.id), toggle: {
                                 if model.expandedWork.remove(work.id) == nil {
@@ -107,6 +109,7 @@ struct ConversationHistoryView: View {
             // lose its rows when scrolled to the end from the top or from another
             // session's offset. Each session gets its own scroll view, opened at the end.
             .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .environment(\.transcriptFindTarget, find?.id)
             .id(session?.id)
             .scrollEdgeFade(top: 14, bottom: 14)
             .accessibilityLabel("Conversation history")
@@ -135,6 +138,20 @@ struct ConversationHistoryView: View {
             }
         }
         .onDisappear { scrolling.removeScrollAction() }
+        .onChange(of: find, initial: true) { old, new in
+            guard let new else {
+                // Closing find resumes following, as Jump to latest does.
+                if old != nil { scrolling.jumpToLatest() }
+                return
+            }
+            scrolling.stopFollowing()
+            if let work = new.work { model.expandedWork.insert(work) }
+            // The lazy item is realized first, then the row inside it is centred.
+            DispatchQueue.main.async {
+                proxy.scrollTo(new.item, anchor: .top)
+                DispatchQueue.main.async { proxy.scrollTo(new.scrollID, anchor: .center) }
+            }
+        }
         .onChange(of: model.notchPresentation.contentIsInteractive) { _, revealed in
             if revealed { scrolling.revealIfFollowing() }
         }
@@ -195,6 +212,7 @@ extension ConversationHistoryView {
                               questionStatus: questionStatus(message), commentary: commentary,
                               open: { url, reveal in model.openExternally(url, reveal: reveal) },
                               reply: { questions, answers in await model.replyToQuestions(questions, answers: answers) })
+            .transcriptFindRow("message:\(message.id)")
     }
 
     /// Delegated agents still at work; the transcript already shows tools and text.
@@ -502,6 +520,8 @@ private struct TranscriptToolGroup: View {
     var onInspect: () -> Void
     /// Inside an unfolded turn every call shows as its own row.
     var inWork = false
+    /// Find selected a call behind the collapsed line, so it shows.
+    var reveal = false
     @State private var showsOlder = false
 
     var body: some View {
@@ -511,18 +531,19 @@ private struct TranscriptToolGroup: View {
                 calls(group.tools)
             } else if !group.olderTools.isEmpty {
                 let count = group.isLive ? group.olderTools.count : group.tools.count
-                Button { showsOlder.toggle() } label: {
-                    DisclosureLine(title: "\(count) \(group.isLive ? "earlier " : "")tool \(count == 1 ? "call" : "calls")", expanded: showsOlder)
+                let open = showsOlder || reveal
+                Button { showsOlder = !open } label: {
+                    DisclosureLine(title: "\(count) \(group.isLive ? "earlier " : "")tool \(count == 1 ? "call" : "calls")", expanded: open)
                 }
                 .buttonStyle(.plain).pressableCursor()
-                .accessibilityValue(showsOlder ? "Expanded" : "Collapsed")
+                .accessibilityValue(open ? "Expanded" : "Collapsed")
                 .onChange(of: showsOlder) { _, open in if open { onInspect() } }
-                if showsOlder { calls(group.olderTools) }
+                if open { calls(group.olderTools) }
             }
             if group.isLive {
                 VStack(spacing: 0) {
                     ForEach(group.liveTools) { tool in
-                        ToolRow(tool: tool)
+                        ToolRow(tool: tool).transcriptFindRow("tool:\(tool.id)")
                             .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
                                                     removal: .move(edge: .top).combined(with: .opacity)))
                     }
@@ -540,7 +561,9 @@ private struct TranscriptToolGroup: View {
     }
 
     private func calls(_ tools: [ToolActivity]) -> some View {
-        VStack(alignment: .leading, spacing: 0) { ForEach(tools) { tool in ToolHistoryDetail(tool: tool, onInspect: onInspect) } }
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(tools) { tool in ToolHistoryDetail(tool: tool, onInspect: onInspect).transcriptFindRow("tool:\(tool.id)") }
+        }
     }
 }
 

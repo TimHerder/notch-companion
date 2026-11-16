@@ -563,6 +563,67 @@ import ImageIO
         try render(FullSessionView(model: model), size: full, name: "full-worked-live", output: output)
     }
 
+    /// Markdown tables in an answer, a deny reason on a Claude approval, and Find
+    /// in the full-session window selecting a call inside a folded turn.
+    @MainActor static func renderTranscript(output: URL, temporary: URL, preferences: UserDefaults) throws {
+        let model = AppModel(storageURL: temporary.appendingPathComponent("transcript.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
+        defer { model.shutdown() }
+        let start = Date().addingTimeInterval(-900)
+        func at(_ second: Double) -> Date { start.addingTimeInterval(second) }
+        let table = """
+        The flaky runs line up with the slow runners:
+
+        | Runner | Runs | Failures | Median hover delay |
+        |:-------|-----:|---------:|:------------------:|
+        | `macos-14` | 40 | 0 | 150 ms |
+        | `macos-14-large` | 40 | 8 | **212 ms** |
+        | Self-hosted \\| M1 | 20 | 1 | 160 ms |
+
+        | Change | File | Why |
+        |---|---|---|
+        | Injected clock | `Sources/NotchCompanion/NotchControls.swift` | The hover delay reads an injected clock, so tests advance it instead of sleeping for real time on a runner that may be slow |
+        | Advanced in test | `Tests/NotchCompanionTests/NotchControlsTests.swift` | No wall-clock sleep |
+
+        The suite passed 50 runs in a row locally.
+        """
+        model.sessions[0].messages = [
+            ChatMessage(id: "fix", role: "user", text: "NotchControlsTests is flaky on CI. Find out why and fix it.", createdAt: at(0), turnID: "fix"),
+            ChatMessage(id: "look", role: "assistant", text: "I'll read the flaky test and the hover code first.", createdAt: at(2), turnID: "fix"),
+            ChatMessage(id: "answer", role: "assistant", text: table, createdAt: at(128), turnID: "fix")]
+        model.sessions[0].tools = [
+            ToolActivity(id: "read", name: "read_file", detail: "Tests/NotchCompanionTests/NotchControlsTests.swift", state: .finished, startedAt: at(4), finishedAt: at(4.3), turnID: "fix"),
+            ToolActivity(id: "log", name: "terminal", detail: "gh run view 4182 --log-failed", state: .finished, startedAt: at(9), finishedAt: at(27), turnID: "fix"),
+            ToolActivity(id: "test", name: "terminal", detail: "swift test --filter NotchControlsTests", state: .finished, startedAt: at(50), finishedAt: at(126), turnID: "fix")]
+        model.sessions[0].turnEndedAt = ["fix": at(134)]
+        model.sessions[0].runtime = .claude
+        model.sessions[0].title = "Fix the flaky hover test"
+        model.sessions[0].workspacePath = "/tmp/Notch"
+        model.sessions[0].state = .finished
+        model.connection = true
+        model.reducedMotion = true
+        model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1920, height: 1080), topInset: 0, leftArea: nil, rightArea: nil)
+        model.notchPresentation = .expanded(model.geometry!)
+        model.expanded = true
+        let compact = model.geometry!.expandedFrame.size, full = NSSize(width: 900, height: 660)
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-table", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-table", output: output)
+        try render(MarkdownContentView(text: table).padding(20).frame(width: 420).background(Color.black)
+            .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
+            size: NSSize(width: 420, height: 400), name: "markdown-table-narrow", output: output)
+        // Find: the newest of two matching calls sits inside the folded turn, which unfolds.
+        try render(FullSessionView(model: model, findQuery: "terminal"), size: full, name: "full-find-folded", output: output, settle: 0.6)
+        model.expandedWork = []
+        try render(FullSessionView(model: model, findQuery: "no such text"), size: full, name: "full-find-none", output: output)
+        model.expandedWork = []
+        model.sessions[0].runtimeID = "preview"
+        model.sessions[0].state = .waiting
+        model.requests = [PendingRequest(id: "claude-deny", kind: .approval, title: "Claude Code needs permission",
+            detail: "Bash: rm -rf .build\nRemove the build folder to force a clean build", choices: ["once", "deny"],
+            sessionID: "preview", acceptsDenyReason: true)]
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-approval-reason", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-approval-reason", output: output)
+    }
+
     /// A Claude parent with a native subagent and an app-owned Codex child, the
     /// child's own conversation, and the parent's Delegation result row.
     @MainActor static func renderDelegation(output: URL, temporary: URL, preferences: UserDefaults) throws {
@@ -704,6 +765,10 @@ import ImageIO
         }
         if CommandLine.arguments.contains("--work-only") {
             try renderWork(output: output, temporary: temporary, preferences: preferences)
+            return
+        }
+        if CommandLine.arguments.contains("--transcript-only") {
+            try renderTranscript(output: output, temporary: temporary, preferences: preferences)
             return
         }
         let model = AppModel(storageURL: temporary.appendingPathComponent("sessions.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)

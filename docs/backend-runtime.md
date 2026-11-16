@@ -774,6 +774,14 @@ then says its children cannot delegate:
 ## Capability boundaries
 
 UI approval buttons honor offered scopes; `always` approval is never exposed.
+A deny reason goes only where the native reply has a message for the agent:
+Claude Code's `can_use_tool` deny `message` (“The user denied this action:
+<reason>”; without one, the plain “The user denied this action.”) and
+OpenCode's permission reply `message` (1.x `reply: reject`, 2.x `decision:
+reject`), which OpenCode hands the agent as the user's feedback. Codex
+app-server decisions, ACP `request_permission` outcomes, Hermes and OpenClaw
+approval decisions, Pi (no approvals) and Claude computer-use grants have no
+message field, so their requests carry no `deny_reason`.
 Codex question options honor native free-text availability. The companion is not
 a secret-entry or native-dashboard surface: Hermes secure input,
 terminal/preview/window actions, tours and MCP setup callbacks, and Codex secret
@@ -879,7 +887,7 @@ methods and events.
 | `file.attach` | `session_id`, absolute `path` | `attached`, `path`, `ref_path`, `ref_text` |
 | `image.attach` | `session_id`, absolute `path` | image added to pending attachments |
 | `image.detach` | `session_id`, attached `path` | `detached`, remaining `count` |
-| `approval.respond` | `session_id`, `request_id`, `choice` | `resolved` |
+| `approval.respond` | `session_id`, `request_id`, `choice`, optional `reason` (only with `deny`, only for a request marked `deny_reason`) | `resolved` |
 | `clarify.respond` | `request_id`, `answer`, optional `question_id` | `status`, optional remaining question IDs |
 
 Dropping and submission are separate: hover and drop make no runtime requests.
@@ -899,7 +907,7 @@ omits it). Images are implicit pending attachments, so removing one must call
 | `session.info` | model, working directory, tools and other metadata |
 | `session.title` | `title`: the runtime's own name for the session |
 | `error` | `message` |
-| `approval.request` | `request_id`, redacted `command`, allowed `choices` (`once`, `session`, `always`, `deny`) |
+| `approval.request` | `request_id`, redacted `command`, allowed `choices` (`once`, `session`, `always`, `deny`), optional `plan`, optional `deny_reason` when the native deny reply carries a message |
 | `clarify.request` | `request_id`, `question`, `choices`, optional `multi_select`; or `questions: [{qid,question,choices,multi_select}]` |
 | `clarify.expire` | `request_id` to dismiss |
 

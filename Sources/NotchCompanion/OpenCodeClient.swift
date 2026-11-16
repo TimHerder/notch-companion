@@ -704,7 +704,7 @@ final class OpenCodeClient: RuntimeTransport {
         var stored = value; stored["kind"] = kind; requests[id] = stored
         if parent[sid] != nil { event("subagent.thinking", sid: sid, ["status": "waiting"]) }
         if kind == "permission" {
-            event("approval.request", sid: sid, ["request_id": id, "choices": ["once", "deny"], "command": [value["permission"] as? String ?? "Permission", CodexProtocolState.describe(value["patterns"]), CodexProtocolState.describe(value["metadata"])].joined(separator: "\n")])
+            event("approval.request", sid: sid, ["request_id": id, "choices": ["once", "deny"], "deny_reason": true, "command": [value["permission"] as? String ?? "Permission", CodexProtocolState.describe(value["patterns"]), CodexProtocolState.describe(value["metadata"])].joined(separator: "\n")])
         } else {
             let questions = value["questions"] as? [[String: Any]] ?? []
             guard !questions.isEmpty, questions.count <= 16, questions.allSatisfy({ $0["question"] is String && $0["options"] is [[String: Any]] && $0["isSecret"] as? Bool != true }) else {
@@ -732,7 +732,10 @@ final class OpenCodeClient: RuntimeTransport {
         guard let value = requests[id], let native = value["sessionID"] as? String, root(native) == sid else { throw AppError("That native OpenCode request expired or belongs to another session.") }
         if approval {
             guard value["kind"] as? String == "permission", let choice = params["choice"] as? String, ["once", "deny"].contains(choice) else { throw AppError("Choose only a native one-shot permission decision.") }
-            _ = try await call("POST", "/permission/\(component(id))/reply", cwd: cwd, body: ["reply": choice == "once" ? "once" : "reject"])
+            var body: [String: Any] = ["reply": choice == "once" ? "once" : "reject"]
+            // A rejection's message reaches the agent as the user's feedback.
+            if choice == "deny", let reason = params["reason"] as? String, !reason.isEmpty { body["message"] = reason }
+            _ = try await call("POST", "/permission/\(component(id))/reply", cwd: cwd, body: body)
         } else {
             guard value["kind"] as? String == "question", let index = Int(params["question_id"] as? String ?? "0") else { throw AppError("This is not a native question.") }
             let questions = value["questions"] as? [[String: Any]] ?? []
@@ -886,7 +889,11 @@ extension OpenCodeClient {
         if parts.count == 3, ["permission", "question"].contains(parts[0]) {
             guard let request = requests[parts[1]], let id = request["sessionID"] as? String else { throw AppError("That native request expired.") }
             let endpoint = "/api/session/\(component(id))/" + (parts[0] == "permission" ? "permission" : "form") + "/\(component(parts[1]))"
-            if parts[0] == "permission" { return try await rawCall("POST", endpoint + "/reply", body: ["decision": body?["reply"] ?? "reject"]) }
+            if parts[0] == "permission" {
+                var reply: [String: Any] = ["decision": body?["reply"] ?? "reject"]
+                if let message = body?["message"] { reply["message"] = message }
+                return try await rawCall("POST", endpoint + "/reply", body: reply)
+            }
             if parts[2] == "reject" { return try await rawCall("DELETE", endpoint) }
             return try await rawCall("POST", endpoint + "/reply", body: OpenCodeV2.formAnswer(request, answers: body?["answers"] as? [[String]] ?? []))
         }

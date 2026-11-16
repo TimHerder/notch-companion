@@ -103,4 +103,34 @@ final class MarkdownDocumentTests: XCTestCase {
         XCTAssertTrue(MarkdownDocument.parse("").isEmpty)
         XCTAssertTrue(MarkdownDocument.parse("  \n\t").isEmpty)
     }
+
+    func testPipeTablesKeepAlignmentInlineSyntaxAndEscapedPipes() {
+        let source = "Before\n| Name | **Size** | Note |\n|:-----|------:|:----:|\n| `a\\|b` | 12 | [link](https://example.com) |\n| short |\n| x | 1 | 2 | extra |\nAfter row\n\nAfter"
+        let blocks = MarkdownDocument.parse(source)
+        XCTAssertEqual(blocks.map(\.content), [
+            .paragraph("Before"),
+            .table(alignments: [.leading, .trailing, .center], header: ["Name", "**Size**", "Note"],
+                   rows: [["`a|b`", "12", "[link](https://example.com)"], ["short", "", ""], ["x", "1", "2"], ["After row", "", ""]]),
+            .paragraph("After")])
+        XCTAssertEqual(blocks[1].id, "line:1:table", "A table keeps its source-line identity while it streams")
+    }
+
+    func testTablesWithoutOuterPipesInsideListsAndQuotes() {
+        XCTAssertEqual(MarkdownDocument.parse("a | b\n--- | ---\n1 | 2").map(\.content),
+                       [.table(alignments: [.leading, .leading], header: ["a", "b"], rows: [["1", "2"]])])
+        guard case .list(_, let items) = MarkdownDocument.parse("- Results:\n\n  | k | v |\n  |---|---|\n  | x | y |").first?.content,
+              case .table(_, let header, let rows) = items.first?.blocks.last?.content else { return XCTFail("Expected a table in the list item") }
+        XCTAssertEqual(header, ["k", "v"]); XCTAssertEqual(rows, [["x", "y"]])
+        guard case .quote(let quoted) = MarkdownDocument.parse("> | k |\n> |---|\n> | x |").first?.content else { return XCTFail("Expected a quote") }
+        XCTAssertEqual(quoted.map(\.content), [.table(alignments: [.leading], header: ["k"], rows: [["x"]])])
+    }
+
+    func testMalformedTablesStayParagraphs() {
+        for source in ["| a | b |\n|---|\n| 1 | 2 |", "| a | b |\n| x | y |", "| a | b |\n|-:-|---|", "a | b"] {
+            XCTAssertEqual(MarkdownDocument.parse(source).map(\.content), [.paragraph(source)], source)
+        }
+        XCTAssertEqual(MarkdownDocument.parse("Title | here\n---").map(\.content), [.heading(level: 2, text: "Title | here")],
+                       "A delimiter without a pipe is a setext underline")
+        XCTAssertEqual(MarkdownDocument.parse("```\n| a |\n|---|\n```").map(\.content), [.code(language: nil, text: "| a |\n|---|")])
+    }
 }
