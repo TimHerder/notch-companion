@@ -149,6 +149,40 @@ struct ComposerView: View {
         }
     }
 
+    /// A side chat's own first row, styled like Plan ready: Close (archived, history kept)
+    /// and Bring back (its latest answer to the parent, queued while the parent works).
+    private func sideChatHeader(_ session: CompanionSession) -> some View {
+        let theme = PanelTheme.current
+        let refined = theme == .refined
+        let answer = model.bringBackAnswer(session)
+        let brought = model.broughtBack(session)
+        let parent = model.sessions.first { $0.id == session.parentSessionID }?.title ?? "the parent session"
+        return VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                HStack(spacing: 5) {
+                    Image(systemName: "bubble.left.and.text.bubble.right").foregroundStyle(CompanionStyle.secondary)
+                    Text("Side chat").foregroundStyle(CompanionStyle.text)
+                }
+                .font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Spacer(minLength: 8)
+                Button("Close") { model.closeSideChat(session.id) }
+                    .buttonStyle(NotchToolbarButtonStyle(height: theme == .instrument ? 22 : 24))
+                    .fixedSize()
+                    .disabled(!model.canArchiveSession(session.id))
+                    .help("End this side chat; it is archived with its history")
+                Button(brought ? "Brought back" : "Bring back") { model.bringBack(session.id) }
+                    .buttonStyle(NotchPillButtonStyle(prominent: !refined, small: !refined, height: refined ? 24 : nil))
+                    .fixedSize()
+                    .disabled(answer == nil || brought || session.isBusy || session.pendingSubmission != nil || model.isSubmitting(session.id))
+                    .help(answer == nil ? "Bring back sends this side chat's latest answer once it has one"
+                          : "Send the latest answer to \(parent) as “From side chat”")
+            }
+            .padding(.leading, 14).padding(.trailing, 6).padding(.vertical, 6)
+            Rectangle().fill(PanelTheme.pick(CompanionStyle.hairline, CompanionStyle.separator, CompanionStyle.rule))
+                .frame(height: 0.5).padding(.horizontal, theme == .instrument ? 0 : 14)
+        }
+    }
+
     /// `Plan · Ready for review`, from the answer's first heading; Instrument
     /// puts a lamp before it.
     private func planName(_ title: String?) -> some View {
@@ -212,6 +246,7 @@ struct ComposerView: View {
         let theme = PanelTheme.current
         let lit = focused.wrappedValue
         return VStack(alignment: .leading, spacing: 0) {
+            if let session = model.current, session.isSideChat { sideChatHeader(session) }
             if let session = model.current, session.planReadyTurnID != nil { planHeader(session) }
             if model.current?.attachments.isEmpty == false {
                 AttachmentStrip(model: model).padding(.horizontal, 10).padding(.top, 10)
@@ -263,6 +298,13 @@ struct ComposerView: View {
                     Task { await model.attachSnapShot() }
                 }
                 .disabled(model.snapShotSource == nil)
+            }
+            if let session = model.current, model.sideChatPoint(session) != nil {
+                let blocker = model.forkBlocker(session)
+                QuietIconButton(symbol: "bubble.left.and.text.bubble.right", label: blocker.map { "Side chat: \($0)" } ?? "Open a side chat") {
+                    Task { await model.openSideChat(session.id) }
+                }
+                .disabled(blocker != nil)
             }
             ComposerDestinationView(model: model, showsTitle: showsTitle).layoutPriority(1)
             Spacer(minLength: 8)

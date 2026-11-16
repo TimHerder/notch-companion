@@ -15,6 +15,8 @@ final class AppModel: ObservableObject {
     @Published var expanded = false
     @Published var notchPresentation = NotchPresentation.restingPlaceholder
     @Published var composerFocusRequest = 0
+    /// Sessions whose native fork or side chat is being created.
+    @Published var forkingSessionIDs: Set<String> = []
     /// Waiting for its composer to put it at the caret.
     @Published var composerInsertion: ComposerInsertion?
     /// Harness commands for the `/` list, in memory: per session, and per profile and folder for drafts.
@@ -2065,12 +2067,15 @@ final class AppModel: ObservableObject {
                                      "native_submission_attempted": session.nativeSubmissionAttempted]
         if let pending = session.pendingSubmission { params["pending_turn_id"] = pending.id }
         if let mode = session.permissionMode { params["permission_mode"] = mode.rawValue }
+        // A fork nothing was sent to yet may not be saved natively: it forks its source again.
+        let refork = session.forkedFrom != nil && !session.nativeSubmissionAttempted
+        if refork, let fork = session.forkedFrom { params["fork"] = fork.parameters }
         let delegation = await delegationLaunch(for: session)
         if let delegation { params["delegation"] = delegation }
         let result: [String: Any]
         // A launch that failed holds no token, so the next one gets the tools.
         do {
-            if let stored = session.storedID {
+            if let stored = session.storedID, !refork {
                 params["session_id"] = stored
                 do { result = try await client.request("session.resume", params: params) }
                 catch {
@@ -2183,7 +2188,7 @@ final class AppModel: ObservableObject {
                 if result["history_complete"] as? Bool != false && result["messages"] is [[String: Any]] { unverifiedHistory.remove(localID) }
                 else { unverifiedHistory.insert(localID) }
             }
-            if session.storedID != nil, result["history_complete"] as? Bool != false, let rows = result["messages"] as? [[String: Any]] {
+            if session.storedID != nil, !refork, result["history_complete"] as? Bool != false, let rows = result["messages"] as? [[String: Any]] {
                 // Older saves treated backend wake-up envelopes as user turns.
                 // Retain tools' identity while repairing ownership before those
                 // synthetic messages are removed by the display projection.
@@ -2376,6 +2381,9 @@ final class AppModel: ObservableObject {
             let wasFinished = sessions[index].state == .finished && sessions[index].parentTurnComplete && !sessions[index].isBusy
             reconcileAssistantText(EventValue.string(payload["text"]), index: index, turnID: turnID)
             sessions[index].messages.removeAll { $0.role == "assistant" && $0.questions == nil && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            // Where the harness forks at a message, the turn's answer keeps that message's native ID.
+            if let native = payload["native_message_id"] as? String, let answer = sessions[index].messages.lastIndex(where: { $0.role == "assistant" }),
+               sessions[index].messages[answer].turnID == turnID { sessions[index].messages[answer].nativeID = native }
             let status = payload["status"] as? String ?? "complete"
             if status == "error" || status == "interrupted" { pauseQueuedSends(localID) }
             sessions[index].parentTurnComplete = true

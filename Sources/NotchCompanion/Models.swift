@@ -17,11 +17,15 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     var kind: String? = nil
     /// The outside MCP client that sent an `agentMessage`, by the name its token was given.
     var from: String? = nil
+    /// The harness's own ID for an answer, where it forks at a message (Claude Code's assistant UUID).
+    var nativeID: String? = nil
     static let delegationResult = "delegationResult"
     /// A delegated child's question, relayed to its parent.
     static let delegationNotice = "delegationNotice"
     /// Sent by another session's agent through `notch_session_send`.
     static let agentMessage = "agentMessage"
+    /// A side chat's answer its Bring back sent to the parent.
+    static let sideChatMessage = "sideChat"
     var isDelegationResult: Bool { kind == Self.delegationResult }
     /// A wake shows only T3 Code's one-line notice, `Delegated task "Title" finished`;
     /// the answer stays in the child and the parent's reply.
@@ -42,6 +46,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         case Self.delegationResult: return "Delegation result"
         case Self.delegationNotice: return "Delegated question"
         case Self.agentMessage: return from.map { "From \($0)" } ?? "From another session"
+        case Self.sideChatMessage: return "From side chat"
         default: return nil
         }
     }
@@ -329,6 +334,8 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var earlierStoredIDs: [String]? = nil
     /// When the account limit that stopped a turn resets, keyed by the turn's visible user row.
     var limitResets: [String: Date] = [:]
+    /// Began as a native fork of another session: Fork from here, or a side chat (with `parentSessionID`).
+    var forkedFrom: ForkRecord? = nil
     var queuedSends: [QueuedSend] = []
     /// The mode in use when Plan was chosen, for Plan ready's Implement; nil is Default permissions.
     var prePlanPermissionMode: PermissionMode? = nil
@@ -495,7 +502,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnUsage, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, isPinned, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic, worktreeBase, worktree, pullRequest, earlierStoredIDs, limitResets
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnUsage, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, isPinned, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic, worktreeBase, worktree, pullRequest, earlierStoredIDs, limitResets, forkedFrom
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -548,6 +555,7 @@ extension CompanionSession {
         pullRequest = try values.decodeIfPresent(String.self, forKey: .pullRequest)
         earlierStoredIDs = try values.decodeIfPresent([String].self, forKey: .earlierStoredIDs)
         limitResets = try values.decodeIfPresent([String: Date].self, forKey: .limitResets) ?? [:]
+        forkedFrom = try values.decodeIfPresent(ForkRecord.self, forKey: .forkedFrom)
         queuedSends = try values.decodeIfPresent([QueuedSend].self, forKey: .queuedSends) ?? []
         lastSeenAt = try values.decodeIfPresent(Date.self, forKey: .lastSeenAt)
         snoozedUntil = try values.decodeIfPresent(Date.self, forKey: .snoozedUntil)

@@ -30,6 +30,7 @@ struct ConversationHistoryView: View {
         VStack(spacing: 0) {
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: PanelTheme.pick(16, 18, 19)) {
+                    if let session, let fork = session.forkedFrom { forkedFromHeader(fork, sideChat: session.isSideChat) }
                     ForEach(items) { item in
                         switch item {
                         case .message(let message) where message.isSessionMarker:
@@ -229,8 +230,25 @@ extension ConversationHistoryView {
                               questionStatus: questionStatus(message), commentary: commentary,
                               open: { url, reveal in model.openExternally(url, reveal: reveal) },
                               reply: { questions, answers in await model.replyToQuestions(questions, answers: answers) },
-                              quote: { [inNotch] text in model.quoteInReply(text, inNotch: inNotch) })
+                              quote: { [inNotch] text in model.quoteInReply(text, inNotch: inNotch) },
+                              fork: commentary ? nil : session.flatMap { session in
+                                  model.forkPoint(message.id, in: session).map { _ in { Task { await model.forkFromHere(message.id, in: session.id) } } }
+                              },
+                              forkBlocker: session.flatMap(model.forkBlocker))
             .transcriptFindRow("message:\(message.id)")
+    }
+
+    /// A quiet line over a fork's copied history that opens the session it came from.
+    fileprivate func forkedFromHeader(_ fork: ForkRecord, sideChat: Bool) -> some View {
+        let source = model.sessions.first { $0.id == fork.sourceSessionID }
+        let text = (sideChat ? "Side chat of " : "Forked from ") + (source?.title ?? fork.sourceTitle)
+        return Button { if let source { model.selectSession(source.id) } } label: {
+            Label(text, systemImage: "arrow.triangle.branch").font(.system(size: 11, weight: .medium)).lineLimit(1)
+        }
+        .buttonStyle(.plain).foregroundStyle(CompanionStyle.secondary)
+        .disabled(source == nil).pressableCursor()
+        .help(source == nil ? "The source session was deleted" : "Open \(source?.title ?? "")")
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Delegated agents still at work; the transcript already shows tools and text.
@@ -271,12 +289,17 @@ private struct TranscriptMessageView: View {
     var open: (URL, Bool) -> Void
     var reply: ([AsyncQuestion], [String]) async -> Bool
     var quote: ((String) -> Void)? = nil
+    /// Fork from here, where the harness can fork at this answer; disabled with the reason while it must wait.
+    var fork: (() -> Void)? = nil
+    var forkBlocker: String? = nil
     @State private var hovering = false
     @FocusState private var copyFocused: Bool
     @FocusState private var quoteFocused: Bool
+    @FocusState private var forkFocused: Bool
 
     /// Hover or keyboard focus shows Copy (and Quote in reply).
-    private var revealed: Bool { hovering || copyFocused || quoteFocused || ConversationHistoryView.revealsHoverControls }
+    private var revealed: Bool { hovering || copyFocused || quoteFocused || forkFocused || ConversationHistoryView.revealsHoverControls }
+    private var forks: Bool { quotes && fork != nil }
     /// An agent's own answer can be quoted into the reply; commentary and relayed messages cannot.
     private var quotes: Bool {
         quote != nil && !commentary && message.role == "assistant" && !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -290,9 +313,11 @@ private struct TranscriptMessageView: View {
             entry
                 .contextMenu {
                     Button("Quote in reply", systemImage: "text.quote") { quote?(message.text) }
+                    if forks { Button("Fork from here", systemImage: "arrow.triangle.branch") { fork?() }.disabled(forkBlocker != nil) }
                     Button("Copy message", systemImage: "doc.on.doc", action: copy)
                 }
                 .accessibilityAction(named: "Quote in reply") { quote?(message.text) }
+                .accessibilityAction(named: "Fork from here") { if forks, forkBlocker == nil { fork?() } }
         } else {
             entry
         }
@@ -333,6 +358,9 @@ private struct TranscriptMessageView: View {
             if quotes {
                 quoteButton.notchControlBackground(Circle(), fallback: CompanionStyle.surface).focused($quoteFocused)
             }
+            if forks {
+                forkButton.notchControlBackground(Circle(), fallback: CompanionStyle.surface).focused($forkFocused)
+            }
             copyButton.notchControlBackground(Circle(), fallback: CompanionStyle.surface).focused($copyFocused)
         }
         .opacity(revealed ? 1 : 0)
@@ -368,6 +396,13 @@ private struct TranscriptMessageView: View {
         Button { quote?(message.text) } label: { Image(systemName: "text.quote").font(.system(size: 10)) }
             .buttonStyle(NotchIconButtonStyle(size: 22))
             .help("Quote in reply").accessibilityLabel("Quote in reply")
+    }
+
+    private var forkButton: some View {
+        Button { fork?() } label: { Image(systemName: "arrow.triangle.branch").font(.system(size: 10)) }
+            .buttonStyle(NotchIconButtonStyle(size: 22))
+            .disabled(forkBlocker != nil)
+            .help(forkBlocker.map { "Fork from here: \($0)" } ?? "Fork from here").accessibilityLabel("Fork from here")
     }
 
     private func copy() {
@@ -490,6 +525,7 @@ private struct TranscriptMessageView: View {
                 Text(message.createdAt, format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(CompanionStyle.faint)
                 if quotes { quoteButton.padding(.vertical, -4) }
+                if forks { forkButton.padding(.vertical, -4) }
                 copyButton.padding(.vertical, -4)
             }
             messageBody(content, interpretsMarkdown: message.role != "user" || message.agentLabel != nil, questionGap: 3)

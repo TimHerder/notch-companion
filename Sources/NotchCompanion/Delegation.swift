@@ -720,8 +720,8 @@ extension AppModel {
 
     private func mirrorState(_ child: CompanionSession) -> WorkState {
         if isSubmitting(child.id) || child.stagedSubmission != nil { return .working }
-        // A child whose first message never went out (a crash before it) is not working.
-        return child.displayState == .idle ? .interrupted : child.displayState
+        // A child whose first message never went out (a crash before it) is not working; a side chat waits for its first.
+        return child.displayState == .idle ? (child.isSideChat ? .idle : .interrupted) : child.displayState
     }
 
     /// The finished child result that still has to wake its parent.

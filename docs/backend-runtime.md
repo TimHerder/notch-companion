@@ -293,7 +293,8 @@ Projects derive from each entry's working folder, or for a worktree session its
 `worktree.project`; there is no project field. `worktreeBase` (a draft's New
 worktree base) and `worktree` (the app-created worktree) are optional, so older
 registries decode without them; neither reaches a runtime, which sees only the
-working folder.
+working folder. `forkedFrom` and a message's `nativeID` are optional too (see
+[forks](#forks-and-side-chats)).
 
 Only companion-created entries (and their delegated children) appear in lists,
 search, navigation and indicators. The router refuses `session.list`, ignores
@@ -1000,6 +1001,37 @@ Anything else is `capability_denied`: `orchestrator_capabilities`,
 `pending_request_respond`, `restart`, a send to a child, any `runtimeMode`,
 `interactionMode` or `target`, and another folder for `create_sessions`. No
 OpenCode `_meta` session check applies to them.
+
+## Forks and side chats
+
+A fork is a new companion session (`forkedFrom`, optional: source session,
+title and native ID, the answer's user-row IDs and native message ID, and
+whether it was the latest answer) whose first `session.create` carries a
+`fork` parameter, so the adapter opens a native fork instead of a new session.
+It happens when the user asks, after the whole source tree is idle with no
+unconfirmed send; a failure removes the new entry and shows the harness's
+error. Until a send to the fork is attempted (`nativeSubmissionAttempted`),
+every reopen forks the source again from the same point, since an unprompted
+fork may not be saved natively; the earlier unused fork may remain in the
+harness's own store. The fork's transcript is the source's saved messages,
+tools and turn ends up to the answer; native history becomes authoritative on
+later resumes. A side chat adds `parentSessionID` and a `ChildAgent` row (role
+`side chat`, its own turn ID) with no `delegation`, so busy, attention,
+Quit/Reconnect and team counts include it, while it never wakes the parent,
+answers `task_status` or folds into the parent's changes. Bring back queues a
+`QueuedSend` of kind `sideChat` with an ID derived from the side chat and its
+answer, delivered by the queued-send path with its duplicate protections.
+
+| Harness | Native fork | Offered |
+| --- | --- | --- |
+| Codex | `thread/read` (`includeTurns`) finds the turn holding the answer's user message (`clientId`, item ID or turn ID), then [`thread/fork`](https://learn.chatgpt.com/docs/app-server) with `lastTurnId` (inclusive; refused for a running turn), `cwd` and the delegation `config`. No rollback is needed. A turn split by a steer forks through the whole turn. | Every finished answer |
+| Claude Code | A new process `--session-id <new> --resume <source> --fork-session`, plus `--resume-session-at <assistant uuid>` (print mode) to stop after that answer. The adapter records the turn's last top-level `assistant` frame `uuid` as the answer's `native_message_id`. `--fork-session` writes a new transcript and leaves the source's alone. | Answers with a recorded ID; else the latest answer only (whole-session fork) |
+| OpenCode 2.0 | `POST /api/session/{id}/fork {before?}` copies history before a message, but records the source as the fork's `parentID`, so the companion's owned child tracking would count the fork as the source's subagent. | Not offered yet |
+| OpenCode 1.x | `POST /session/{id}/fork {messageID?}`, same parent caveat. | Not offered yet |
+| Pi | RPC [`fork {entryId}`](https://pi.dev/docs/latest/rpc-commands#fork) (before a user message) and `clone` (whole branch) switch the RPC process to the new session, so a fork needs a second process on the source file. | Not offered yet |
+| Hermes (shared) | `session.branch {count?}` / `branch_whole` on a live session create a new stored session and a live one inside the frontend; `count` counts native rows (tools included), not answers. | Not offered yet |
+| ACP (DeepSeek, Cursor, Copilot, Antigravity) | ACP v1 has no fork; `session/fork` is an unstable proposal none of these advertise here. | No |
+| OpenClaw, Legacy Hermes | None through the Gateway or the protected bridge. | No |
 
 ## Capability boundaries
 

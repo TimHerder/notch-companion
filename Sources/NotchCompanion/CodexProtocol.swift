@@ -417,6 +417,20 @@ struct CodexProtocolState {
         }
     }
 
+    /// The finished turn holding one of these user messages (its client ID, item ID or the turn's own ID):
+    /// `thread/fork`'s `lastTurnId`. Nil when no turn matches or it is still running.
+    static func forkTurn(_ thread: [String: Any], userMessageIDs ids: [String]) -> String? {
+        let wanted = Set(ids.filter { !$0.isEmpty })
+        for turn in thread["turns"] as? [[String: Any]] ?? [] {
+            let holds = wanted.contains(turn["id"] as? String ?? "") || (turn["items"] as? [[String: Any]] ?? []).contains {
+                $0["type"] as? String == "userMessage" && (wanted.contains($0["clientId"] as? String ?? "") || wanted.contains($0["id"] as? String ?? ""))
+            }
+            guard holds else { continue }
+            return turn["status"] as? String == "inProgress" ? nil : turn["id"] as? String
+        }
+        return nil
+    }
+
     /// Angle brackets keep a path with spaces a single Markdown destination.
     static func imageMarkdown(_ path: String) -> String { "![Generated image](<\(path)>)" }
 

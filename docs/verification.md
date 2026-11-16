@@ -48,6 +48,15 @@ acceptance before they're advertised.
 Every harness now hosts cross-agent delegation. Live acceptance from earlier
 private development hasn't been re-run against this source snapshot. Known limits:
 
+- Forks and side chats: offered for Codex and Claude Code only. Codex
+  `thread/fork` with `lastTurnId` and Claude Code's `--fork-session` with
+  `--resume-session-at` were read from the installed codex-cli 0.162.1 schema
+  and Claude Code 2.1.311 CLI and are covered by protocol fixtures and offline
+  model tests, with offscreen renders in all three designs; no live fork has
+  been run, so whether an unprompted fork is saved natively, and that Claude's
+  stream `uuid` always matches its transcript, are unverified. OpenCode, Pi and
+  shared Hermes fork natively but aren't wired yet
+  ([matrix](backend-runtime.md#forks-and-side-chats)).
 - Cursor CLI: not installed here, so prompts and delegation hosting are covered
   by protocol fixtures only. ACP has no pre-approval, so it may ask before every
   companion tool call, and its tool rows may miss the delegation labels.
