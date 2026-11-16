@@ -6,6 +6,8 @@ import os
 import sys
 
 assert sys.argv[1:] == ["--acp", "--stdio"]
+# The test's profile is the fixture's folder: a saved session must launch with its own home.
+assert os.path.realpath(os.environ["COPILOT_HOME"]) == os.path.realpath(os.path.dirname(sys.argv[0]))
 log = os.path.join(os.path.dirname(sys.argv[0]), "wire.jsonl")
 MODES = "https://agentclientprotocol.com/protocol/session-modes#"
 prompt_id = None

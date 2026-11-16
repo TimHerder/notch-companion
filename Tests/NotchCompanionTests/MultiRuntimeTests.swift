@@ -184,6 +184,17 @@ import XCTest
                                                  profileID: custom)["CLAUDE_CONFIG_DIR"], custom)
     }
 
+    func testCopilotLaunchesWithItsSavedHomeWhateverTheAppInherits() {
+        let profile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".copilot")
+            .standardizedFileURL.resolvingSymlinksInPath().path
+        XCTAssertNil(RuntimeEnvironment.native(environment: ["COPILOT_HOME": "/native/other"], runtime: .copilot,
+                                               profileID: profile)["COPILOT_HOME"], "A default-home session never follows another inherited home")
+        let custom = URL(fileURLWithPath: "/native/copilot").standardizedFileURL.resolvingSymlinksInPath().path
+        XCTAssertEqual(RuntimeEnvironment.native(environment: [:], runtime: .copilot, profileID: custom)["COPILOT_HOME"], custom)
+        XCTAssertEqual(RuntimeEnvironment.native(environment: ["COPILOT_HOME": "/native/other"], runtime: .copilot,
+                                                 profileID: custom)["COPILOT_HOME"], custom)
+    }
+
     func testUnknownNativeChildActivitySurvivesParentCompletionAndRestart() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let file = folder.appendingPathComponent("sessions.json")

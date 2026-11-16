@@ -110,7 +110,7 @@ extension RuntimeKind {
     /// Names a session created without a title; the others take the prompt's opening words as their native title.
     var namesOwnSessions: Bool { ![.codex, .pi, .openclaw].contains(self) }
     /// Runs only its native default profile; the companion never sets a profile override.
-    var usesNativeProfileOnly: Bool { [.antigravity, .cursor, .copilot].contains(self) }
+    var usesNativeProfileOnly: Bool { self == .antigravity || self == .cursor }
     var capabilities: RuntimeCapabilities {
         switch self {
         case .hermes:
@@ -217,10 +217,11 @@ enum RuntimeEnvironment {
         let home = FileManager.default.homeDirectoryForCurrentUser
         if !runtime.usesNativeProfileOnly && runtime != .deepseek {
             let directory = RuntimeProfileIdentity.directory(profileID, runtime: runtime)
-            if runtime == .claude {
+            if runtime == .claude || runtime == .copilot {
                 // Setting even the default directory changes Claude's native
                 // login namespace. Keep a matching explicit native override
                 // exactly; otherwise leave its ordinary default implicit.
+                // Copilot's home also holds its saved sessions, so it is pinned the same way.
                 let native = environment[runtime.profileEnvironmentKey]
                 let defaultDirectory = home.appendingPathComponent(runtime.defaultProfileDirectory)
                     .standardizedFileURL.resolvingSymlinksInPath().path
