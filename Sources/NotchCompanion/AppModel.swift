@@ -191,6 +191,8 @@ final class AppModel: ObservableObject {
     var resumeTimer: Task<Void, Never>?
     /// Turns the user stopped this run; a limit failure arriving for one schedules nothing.
     var stoppedTurns: Set<String> = []
+    /// Sessions last reopened without complete native history, where a later native message would be invisible.
+    var unverifiedHistory: Set<String> = []
     /// Sessions whose native compaction is running.
     @Published var compactingSessionIDs: Set<String> = []
     /// Settings → Resume automatically after limit resets.
@@ -1809,8 +1811,10 @@ final class AppModel: ObservableObject {
             let sid = try await ensureRuntime(localID)
             runtimeID = sid
             // Native history restored just now may hold a newer message than the turn a resume continues.
-            if let turn = sessions.first(where: { $0.id == localID })?.queuedSends.first(where: { $0.id == turnID })?.resumesTurnID,
-               sessions.first(where: { $0.id == localID })?.canContinue(turn) != true || stoppedTurns.contains(turn) { throw ResumeSuperseded() }
+            if let turn = sessions.first(where: { $0.id == localID })?.queuedSends.first(where: { $0.id == turnID })?.resumesTurnID {
+                if sessions.first(where: { $0.id == localID })?.canContinue(turn) != true || stoppedTurns.contains(turn) { throw ResumeSuperseded() }
+                if unverifiedHistory.contains(localID) { throw ResumeSuperseded.unverified }
+            }
             let capabilities = sessions.first(where: { $0.id == localID })?.capabilities ?? session.capabilities
             guard attachments.isEmpty || capabilities.attachments else { throw AppError("\(session.runtime.title) cannot receive attachments through this interface. Remove the staged files before sending.") }
             guard !attachments.contains(where: \.isImage) || capabilities.images else { throw AppError("\(session.runtime.title) cannot receive images through this interface. Remove the staged images before sending.") }
@@ -1942,6 +1946,8 @@ final class AppModel: ObservableObject {
     func interrupt(sessionID: String? = nil, cascade: Bool = true) async {
         guard let localID = sessionID ?? currentID, let session = sessions.first(where: { $0.id == localID }) else { return }
         if let turn = session.latestUserRowID { stoppedTurns.insert(turn) }
+        // Stop also ends a resume scheduled for this session, which must not outlive a restart.
+        update(localID) { $0.queuedSends.removeAll { $0.resumesTurnID != nil } }
         pauseQueuedSends(localID)
         save()
         if let sid = session.runtimeID { await interruptOwnWork(localID, session: session, sid: sid) }
@@ -2159,6 +2165,11 @@ final class AppModel: ObservableObject {
             target.storedID = result["stored_session_id"] as? String ?? result["session_key"] as? String ?? target.storedID
             if target.workspacePath == nil { target.workspacePath = nativeCwd }
             if let complete = result["parent_complete"] as? Bool { target.parentTurnComplete = complete }
+            if session.storedID != nil {
+                // Without complete history a message sent natively meanwhile cannot be seen.
+                if result["history_complete"] as? Bool != false && result["messages"] is [[String: Any]] { unverifiedHistory.remove(localID) }
+                else { unverifiedHistory.insert(localID) }
+            }
             if session.storedID != nil, result["history_complete"] as? Bool != false, let rows = result["messages"] as? [[String: Any]] {
                 // Older saves treated backend wake-up envelopes as user turns.
                 // Retain tools' identity while repairing ownership before those

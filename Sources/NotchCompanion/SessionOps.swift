@@ -36,7 +36,8 @@ extension CompanionSession {
 
 /// A newer message reached the session (seen once its native history was restored).
 struct ResumeSuperseded: LocalizedError {
-    var errorDescription: String? { "A newer message reached this session, so it was not resumed." }
+    var errorDescription: String? = "A newer message reached this session, so it was not resumed."
+    static let unverified = ResumeSuperseded(errorDescription: "The reopened native session's history is incomplete, so nothing proves no message was sent since. Send it yourself if none was.")
 }
 
 extension SessionHistory {
@@ -111,7 +112,19 @@ extension AppModel {
 
     /// After confirmation the next send opens a new native session with the same harness,
     /// profile, folder and choices; the transcript keeps everything above a New session row.
-    func startFresh(_ id: String) {
+    func startFresh(_ id: String) async {
+        guard canStartFresh(id), let saved = sessions.first(where: { $0.id == id }) else { return }
+        // A conversation reopened since its last turn first reconciles with its native session:
+        // newer native history is restored, and running native work refuses the switch.
+        if saved.runtimeID == nil {
+            backgroundSubmissions.insert(id)
+            do { _ = try await ensureRuntime(id) } catch {
+                backgroundSubmissions.remove(id)
+                errorMessage = "Could not check the native session before starting fresh. " + error.localizedDescription
+                return
+            }
+            backgroundSubmissions.remove(id)
+        }
         guard canStartFresh(id), let session = sessions.first(where: { $0.id == id }) else { return }
         let message = "Your next message opens a new \(session.runtime.title) session in this conversation, with an empty context. Everything above stays here."
         let confirmed: Bool

@@ -10,6 +10,7 @@ import XCTest
     var created = "fresh"
     var history: [[String: Any]] = []
     var running = false
+    var incompleteHistory = false
 
     func connect() async throws { onConnectionChange?(true, nil) }
     func disconnect() {}
@@ -18,7 +19,9 @@ import XCTest
         if method == pausedMethod { return try await withCheckedThrowingContinuation { pending = $0 } }
         switch method {
         case "session.create": return ["session_id": "live-\(created)", "stored_session_id": created, "messages": []]
-        case "session.resume": return ["session_id": "live-resumed", "stored_session_id": params["session_id"] ?? "", "messages": history, "running": running]
+        case "session.resume":
+            if incompleteHistory { return ["session_id": "live-resumed", "stored_session_id": params["session_id"] ?? "", "messages": [], "history_complete": false] }
+            return ["session_id": "live-resumed", "stored_session_id": params["session_id"] ?? "", "messages": history, "running": running]
         default: return [:]
         }
     }
@@ -138,12 +141,12 @@ import XCTest
         started()
         var asked: String?
         model.startFreshDecision = { asked = $0; return false }
-        model.startFresh(model.currentID!)
+        await model.startFresh(model.currentID!)
         XCTAssertEqual(model.current?.storedID, "old", "Declining changes nothing")
         XCTAssertTrue(asked?.contains("new Codex session") == true)
 
         model.startFreshDecision = { _ in true }
-        model.startFresh(model.currentID!)
+        await model.startFresh(model.currentID!)
         let session = try XCTUnwrap(model.current)
         XCTAssertNil(session.storedID)
         XCTAssertNil(session.runtimeID)
@@ -180,12 +183,12 @@ import XCTest
         XCTAssertTrue(items.contains("message:\(model.current!.messages[2].id)"), "The New session divider renders")
     }
 
-    func testStartFreshIsNotOfferedForDelegatedChildren() {
+    func testStartFreshIsNotOfferedForDelegatedChildren() async {
         started()
         model.sessions[0].parentSessionID = "parent"
         XCTAssertFalse(model.offersStartFresh(model.sessions[0]))
         model.startFreshDecision = { _ in XCTFail("Never asked"); return true }
-        model.startFresh(model.currentID!)
+        await model.startFresh(model.currentID!)
         XCTAssertEqual(model.sessions[0].storedID, "old")
     }
 
@@ -323,17 +326,65 @@ import XCTest
         XCTAssertTrue(transport.methods("prompt.submit").isEmpty)
     }
 
-    func testStartFreshEndsTheEarlierTurnsResume() {
+    func testStartFreshEndsTheEarlierTurnsResume() async {
         _ = limitStopped()
         let id = model.currentID!
         XCTAssertTrue(model.canResumeAtReset(id, turn: "u2"))
         model.startFreshDecision = { _ in true }
         model.sessions[0].runtimeID = "live-old"
-        model.startFresh(id)
+        await model.startFresh(id)
         XCTAssertFalse(model.canResumeAtReset(id, turn: "u2"), "A fresh session has no turn to continue")
         model.resumeAutomatically = true
         model.recordLimitStop(id, turn: "u2")
         XCTAssertTrue(model.current?.queuedSends.isEmpty == true, "A late reset report schedules nothing either")
+    }
+
+    func testStopEndsAResumeAlreadyScheduledWhileChildrenRun() async throws {
+        model.resumeAutomatically = true
+        _ = limitStopped()
+        XCTAssertEqual(model.current?.queuedSends.count, 1)
+        model.sessions[0].agents = [ChildAgent(id: "child", title: "Child", state: .working)]
+        await model.interrupt()
+        XCTAssertTrue(model.current?.queuedSends.isEmpty == true)
+        let saved = try JSONDecoder().decode([CompanionSession].self, from: Data(contentsOf: storage))[0]
+        XCTAssertTrue(saved.queuedSends.isEmpty, "Gone before a restart could bring it back")
+    }
+
+    func testAResumeIsNotSentAfterReopeningWithIncompleteHistory() async throws {
+        _ = limitStopped()
+        let id = model.currentID!
+        model.resumeAtReset(id, turn: "u2")
+        model.sessions[0].runtimeID = nil
+        model.sessions[0].state = .failed
+        model.sessions[0].parentTurnComplete = true
+        // Claude and Pi reopen without complete history.
+        transport.incompleteHistory = true
+        model.sendResumeNow(try XCTUnwrap(model.current?.queuedSends.first?.id))
+        try await wait { model.current?.queuedSends.isEmpty == true }
+        XCTAssertTrue(transport.methods("prompt.submit").isEmpty)
+        XCTAssertTrue(model.errorMessage?.contains("history is incomplete") == true, model.errorMessage ?? "")
+    }
+
+    func testStartFreshReconcilesAReopenedConversationFirst() async throws {
+        started()
+        model.sessions[0].runtimeID = nil
+        model.startFreshDecision = { _ in true }
+        transport.history = [["role": "user", "text": "First"], ["role": "assistant", "text": "Done"],
+                             ["role": "user", "text": "Sent in the native app"], ["role": "assistant", "text": "Native answer"]]
+        transport.running = true
+        await model.startFresh(model.currentID!)
+        XCTAssertEqual(model.current?.storedID, "old", "Running native work refuses the switch")
+        XCTAssertNotNil(model.errorMessage)
+        // The native work ended while the app was away again.
+        model.sessions[0].runtimeID = nil
+        model.sessions[0].state = .finished
+        model.sessions[0].parentTurnComplete = true
+        model.unfinishedParents.removeAll()
+        transport.running = false
+        await model.startFresh(model.currentID!)
+        XCTAssertNil(model.current?.storedID)
+        XCTAssertEqual(model.current?.messages.map(\.text), ["First", "Done", "Sent in the native app", "Native answer", ""],
+                       "Newer native history is kept above the divider")
     }
 
     func testResumeAutomaticallySchedulesAndSurvivesRestart() async throws {

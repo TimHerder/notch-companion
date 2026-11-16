@@ -288,7 +288,7 @@ struct ModelControlsView: View {
             if model.offersStartFresh(session) {
                 Button("Start fresh") {
                     showingContext = false
-                    model.startFresh(session.id)
+                    Task { await model.startFresh(session.id) }
                 }
                 .buttonStyle(NotchToolbarButtonStyle(height: 24)).fixedSize()
                 .disabled(!model.canStartFresh(session.id))

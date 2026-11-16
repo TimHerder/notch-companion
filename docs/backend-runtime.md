@@ -222,7 +222,12 @@ launch) runs delivery when one comes due. At delivery it is dropped unless that
 turn's row is still the latest visible user row of the current native session
 (after Start fresh it never is) and the user did not stop that turn (Stop
 records the turn before interrupting, so a limit failure arriving afterwards
-schedules nothing). The check runs again inside `submit` after `ensureRuntime`
+schedules nothing, and removes a resume already scheduled for the session).
+A session last reopened without complete native history (`history_complete:
+false`, as Claude Code and Pi report) cannot prove that nothing was sent
+natively meanwhile, so its resume is dropped with a notice instead of sent; a
+resume reaches Claude Code or Pi only while the session stayed open since the
+limit stop. The check runs again inside `submit` after `ensureRuntime`
 restores native history, before any send intent: a newer message found there
 drops the entry unsent. Native work found while reopening keeps the entry until
 that work ends. Any send through
@@ -652,7 +657,9 @@ session counts as submitting, so sends wait and Quit asks first.
 | Shared Hermes | Typed `session.compress {session_id}` (idle-gated; 660-second deadline, as Hermes's own desktop waits). Only `status: compressed` succeeds; `aborted` or `compressed: false` (another client's lock, with its `message`) fails. Compression rotates the stored key and `session.resume` follows it to the compressed tip, so `storedID` stays. Its `summary` is feedback (`headline`), not the kept context, so the row has none. |
 | Others | Not offered. Legacy Hermes's private bridge is not extended; OpenCode's summarize runs a turn its SSE mapping would report as a conversation turn; ACP `/compact` would be an ordinary prompt turn; OpenClaw exposes none. |
 
-**Start fresh** clears `storedID` and `runtimeID` (appending the old ID to
+**Start fresh** first reopens a conversation whose native session is not
+attached in this run, so newer native history is restored above the divider and
+running native work refuses the switch. It then clears `storedID` and `runtimeID` (appending the old ID to
 `earlierStoredIDs`), resets `nativeSubmissionAttempted`, the context sample, the
 in-process permission override and the delegation grant, and appends a `system`
 row of kind `newSession`. The next send's ordinary `session.create` opens the

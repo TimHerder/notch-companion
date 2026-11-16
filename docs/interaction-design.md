@@ -1044,8 +1044,10 @@ identify selection.
   paused by Stop, a failure, a disconnect or a restart, and is sent only while
   the app runs (at launch when it came due meanwhile). Until then it does not
   hold Quit. It is dropped, unsent, once any other message reaches the session
-  (yours, a wake, another session's) or Start fresh opens a new native session;
-  a send that fails is not retried. Settings → **Resume automatically after
+  (yours, a wake, another session's, or one found in native history when the
+  session reopens), Stop is pressed, or Start fresh opens a new native session;
+  a session reopened without complete native history (Claude Code, Pi) drops it
+  with a notice rather than guess. A send that fails is not retried. Settings → **Resume automatically after
   limit resets** (off by default) schedules it for every limit-stopped turn.
 - **Plan ready.** When a turn finishes in Plan, the composer field gains a
   slim first row on its own surface, above a hairline: **Plan ·** and the
