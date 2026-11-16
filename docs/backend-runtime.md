@@ -216,8 +216,8 @@ Quit/Reconnect. A
 scheduled run starts its own turn for change cards, like the user's prompt.
 Scheduled tasks live in `scheduled-tasks.json` beside the registry (mode 0600;
 a file that exists but cannot be read or decoded is left untouched and not
-overwritten); a task stores its next occurrence and the calendar day it last
-ran or skipped.
+overwritten); a task stores its next occurrence and the latest calendar day a
+run, catch-up or skip covered.
 
 Queue entries' attachment and pause fields are optional for older registries.
 Stop, failure, disconnect and restart pause the queue (with resume/cancel

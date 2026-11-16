@@ -267,9 +267,38 @@ import XCTest
         parent.queuedSends = [QueuedSend(id: "q", text: "Check failed", kind: ChatMessage.pullRequestWatch)]
         model.sessions.append(parent)
         XCTAssertFalse(parent.isBusyIgnoringDelegates)
+        model.connection = true
         model.processDelegationWakes()
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertEqual(model.sessions.first { $0.id == "p" }?.queuedSends.map(\.id), ["q"], "It waits while a child works")
+        model.update("p") { $0.agents[0].state = .finished; $0.state = .finished }
+        model.processDelegationWakes()
+        for _ in 0..<50 where model.sessions.first(where: { $0.id == "p" })?.queuedSends.isEmpty == false { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(model.sessions.first { $0.id == "p" }?.messages.filter { $0.id == "q" }.count, 1, "Sent once the child is done")
+    }
+
+    func testCatchUpUsesUpTodayAndASteerKeepsTheRunActive() {
+        let (model, _) = makeModel()
+        let calendar = Calendar.app
+        let now = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
+        let dayStart = calendar.startOfDay(for: now)
+        _ = task(model, due: calendar.date(byAdding: .day, value: -3, to: calendar.date(bySettingHour: 9, minute: 0, second: 0, of: now)!)!, continues: true)
+        model.runDueScheduledTasks(now: now)
+        XCTAssertEqual(runs(model).count, 1)
+        // The clock set back to 8:00 today: today's 9:00 was part of the catch-up.
+        XCTAssertGreaterThan(model.scheduledTasks[0].occurrence(after: dayStart.addingTimeInterval(8 * 3_600))!, dayStart.addingTimeInterval(86_400))
+
+        // Delivered, then steered: the steer joins the run's turn, which still blocks the next run.
+        let run = model.scheduledTasks[0].lastRunID!
+        let session = model.scheduledTasks[0].sessionID!
+        model.update(session) {
+            $0.queuedSends = []; $0.runtimeID = "live"; $0.state = .working; $0.parentTurnComplete = false
+            $0.messages = [ChatMessage(id: run, role: "user", text: "Review", turnID: run, kind: ChatMessage.scheduledKind("Morning review", late: true)),
+                           ChatMessage(id: "steer", role: "user", text: "Also check the tests", turnID: run)]
+        }
+        XCTAssertTrue(model.scheduledRunActive(model.scheduledTasks[0]))
+        model.update(session) { $0.messages.append(ChatMessage(id: "mine", role: "user", text: "Something else", turnID: "mine")) }
+        XCTAssertFalse(model.scheduledRunActive(model.scheduledTasks[0]), "The user's own prompt is another turn")
     }
 
     func testUnreadableTasksFileIsNeverOverwritten() throws {
@@ -344,6 +373,9 @@ import XCTest
             "reviewer requested changes on PR #12: https://github.com/owner/repo/pull/12. Address the review.",
             "reviewer commented on PR #12: https://github.com/owner/repo/pull/12#issuecomment-3. Read it and respond if it needs a change."])
         XCTAssertFalse(result.message!.contains("Please rename"), "Other people's text stays out of the prompt")
+        let approval = ["id": "PRR_3", "author": ["login": "lead"], "state": "APPROVED", "body": "Fix the typo before merging"] as [String: Any]
+        result = PullRequestEvents.evaluate(pr(checks: [check("build", "SUCCESS", run: 2)], reviews: [changes, approval], comments: [old, mine, theirs]), watch: &watch)
+        XCTAssertEqual(result.message, "lead left a review comment on PR #12: https://github.com/owner/repo/pull/12. Read it and respond if it needs a change.")
 
         // Conflicts once, then merged ends the watch.
         result = PullRequestEvents.evaluate(pr(mergeable: "CONFLICTING", checks: [check("build", "SUCCESS", run: 2)]), watch: &watch)
@@ -359,7 +391,8 @@ import XCTest
         result = PullRequestEvents.evaluate(pr(mergeable: "CONFLICTING", reviews: [changes, quiet]), reviewComments: inline, watch: &watch)
         XCTAssertEqual(result.message, "reviewer left 2 review comments on PR #12: https://github.com/owner/repo/pull/12#discussion_r901. Read them and respond if they need a change.")
         XCTAssertNil(PullRequestEvents.evaluate(pr(mergeable: "CONFLICTING"), reviewComments: inline, watch: &watch).message)
-        XCTAssertEqual(PullRequestEvents.reviewCommentsArguments("https://github.com/owner/repo/pull/12")?[3], "repos/owner/repo/pulls/12/comments")
+        XCTAssertEqual(PullRequestEvents.reviewCommentsArguments("https://github.com/owner/repo/pull/12")?.prefix(6),
+                       ["api", "--hostname", "github.com", "-X", "GET", "repos/owner/repo/pulls/12/comments"])
         result = PullRequestEvents.evaluate(pr(state: "MERGED"), watch: &watch)
         XCTAssertEqual(result.message, "PR #12 was merged: https://github.com/owner/repo/pull/12.")
         XCTAssertTrue(result.ended)

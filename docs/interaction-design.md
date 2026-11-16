@@ -1488,7 +1488,8 @@ row. Tasks run only while the app is open; there are no webhooks.
   it never interrupts or steers. An occurrence is used up only once its run is
   saved in the queue; a failed save leaves it due. A form saved after a run
   started keeps that run (and its session) as the task's last. A run never
-  starts while the task's previous run is still queued, sending or working;
+  starts while the task's previous run is still queued, sending or working
+  (a steer joins that run's turn; the user's own next prompt does not);
   the due occurrence waits for it. Run now does the same once, leaving the
   schedule alone, and is disabled while the previous run is active.
 - **Timing.** The app checks on a timer (at the next run, at most a minute
@@ -1496,8 +1497,8 @@ row. Tasks run only while the app is open; there are no webhooks.
   and weekly times follow the current time zone and DST (a time skipped by
   DST runs at the next valid minute; a repeated hour runs at its first
   occurrence), and a day that already ran never runs again, whatever the clock
-  does: the task remembers the calendar day that last ran, not its absolute
-  time, so crossing time zones (even the date line) cannot repeat it. Hourly
+  does: the task remembers the latest calendar day a run or catch-up covered,
+  not an absolute time, so crossing time zones (even the date line) cannot repeat it. Hourly
   counts real hours from its anchor. Every occurrence missed
   while the app was closed, the Mac slept or the previous run worked (over 5
   minutes late) collapses into one catch-up run marked late, or with **Skip

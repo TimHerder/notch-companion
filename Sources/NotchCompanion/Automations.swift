@@ -61,6 +61,16 @@ struct ScheduledTask: Codable, Identifiable, Equatable {
         }
     }
 
+    /// The latest daily or weekly occurrence at or before `date`: a catch-up uses up every day up to it.
+    func latestOccurrence(atOrBefore date: Date, calendar: Calendar = .app) -> Date? {
+        guard repeats == .daily || repeats == .weekly else { return nil }
+        let days: [Int?] = repeats == .daily ? [nil] : weekdays.sorted()
+        return days.compactMap { day in
+            calendar.nextDate(after: date.addingTimeInterval(1), matching: DateComponents(hour: time.hour ?? 9, minute: time.minute ?? 0, weekday: day),
+                              matchingPolicy: .nextTime, repeatedTimePolicy: .first, direction: .backward)
+        }.max()
+    }
+
     /// "Daily at 9:00", "Mon, Wed at 18:30", "Every 3 hours", "Once on Tue, Nov 18, 9:00".
     func summary(calendar: Calendar = .app) -> String {
         let style = Date.FormatStyle(locale: calendar.locale ?? .autoupdatingCurrent, calendar: calendar, timeZone: calendar.timeZone)
@@ -147,7 +157,7 @@ enum PullRequestEvents {
     static func reviewCommentsArguments(_ url: String) -> [String]? {
         let parts = URL(string: url)?.pathComponents ?? []
         guard parts.count >= 5, parts[3] == "pull", Int(parts[4]) != nil else { return nil }
-        return ["api", "-X", "GET", "repos/\(parts[1])/\(parts[2])/pulls/\(parts[4])/comments",
+        return ["api", "--hostname", "github.com", "-X", "GET", "repos/\(parts[1])/\(parts[2])/pulls/\(parts[4])/comments",
                 "-f", "per_page=100", "-f", "sort=created", "-f", "direction=desc"]
     }
     private static let failedConclusions: Set<String> = ["FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"]
@@ -186,12 +196,11 @@ enum PullRequestEvents {
         for review in pr["reviews"] as? [[String: Any]] ?? [] {
             guard let id = review["id"].map({ "review:" + EventValue.string($0) }), watch.seen.insert(id).inserted, !first else { continue }
             let who = (review["author"] as? [String: Any])?["login"] as? String ?? "A reviewer"
-            switch review["state"] as? String {
-            case "CHANGES_REQUESTED": lines.append("\(who) requested changes on \(number): \(link). Address the review.")
-            // A summary with text; inline comments are counted below.
-            case "COMMENTED" where who != author && !(review["body"] as? String ?? "").isEmpty:
+            if review["state"] as? String == "CHANGES_REQUESTED" {
+                lines.append("\(who) requested changes on \(number): \(link). Address the review.")
+            } else if who != author, !(review["body"] as? String ?? "").isEmpty {
+                // Any summary with text, an approval's too; inline comments are counted below.
                 lines.append("\(who) left a review comment on \(number): \(link). Read it and respond if it needs a change.")
-            default: break
             }
         }
         for comment in pr["comments"] as? [[String: Any]] ?? [] {
@@ -321,7 +330,8 @@ extension AppModel {
             let late = now.timeIntervalSince(due) > ScheduledTask.grace
             let pending = task
             // Every missed occurrence collapses into this one run.
-            task.lastRunDay = Calendar.app.dateComponents([.year, .month, .day], from: due)
+            // Every day up to the latest occurrence is used up, so a clock set back cannot repeat one.
+            task.lastRunDay = Calendar.app.dateComponents([.year, .month, .day], from: max(due, task.latestOccurrence(atOrBefore: now) ?? due))
             task.nextRun = task.repeats == .once ? nil : task.occurrence(after: max(now, due))
             scheduledTasks[index] = task
             if late && task.skipMissed { scheduledTasks[index].lastSkipped = due; changed = true; continue }
@@ -339,7 +349,8 @@ extension AppModel {
             if session.queuedSends.contains(where: { $0.id == id }) { return !failedDeliveries.contains(id) }
             if session.pendingSubmission?.id == id || session.stagedSubmission?.message.id == id { return true }
             if session.messages.contains(where: { $0.id == id }) {
-                return (session.isBusy || isSubmitting(session.id)) && session.messages.last(where: { $0.role == "user" })?.id == id
+                // A steer joins the run's turn; the user's own next prompt starts another.
+                return (session.isBusy || isSubmitting(session.id)) && session.latestUserTurnID == id
             }
         }
         return false
@@ -481,7 +492,11 @@ extension AppModel {
     /// errors back off and never message the session.
     func pollPullRequest(_ id: String, now: Date = Date()) async {
         guard let watch = sessions.first(where: { $0.id == id })?.pullRequestWatch, pullRequestPolling.insert(id).inserted else { return }
-        defer { pullRequestPolling.remove(id) }
+        defer {
+            pullRequestPolling.remove(id)
+            // Watched again while this poll ran: the new watch's first poll waited for this one.
+            if let current = sessions.first(where: { $0.id == id })?.pullRequestWatch, current.generation != watch.generation { evaluateAutomations() }
+        }
         var poll = pullRequestPolls[id] ?? PullRequestPoll()
         do {
             let output = try await pullRequestRunner(["pr", "view", watch.url, "--json", PullRequestEvents.fields])
