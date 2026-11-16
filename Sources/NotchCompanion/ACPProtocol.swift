@@ -67,6 +67,14 @@ struct ACPProtocolState {
             guard metadata == nil, let title = update["title"] as? String else { return [] }
             return [event("session.title", sid, ["title": title])]
         }
+        // The agent's own slash commands, which run when sent as `/name` in a prompt.
+        if kind == "available_commands_update" {
+            guard metadata == nil else { return [] }
+            let commands = (update["availableCommands"] as? [[String: Any]] ?? []).map { command -> [String: Any] in
+                ["name": command["name"] ?? "", "description": command["description"] ?? "", "hint": (command["input"] as? [String: Any])?["hint"] ?? ""]
+            }
+            return [event("session.commands", sid, ["commands": commands])]
+        }
         // Native load replay is authoritative history, never new live activity.
         if loading.contains(sid) {
             if metadata != nil { return [] }

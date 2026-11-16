@@ -243,6 +243,11 @@ private final class PiSession {
         let native = try await rpc("get_state")
         state.busy = state.busy || native["isStreaming"] as? Bool == true || native["isCompacting"] as? Bool == true || (native["pendingMessageCount"] as? Int ?? 0) > 0
         let messages = try await rpc("get_messages")["messages"] as? [[String: Any]] ?? []
+        // Extension commands, prompt templates and skills, which `prompt` runs as `/name`; never awaited by the open.
+        Task { [weak self] in
+            guard let commands = try? await self?.rpc("get_commands")["commands"] as? [[String: Any]] else { return }
+            self?.onEvent?("session.commands", ["commands": commands.map { ["name": $0["name"] ?? "", "description": $0["description"] ?? ""] }])
+        }
         return ["session_id": id, "stored_session_id": id, "profile_id": profileID, "running": state.busy,
                 "messages": PiProtocolState.history(messages), "history_complete": false,
                 "catalog": try await catalog(native),

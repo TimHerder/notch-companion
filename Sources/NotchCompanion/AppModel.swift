@@ -17,6 +17,8 @@ final class AppModel: ObservableObject {
     @Published var composerFocusRequest = 0
     /// Waiting for its composer to put it at the caret.
     @Published var composerInsertion: ComposerInsertion?
+    /// Harness commands for the `/` list, in memory: per session, and per profile and folder for drafts.
+    @Published var commandCatalogs: [String: [RuntimeCommand]] = [:]
     @Published var hovering = false
     @Published var openOnHover = UserDefaults.standard.object(forKey: "notch.openOnHover") as? Bool ?? true {
         didSet { UserDefaults.standard.set(openOnHover, forKey: "notch.openOnHover") }
@@ -491,6 +493,16 @@ final class AppModel: ObservableObject {
             !runtimeSettingsPending.contains($0)
                 && configuredRuntimeProfiles[$0.rawValue] == RuntimeRoute.defaultProfile($0, defaults: preferences)
         }
+    }
+
+    /// What the session's harness last reported, else what it reported for another session in the same profile and folder.
+    func composerCommands(for session: CompanionSession?) -> [RuntimeCommand] {
+        guard let session else { return [] }
+        return commandCatalogs[Self.commandCatalogKey(session, own: true)] ?? commandCatalogs[Self.commandCatalogKey(session, own: false)] ?? []
+    }
+
+    static func commandCatalogKey(_ session: CompanionSession, own: Bool) -> String {
+        (own ? session.id + "|" : "") + session.route.eventKey + "|" + (session.workspacePath ?? "")
     }
 
     var currentDraftNeedsSetup: Bool {
@@ -2269,6 +2281,10 @@ final class AppModel: ObservableObject {
             // The runtime's running total for the current turn replaces any earlier report.
             if let tokens = payload["turn_tokens"] as? Int, tokens >= 0, let turnID { sessions[index].turnTokens[turnID] = tokens }
             if payload["turn_usage"] != nil, let turnID { sessions[index].turnUsage[turnID] = ModelTokens.decode(payload["turn_usage"]) }
+        case "session.commands":
+            let commands = RuntimeCommand.list(payload["commands"])
+            commandCatalogs[Self.commandCatalogKey(sessions[index], own: true)] = commands
+            commandCatalogs[Self.commandCatalogKey(sessions[index], own: false)] = commands
         case "session.title":
             sessions[index].adoptRuntimeTitle(payload["title"])
         case "runtime.notice":

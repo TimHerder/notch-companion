@@ -216,6 +216,38 @@ Edit and Steer refuse an ID that is the unconfirmed send or in the transcript. P
 not keep the app busy. Approval and question cards stay authoritative; sending
 cannot bypass them.
 
+## Composer commands and file mentions
+
+The composer's `/` list (see [interaction design](interaction-design.md#conversation-usability-and-session-management))
+offers only what the harness itself reports and runs when the command arrives
+as `/name …` in an ordinary message through this app's send path. The app
+defines no commands of its own here. Adapters report a session's list as the
+normalized `session.commands {session_id, commands: [{name, description, hint}]}`
+event, emitted again whenever the harness reports a change. `AppModel` keeps it
+in memory per session and, for drafts, per profile and folder; it is never
+saved and never reaches a runtime.
+
+| Harness | `/` list | Source and limits |
+| --- | --- | --- |
+| Claude Code | Yes | The `initialize` control response's `commands` (name, description, `argumentHint`), which lists only commands that run in print mode: skills, custom and plugin commands and non-interactive built-ins. Read again whenever a session's process opens. `/clear` is left out: it moves the conversation to a new native session the app would no longer follow. |
+| Pi | Yes | RPC [`get_commands`](https://pi.dev/docs/latest/rpc-commands#get_commands) after a session opens: extension commands, prompt templates and `skill:` skills, which `prompt` runs or expands. Built-in TUI commands are not listed. Pi refuses an extension command sent as a steer while it works; queue it instead. |
+| DeepSeek, Antigravity, Cursor, Copilot (ACP v1) | When reported | ACP [`available_commands_update`](https://agentclientprotocol.com/protocol/slash-commands) (name, description, `input.hint`), whenever the agent sends it; agents run them from `session/prompt` text. An update sent before `session/new` returns is not attributed. |
+| Codex app-server | No | Its slash commands belong to the terminal UI, and its skills are invoked by `$name` mentions or skill inputs, not `/name` text. |
+| OpenCode (1 and 2 HTTP) | No | Commands run through the separate session command endpoint; the prompt endpoint this adapter uses sends `/name` as plain text. |
+| Shared Hermes | No | Commands and skills run through `command.dispatch`; `prompt.submit` sends `/name` as plain text. |
+| OpenClaw, Legacy Hermes | No | No command listing is used. |
+
+The `@` list reads the session's working folder. In a Git work tree it runs
+`git ls-files --cached --others --exclude-standard -z` (read-only, bounded by
+`WorkspaceChanges.run`'s timeout); elsewhere it walks the folder, skipping
+hidden files, packages and common build folders (`node_modules`, `build`,
+`dist`, `target`, `DerivedData`, `Pods`, `__pycache__`, `venv`, `out`), at most
+12 levels deep. In the home folder itself it also skips the folders macOS guards
+with a privacy prompt and `Library`. Either way it stops at 20,000 paths. It
+runs off the main thread, is cached per folder in memory and is listed again
+in the background when the cache is more than 30 seconds old. Choosing writes
+plain text; nothing is attached or sent to a runtime by the list.
+
 ## Shared architecture
 
 `RuntimeTransport` is the shared `@MainActor` conversation contract.

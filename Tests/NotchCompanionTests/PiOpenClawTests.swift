@@ -210,6 +210,7 @@ final class PiOpenClawTests: XCTestCase {
           if t=='get_state': data={'sessionFile':None if ephemeral else path,'sessionId':'native-id','isStreaming':False,'isCompacting':False,'pendingMessageCount':0,'model':{'id':'configured','provider':'native'}}
           if t=='get_messages': data={'messages':[]}
           if t=='get_available_models': data={'models':[{'id':'configured','provider':'native'}]}
+          if t=='get_commands': data={'commands':[{'name':'skill:review','description':'Review changes','source':'skill'}]}
           if t=='prompt':
             with open(path,'w') as f: f.write(json.dumps({'type':'session','cwd':os.getcwd()})+'\n')
             if r['message']=='reject':
@@ -238,9 +239,16 @@ final class PiOpenClawTests: XCTestCase {
         XCTAssertEqual(catalog?.defaultModel, RuntimeModelChoice(model: "configured", provider: "native"))
         XCTAssertEqual(catalog?.models.map(\.choice), [RuntimeModelChoice(model: "configured", provider: "native")])
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("native-session.jsonl").path))
+        let listed = expectation(description: "Pi's commands and skills for the / list")
+        client.onEvent = { name, payload in
+            guard name == "session.commands" else { return }
+            XCTAssertEqual(RuntimeCommand.list(payload["commands"]), [RuntimeCommand(name: "skill:review", description: "Review changes")])
+            listed.fulfill()
+        }
         let created = try await client.request("session.create", params: ["cwd": directory.path])
         let id = try XCTUnwrap(created["stored_session_id"] as? String)
         XCTAssertEqual(id, directory.appendingPathComponent("native-session.jsonl").path)
+        await fulfillment(of: [listed], timeout: 5)
         _ = try await client.request("runtime.models", params: ["cwd": directory.path])
         XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("launches"), encoding: .utf8), "True\nFalse\n", "Reuse the persistent frontend for the same project")
         let settled = expectation(description: "Settled native lifecycle")
