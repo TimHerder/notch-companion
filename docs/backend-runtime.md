@@ -508,12 +508,14 @@ installed and `gh auth status --hostname github.com` passing, `gh pr create
 --repo --base --head --title --body` uses the user's own login (no token is
 stored; an already open pull request for the branch is adopted), else the
 compare URL with `title` and `body` opens in the browser. The link is saved as
-the session's optional `pullRequest`. Every action waits for the session tree
-to be idle (as worktree cleanup does, plus an unconfirmed staged send) and
+the session's optional `pullRequest`. Every action waits for the session tree,
+and every session whose folder shares the checkout (one inside the other), to
+be idle (as worktree cleanup does, plus an unconfirmed staged send) and
 first recreates a removed worktree through the send path's `recreateWorktree`;
 a push re-checks idle after that wait. While a commit or push runs, a send to
-that session is refused (“Wait for the Git action to finish, then send.”), so a
-new turn's edits cannot join it. A push confirmation covers only the branch and
+any session in that checkout is refused (“Wait for the Git action to finish,
+then send.”), so a new turn's edits cannot join it, and cleanup keeps its
+worktree. A push confirmation covers only the branch and
 remote it named; if the checkout changed meanwhile, it asks again.
 Snapshots are unchanged: a commit never rewrites a saved summary.
 

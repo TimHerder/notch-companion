@@ -98,7 +98,13 @@ enum GitActions {
         guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw AppError("Write a commit message first.") }
         // Literal pathspecs: a file named `*` or `:x` is that file, never a pattern. Only files on disk
         // are added: a deletion (staged or not) and a rename's source are committed by their pathspec alone.
-        let present = files.map(\.path).filter { (try? FileManager.default.attributesOfItem(atPath: URL(fileURLWithPath: root).appendingPathComponent($0).path)) != nil }
+        let onDisk = { (path: String) in (try? FileManager.default.attributesOfItem(atPath: URL(fileURLWithPath: root).appendingPathComponent(path).path)) != nil }
+        // A rename's source recreated since would be committed by its pathspec, though it was left out.
+        let included = Set(files.map(\.path))
+        if let source = files.compactMap(\.oldPath).first(where: { onDisk($0) && !included.contains($0) }) {
+            throw AppError("\(source) was renamed and then recreated. Include it too, or commit in your editor.")
+        }
+        let present = files.map(\.path).filter(onDisk)
         if !present.isEmpty { _ = try user(["--literal-pathspecs", "add", "-A", "--"] + present, at: root) }
         let paths = files.flatMap { [$0.path] + ($0.oldPath.map { [$0] } ?? []) }
         // A pathspec commits only these paths, leaving anything else already staged as it is.
@@ -268,7 +274,7 @@ enum GitActions {
     }
 
     func commit(thenPush: Bool) async {
-        guard working == nil, let repository, model?.treeIsIdle(sessionID) == true else { return }
+        guard working == nil, let repository, model?.gitActionsIdle(sessionID) == true else { return }
         let files = included
         guard !files.isEmpty else { error = "Nothing to commit."; return }
         let (message, root) = (message, repository.root)
@@ -286,12 +292,12 @@ enum GitActions {
 
     /// The first call asks first when the branch needs it; `confirmed` pushes what that confirmation named.
     func push(confirmed: Bool = false) async {
-        guard working == nil, model?.treeIsIdle(sessionID) == true else { return }
+        guard working == nil, model?.gitActionsIdle(sessionID) == true else { return }
         // Marked working before any wait, so a send cannot start meanwhile.
         working = "Pushing…"; error = nil; notice = nil
         defer { working = nil }
         await refresh(recreating: true)
-        guard error == nil, let repository, model?.treeIsIdle(sessionID) == true else { return }
+        guard error == nil, let repository, model?.gitActionsIdle(sessionID) == true else { return }
         guard let branch = repository.branch else { error = "This checkout is not on a branch, so there is nothing to push."; return }
         let remote = repository.remote ?? "origin"
         let approved = confirmed && confirming.map { $0.branch == branch && $0.remote == remote } == true
@@ -311,7 +317,7 @@ enum GitActions {
     }
 
     func createPullRequest() async {
-        guard working == nil, let repository, let github = repository.github, let branch = repository.branch, model?.treeIsIdle(sessionID) == true else { return }
+        guard working == nil, let repository, let github = repository.github, let branch = repository.branch, model?.gitActionsIdle(sessionID) == true else { return }
         let (title, body, base, root, gh) = (title.trimmingCharacters(in: .whitespacesAndNewlines), body, base.trimmingCharacters(in: .whitespaces), repository.root, gh())
         guard !title.isEmpty, !base.isEmpty else { error = "Give the pull request a title and a base branch."; return }
         working = "Opening pull request…"; error = nil; notice = nil
@@ -335,6 +341,25 @@ enum GitActions {
 }
 
 extension AppModel {
+    /// Sessions sharing a checkout (one folder inside the other) share its Git actions' safety.
+    private func sharesCheckout(_ first: String, _ second: String) -> Bool {
+        func folder(_ id: String) -> String? {
+            sessions.first { $0.id == id }.map { URL(fileURLWithPath: $0.workspacePath ?? workspacePath).standardizedFileURL.path }
+        }
+        guard let a = folder(first), let b = folder(second) else { return false }
+        return a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/")
+    }
+
+    /// Git actions run only while this session's tree and every session in the same checkout are idle.
+    func gitActionsIdle(_ id: String) -> Bool {
+        treeIsIdle(id) && sessions.allSatisfy { $0.id == id || !sharesCheckout(id, $0.id) || treeIsIdle($0.id) }
+    }
+
+    /// A commit or push running in this session's checkout, which a send must wait for.
+    func gitActionRunning(near id: String) -> Bool {
+        gitActionControllers.values.contains { $0.working != nil && sharesCheckout(id, $0.sessionID) }
+    }
+
     func gitActions(for id: String) -> GitActionsController {
         if let existing = gitActionControllers[id] { return existing }
         let controller = GitActionsController(sessionID: id, model: self)

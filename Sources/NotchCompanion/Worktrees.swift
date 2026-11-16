@@ -186,7 +186,8 @@ extension AppModel {
     /// Settings' rule for a top-level session, whose children's worktrees follow it.
     /// The whole tree must be idle: nothing running, sending, queued or being delegated.
     func worktreeCleanupDue(_ session: CompanionSession, now: Date = Date()) -> Bool {
-        guard treeIsIdle(session.id) else { return false }
+        // A commit or push in progress keeps its worktree.
+        guard treeIsIdle(session.id), !([session.id] + delegatedDescendants(of: session.id)).contains(where: { gitActionControllers[$0]?.working != nil }) else { return false }
         switch removeWorktrees {
         case .archived: return session.isArchived || isAutoArchived(session, now: now)
         case .inactive:

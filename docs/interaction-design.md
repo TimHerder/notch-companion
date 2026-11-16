@@ -655,7 +655,8 @@ for the session's folder: **Commit…**, **Push** and, once the branch has a
 github.com remote and has been pushed, **Open pull request**. The row is
 hidden outside Git (a worktree session keeps it while its worktree is removed,
 which the first action recreates) and disabled with a caption while the
-session, a delegated child or an unconfirmed send is busy. Every form opens
+session, a delegated child, another session working in the same folder or an
+unconfirmed send is busy. Every form opens
 inline in the card, never as a menu or window:
 
 - **Commit…** lists every staged, unstaged and untracked non-ignored file with
@@ -663,7 +664,9 @@ inline in the card, never as a menu or window:
   and **Commit N files**; with no files it says “Nothing to commit.” A blank
   message offers **Write message**: Claude Code drafts the subject without a
   turn, other harnesses fill a draft from the session title; either way the
-  changed files follow and the user edits it. A hook or Git failure shows
+  changed files follow and the user edits it. A rename whose source was
+  recreated and left out is refused with an explanation, since committing the
+  rename would take the new file too. A hook or Git failure shows
   Git's output in red and keeps the form.
 - **Push** pushes the current branch. The session's own `notch/…` worktree
   branch pushes at once; the default branch, `main`/`master` or any other

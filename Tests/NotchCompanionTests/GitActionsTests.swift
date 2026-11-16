@@ -145,6 +145,20 @@ import XCTest
         XCTAssertEqual(try git(["status", "--porcelain"], at: repository), "")
     }
 
+    func testRefusesARecreatedRenameSourceLeftOut() throws {
+        let (repository, _) = try makeRepository()
+        try git(["mv", "README.md", "NEW.md"], at: repository)
+        try Data("secret".utf8).write(to: repository.appendingPathComponent("README.md"))
+        let state = try XCTUnwrap(GitActions.read(repository.path))
+        let rename = try XCTUnwrap(state.files.first { $0.oldPath == "README.md" })
+        XCTAssertThrowsError(try GitActions.commit([rename], message: "Rename", at: state.root)) {
+            XCTAssertTrue($0.localizedDescription.contains("README.md was renamed and then recreated"), $0.localizedDescription)
+        }
+        XCTAssertEqual(try git(["rev-list", "--count", "HEAD"], at: repository), "1\n")
+        _ = try GitActions.commit(state.files, message: "Rename and replace", at: state.root)
+        XCTAssertEqual(try git(["show", "HEAD:README.md"], at: repository), "secret")
+    }
+
     func testFailedHookShowsItsOutputAndCommitsNothing() throws {
         let (repository, _) = try makeRepository()
         let hooks = URL(fileURLWithPath: try git(["config", "core.hooksPath"], at: repository).trimmingCharacters(in: .newlines))
@@ -332,6 +346,42 @@ import XCTest
         XCTAssertFalse(sent)
         XCTAssertEqual(model.errorMessage, "Wait for the Git action to finish, then send.")
         XCTAssertEqual(model.sessions[0].draft, "Next")
+    }
+
+    func testSessionsSharingACheckoutWaitForEachOther() async throws {
+        let folder = temporary("shared").path
+        let model = makeModel(session: CompanionSession(id: "parent", title: "P", state: .finished, workspacePath: folder))
+        var child = CompanionSession(id: "child", title: "C", state: .working, workspacePath: folder + "/app")
+        child.parentSessionID = "parent"
+        let elsewhere = CompanionSession(id: "other", title: "O", state: .working, workspacePath: folder + "-other")
+        model.sessions += [child, elsewhere]
+        // A busy session in the same checkout blocks Git actions; one in another folder does not.
+        XCTAssertFalse(model.gitActionsIdle("parent"))
+        model.update("child") { $0.state = .finished }
+        XCTAssertTrue(model.gitActionsIdle("parent"))
+        model.update("parent") { $0.state = .working }
+        XCTAssertFalse(model.gitActionsIdle("child"), "A child's Git action waits for its parent in the shared folder")
+        model.update("parent") { $0.state = .finished }
+        // The parent's commit blocks a send from the child in the same checkout, not one elsewhere.
+        model.gitActions(for: "parent").working = "Committing…"
+        XCTAssertTrue(model.gitActionRunning(near: "child"))
+        XCTAssertFalse(model.gitActionRunning(near: "other"))
+        model.currentID = "child"
+        model.sessions[1].draft = "Next"
+        let sent = await model.submit(reply: nil)
+        XCTAssertFalse(sent)
+        XCTAssertEqual(model.errorMessage, "Wait for the Git action to finish, then send.")
+    }
+
+    func testCleanupKeepsAWorktreeDuringAGitAction() throws {
+        var session = CompanionSession(id: "s", title: "T", state: .finished, workspacePath: "/w")
+        session.isArchived = true
+        session.worktree = SessionWorktree(repository: "/r", project: "/r", branch: "notch/x", path: "/w")
+        let model = makeModel(session: session)
+        model.currentID = nil
+        XCTAssertTrue(model.worktreeCleanupDue(model.sessions[0]))
+        model.gitActions(for: "s").working = "Pushing…"
+        XCTAssertFalse(model.worktreeCleanupDue(model.sessions[0]))
     }
 
     func testWorktreeRecordsItsBaseAndOldRecordsDecode() throws {

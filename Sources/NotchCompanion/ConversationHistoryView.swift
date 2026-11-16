@@ -76,7 +76,7 @@ struct ConversationHistoryView: View {
                                               fileLimit: inNotch ? 3 : 6,
                                               actions: session.flatMap { session in latestChanges.contains(summary.id) ? GitActionsView(
                                                 controller: model.gitActions(for: session.id),
-                                                blocked: model.treeIsIdle(session.id) ? nil : "Git actions wait until this session, its delegated work and any unconfirmed send are idle.",
+                                                blocked: model.gitActionsIdle(session.id) ? nil : "Git actions wait until this session, its delegated work, sessions in the same folder and any unconfirmed send are idle.",
                                                 pullRequest: session.pullRequest, isWorktree: session.worktree != nil, harness: session.runtime.title,
                                                 openURL: { model.openExternally($0) }) : nil })
                         }

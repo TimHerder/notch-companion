@@ -148,7 +148,9 @@ private development hasn't been re-run against this source snapshot. Known limit
 - Git actions (Commit, Push, Open pull request on the latest change card):
   status parsing, committing exactly the included paths (literal pathspecs,
   renames, staged and unstaged deletions, an excluded staged file left
-  staged), a send refused during a Git action, a failed push retried, a push
+  staged), a recreated rename source left out, sessions sharing a checkout
+  waiting for each other, cleanup keeping a worktree during a push, a send
+  refused during a Git action, a failed push retried, a push
   confirmation re-asked after a branch switch, a failing hook's output with
   nothing committed, `git push -u` to a local bare remote, push confirmation
   for a default branch, GitHub remote detection, the compare URL, `gh pr
