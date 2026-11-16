@@ -245,6 +245,10 @@ import XCTest
         var child = model.sessions[0]
         child.parentSessionID = "parent"
         XCTAssertFalse(model.offersGoal(child))
+        child.forkedFrom = ForkRecord(sourceSessionID: "parent", sourceTitle: "Parent", sourceStoredID: "p", userMessageIDs: [], nativeMessageID: nil, latest: true)
+        XCTAssertTrue(child.isSideChat)
+        XCTAssertFalse(model.offersGoal(child), "Not for side chats")
+        child.forkedFrom = nil
         child.parentSessionID = nil
         child.isLegacyPrivate = true
         XCTAssertFalse(model.offersGoal(child))
