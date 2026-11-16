@@ -926,8 +926,9 @@ identify selection.
 - **Prompt recall.** In an empty composer without marked input-method text, ↑
   replaces the draft with this session's previous prompt (your own messages,
   text only); again goes further back and stops at the oldest. ↓ goes forward and
-  finally back to empty. In an unedited multiline prompt the arrows move between
-  its lines first. Once the recalled text is edited, the arrows move the caret
+  finally back to empty. In an unedited prompt of several lines (wrapped ones
+  included) the arrows move between its lines first. Once the recalled text is
+  edited, the arrows move the caret
   again. Recall never touches attachments, the queue or other sessions' drafts;
   Option–↑ still edits the newest queued message.
 - **Queue.** Queued messages appear above the field in order, three visible

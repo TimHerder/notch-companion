@@ -641,6 +641,29 @@ final class ComposerTextView: NSTextView {
         insertText((before.isEmpty || before.hasSuffix("\n") ? "" : "\n") + text, replacementRange: NSRange(location: caret, length: 0))
     }
 
+    /// A plain-text view disables Paste for a picture alone; ⌘V must still reach `paste`.
+    /// Whether the caret is on the first (or last) displayed line, wrapped lines included.
+    private func caretOnEdgeLine(first: Bool) -> Bool {
+        let text = string as NSString
+        let caret = selectedRange().location
+        guard let layoutManager, let textContainer, text.length > 0 else { return true }
+        // After a final newline the caret sits on the empty line below the text.
+        if caret == text.length, text.hasSuffix("\n") { return !first }
+        layoutManager.ensureLayout(for: textContainer)
+        func line(_ character: Int) -> CGFloat {
+            layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: character), effectiveRange: nil).minY
+        }
+        return line(min(caret, text.length - 1)) == line(first ? 0 : text.length - 1)
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), isEditable, onPaste != nil,
+           NSImage.canInit(with: pasteboard) || pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) {
+            return true
+        }
+        return super.validateUserInterfaceItem(item)
+    }
+
     override func paste(_ sender: Any?) {
         if onPaste?(pasteboard) == true { return }
         super.paste(sender)
@@ -659,10 +682,7 @@ final class ComposerTextView: NSTextView {
         if let recalled, string != recalled.text { self.recalled = nil }
         let text = string as NSString
         if recalled != nil {
-            let caret = selectedRange()
-            guard caret.length == 0 else { return false }
-            let rest = older ? NSRange(location: 0, length: caret.location) : NSRange(location: caret.location, length: text.length - caret.location)
-            guard text.range(of: "\n", range: rest).location == NSNotFound else { return false }
+            guard selectedRange().length == 0, caretOnEdgeLine(first: older) else { return false }
         } else if !older || text.length > 0 { return false }
         let prompts = recallPrompts?() ?? []
         let index = (recalled?.index ?? prompts.count) + (older ? -1 : 1)

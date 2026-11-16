@@ -60,6 +60,8 @@ final class NativeInputTests: XCTestCase {
         XCTAssertEqual(view.selectedRange().location, ("Line one\nLine two" as NSString).length, "The caret lands after the recalled text")
         view.keyDown(with: arrow(up: true))
         XCTAssertEqual(view.string, "Line one\nLine two", "A recalled prompt's own lines take the caret first")
+        // Offscreen, AppKit's own caret movement is not reliable; place it on the first line.
+        view.setSelectedRange(NSRange(location: 3, length: 0))
         view.keyDown(with: arrow(up: true))
         XCTAssertEqual(view.string, "First prompt")
         view.keyDown(with: arrow(up: true))
@@ -80,6 +82,32 @@ final class NativeInputTests: XCTestCase {
         view.string = "Typed draft"
         view.keyDown(with: arrow(up: true))
         XCTAssertEqual(view.string, "Typed draft")
+    }
+
+    @MainActor func testRecalledWrappedParagraphMovesTheCaretBeforeGoingBack() {
+        let view = editor()
+        let paragraph = String(repeating: "A paragraph that wraps across several displayed lines. ", count: 6)
+        view.recallPrompts = { ["Older prompt", paragraph] }
+        view.keyDown(with: arrow(up: true))
+        XCTAssertEqual(view.string, paragraph)
+        view.keyDown(with: arrow(up: true))
+        XCTAssertEqual(view.string, paragraph, "From a wrapped last line, ↑ moves the caret up")
+        view.setSelectedRange(NSRange(location: 3, length: 0))
+        view.keyDown(with: arrow(up: true))
+        XCTAssertEqual(view.string, "Older prompt", "From the first displayed line, ↑ goes back")
+    }
+
+    @MainActor func testPasteStaysEnabledForAPictureAlone() {
+        let view = editor()
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("notch-validate-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        view.pasteboard = pasteboard
+        view.onPaste = { _ in true }
+        let context = CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        pasteboard.clearContents(); pasteboard.writeObjects([NSImage(cgImage: context.makeImage()!, size: NSSize(width: 2, height: 2))])
+        let item = NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        XCTAssertTrue(view.validateUserInterfaceItem(item), "⌘V reaches the composer, which stages or refuses the picture")
     }
 
     @MainActor func testPasteRoutingAndQuotes() {
