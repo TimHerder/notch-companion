@@ -305,6 +305,8 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var isArchived: Bool = false
     /// Hidden from the active list until then, or until it needs the user.
     var snoozedUntil: Date? = nil
+    /// Listed under Pinned above the projects and never auto-archived.
+    var isPinned: Bool = false
     /// An app-owned child lives inside this parent session only.
     var parentSessionID: String? = nil
     var delegation: DelegationRecord? = nil
@@ -388,7 +390,7 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     /// Read, idle, with nothing pending or drafted, and untouched for `interval`:
     /// it leaves the default list for Archived without an archive flag. A snoozed one waits for its wake.
     func isDormant(after interval: TimeInterval?, now: Date = Date()) -> Bool {
-        guard let interval, !isArchived, snoozedUntil == nil, CollapsedStatus.resolve(session: self) == .none, !isBusy,
+        guard let interval, !isArchived, !isPinned, snoozedUntil == nil, CollapsedStatus.resolve(session: self) == .none, !isBusy,
               pendingSubmission == nil, queuedSends.isEmpty, attachments.isEmpty,
               draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         return max(updatedAt, lastSeenAt ?? .distantPast) < now.addingTimeInterval(-interval)
@@ -399,7 +401,9 @@ struct CompanionSession: Identifiable, Codable, Equatable {
 struct SessionProject: Identifiable {
     let path: String
     var sessions: [CompanionSession]
-    var id: String { path }
+    /// The default list's Pinned group, above the folders.
+    var pinned = false
+    var id: String { pinned ? "pinned" : path }
     var name: String { URL(fileURLWithPath: path).lastPathComponent }
 }
 
@@ -478,7 +482,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic, worktreeBase, worktree, pullRequest
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, isPinned, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic, worktreeBase, worktree, pullRequest
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -531,6 +535,7 @@ extension CompanionSession {
         queuedSends = try values.decodeIfPresent([QueuedSend].self, forKey: .queuedSends) ?? []
         lastSeenAt = try values.decodeIfPresent(Date.self, forKey: .lastSeenAt)
         snoozedUntil = try values.decodeIfPresent(Date.self, forKey: .snoozedUntil)
+        isPinned = try values.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         prePlanPermissionMode = try? values.decodeIfPresent(PermissionMode.self, forKey: .prePlanPermissionMode)
         planReadyDismissedTurnID = try values.decodeIfPresent(String.self, forKey: .planReadyDismissedTurnID)
         planTurnID = try values.decodeIfPresent(String.self, forKey: .planTurnID)

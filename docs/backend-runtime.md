@@ -227,8 +227,9 @@ Each registry entry stores runtime, canonical profile path, native `storedID`,
 working folder, local conversation ID, drafts, attachment references, read
 receipts, `lastSeenAt` (optional; older entries decode without it), which
 only drives the derived auto-archive, and `snoozedUntil` (optional, likewise),
-which only hides the entry from the active list until it wakes. Neither reaches
-a runtime. `runtimeID` is a connection-local alias cleared on restart. Native IDs are never rewritten
+which only hides the entry from the active list until it wakes, and `isPinned`
+(older entries decode unpinned), which only lists it under Pinned and keeps it
+from auto-archiving. None reaches a runtime. `runtimeID` is a connection-local alias cleared on restart. Native IDs are never rewritten
 into another profile's IDs. The router isolates identical
 live and request IDs across runtimes/profiles; a connection failure interrupts
 only that route, and an unavailable installation does not disable others.
@@ -648,6 +649,9 @@ Views order windows by the duration in their names (`RuntimeRateLimit.sorted`,
 the inverse of `label(minutes:)`), extra usage last; a bar's fraction is 1 when
 reached, nil when unknown; a reset time already past makes the window unknown
 until the next report.
+Snooze's **Until limit resets** reads the same stored limits for the session's
+runtime: the latest `resetsAt` among reached, not yet reset windows, offered only
+when every such window has one.
 
 - **Codex:** `account/rateLimits/read` (`rateLimitsByLimitId` or single
   `rateLimits`; `primary`/`secondary` with `usedPercent`, `windowDurationMins`,

@@ -11,6 +11,8 @@ struct SessionBrowserView: View {
     @FocusState private var renameFocused: Bool
     @FocusState private var searchFocused: Bool
     @FocusState private var actionsFocusID: String?
+    /// Custom snooze's chosen time; nil starts from the default.
+    @State private var customSnoozeDate: Date?
 
     var body: some View {
         VStack(alignment: .leading, spacing: PanelTheme.pick(12, 10, 10)) {
@@ -18,6 +20,14 @@ struct SessionBrowserView: View {
             searchField
             // Re-read each minute so ages stay current and quiet sessions move to Archived.
             TimelineView(.everyMinute) { _ in list }
+                .overlay(alignment: .bottom) {
+                    if let undo = model.sessionUndo {
+                        SessionUndoToast(undo: undo) { model.undoSessionChange() }
+                            .padding(.bottom, 8)
+                            .transition(model.reducedMotion ? .opacity : .opacity.combined(with: .offset(y: 6)))
+                    }
+                }
+                .animation(model.reducedMotion ? nil : .easeOut(duration: 0.2), value: model.sessionUndo?.id)
         }.padding(.top, compact ? 6 : 0)
         // In the notch this page has no composer; opening it focuses search (a non-key panel ignores this).
         .onAppear { if compact { searchFocused = true } }
@@ -203,14 +213,16 @@ struct SessionBrowserView: View {
 
     /// A project's folder name and row count, with a way to start another session there.
     @ViewBuilder private func projectHeader(_ project: SessionProject) -> some View {
+        // Pinned sessions keep their own folders, so the Pinned group starts none.
         let newSession = QuietIconButton(symbol: "plus", label: "New session in \(project.name)", size: 22) {
             Task { await model.newSession(showPanel: compact, workspace: project.path) }
-        }
+        }.opacity(project.pinned ? 0 : 1).disabled(project.pinned).accessibilityHidden(project.pinned)
         let count = project.sessions.count
+        let name = project.pinned ? "Pinned" : project.name
         switch PanelTheme.current {
         case .refined:
             HStack(spacing: 6) {
-                projectLabel(project, Label(project.name, systemImage: "folder")
+                projectLabel(project, Label(name, systemImage: project.pinned ? "pin" : "folder")
                     .labelStyle(ProjectLabelStyle())
                     .font(.system(size: 12, weight: .semibold)).foregroundStyle(CompanionStyle.secondary))
                 Text("\(count)").font(CompanionStyle.caption.monospacedDigit()).foregroundStyle(CompanionStyle.tertiary)
@@ -220,7 +232,7 @@ struct SessionBrowserView: View {
             .padding(.leading, 12).padding(.trailing, 6).padding(.top, 10).padding(.bottom, 2)
         case .tahoe:
             HStack(spacing: 6) {
-                projectLabel(project, Label { Text(project.name) } icon: { Image(systemName: "folder.fill").foregroundStyle(CompanionStyle.secondary) }
+                projectLabel(project, Label { Text(name) } icon: { Image(systemName: project.pinned ? "pin.fill" : "folder.fill").foregroundStyle(CompanionStyle.secondary) }
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(CompanionStyle.text))
                 Text("\(count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(CompanionStyle.secondary)
                 Spacer(minLength: 6)
@@ -229,7 +241,7 @@ struct SessionBrowserView: View {
             .padding(.leading, 4).padding(.trailing, 2).padding(.top, 8)
         case .instrument:
             HStack(spacing: 8) {
-                projectLabel(project, Label(project.name, systemImage: "folder")
+                projectLabel(project, Label(name, systemImage: project.pinned ? "pin" : "folder")
                     .labelStyle(.titleAndIcon)
                     .microLabel(10, weight: .semibold).foregroundStyle(CompanionStyle.secondary))
                     .layoutPriority(1)
@@ -244,8 +256,8 @@ struct SessionBrowserView: View {
     private func projectLabel(_ project: SessionProject, _ label: some View) -> some View {
         label
             .lineLimit(1).truncationMode(.middle)
-            .help(project.path)
-            .accessibilityLabel("Project \(project.name), \(project.sessions.count) \(project.sessions.count == 1 ? "session" : "sessions")")
+            .help(project.pinned ? "Pinned sessions" : project.path)
+            .accessibilityLabel("\(project.pinned ? "Pinned" : "Project \(project.name)"), \(project.sessions.count) \(project.sessions.count == 1 ? "session" : "sessions")")
             .accessibilityAddTraits(.isHeader)
     }
 
@@ -278,10 +290,11 @@ struct SessionBrowserView: View {
                         if model.snoozeChoicesShown { snoozeChoices(session) } else {
                             ViewThatFits(in: .horizontal) {
                                 HStack(spacing: 6) { actions(session) }
-                                // The sidebar fits two short pills a row at most, and Wake now or Restore alone.
+                                // The sidebar fits two short pills a row at most, and Mark as unread alone.
                                 VStack(alignment: .leading, spacing: 6) {
-                                    HStack(spacing: 6) { renameAction(session); snoozeOrWakeAction(session) }
-                                    archiveOrRestoreAction(session)
+                                    HStack(spacing: 6) { renameAction(session); pinAction(session) }
+                                    HStack(spacing: 6) { snoozeOrWakeAction(session); archiveOrRestoreAction(session) }
+                                    markUnreadAction(session)
                                     if session.isLegacyPrivate { ContinueLegacySessionButton(model: model, session: session) }
                                 }
                                 VStack(alignment: .leading, spacing: 6) { actions(session) }
@@ -462,6 +475,8 @@ struct SessionBrowserView: View {
     /// Shared by the inline actions and the right-click menu.
     @ViewBuilder private func actions(_ session: CompanionSession, menu: Bool = false) -> some View {
         renameAction(session)
+        pinAction(session)
+        markUnreadAction(session)
         snoozeOrWakeAction(session, menu: menu)
         archiveOrRestoreAction(session)
         if session.isLegacyPrivate {
@@ -478,6 +493,31 @@ struct SessionBrowserView: View {
         }
     }
 
+    @ViewBuilder private func pinAction(_ session: CompanionSession) -> some View {
+        if session.isPinned {
+            Button("Unpin", systemImage: "pin.slash") {
+                model.sessionActionsID = nil
+                model.undoable(.unpinned, session.id) { model.setPinned(session.id, false) }
+            }
+        } else if model.canPinSession(session.id) {
+            Button("Pin", systemImage: "pin") {
+                model.sessionActionsID = nil
+                model.setPinned(session.id, true)
+            }
+            .help("Keep it above your projects; it never archives on its own")
+        }
+    }
+
+    @ViewBuilder private func markUnreadAction(_ session: CompanionSession) -> some View {
+        if model.canMarkUnread(session.id) {
+            Button("Mark as unread", systemImage: "circle.inset.filled") {
+                model.sessionActionsID = nil
+                model.markUnread(session.id)
+            }
+            .help("Show its result as new until you open it")
+        }
+    }
+
     @ViewBuilder private func snoozeOrWakeAction(_ session: CompanionSession, menu: Bool = false) -> some View {
         if let until = session.snoozedUntil {
             Button("Wake now", systemImage: "sun.max") {
@@ -489,7 +529,16 @@ struct SessionBrowserView: View {
             if menu {
                 Menu("Snooze", systemImage: "moon.zzz") {
                     ForEach(SnoozeChoice.allCases) { choice in
-                        Button(choice.title) { model.snoozeSession(session.id, until: choice.until()) }
+                        Button(choice.title) { snooze(session, until: choice.until()) }
+                    }
+                    if let reset = model.limitResetDate(for: session.id) {
+                        Button(Self.limitResetTitle) { snooze(session, until: reset) }
+                    }
+                    // The menu cannot hold a picker, so Custom… opens the row's own.
+                    Button(Self.customTitle) {
+                        model.sessionActionsID = session.id
+                        model.snoozeChoicesShown = true
+                        model.customSnoozeShown = true
                     }
                 }
                 .disabled(!model.canSnoozeSession(session.id))
@@ -511,32 +560,82 @@ struct SessionBrowserView: View {
         } else {
             Button("Archive", systemImage: "archivebox") {
                 model.sessionActionsID = nil
-                model.archiveSession(session.id)
+                model.undoable(.archived, session.id) { model.archiveSession(session.id) }
             }
             .disabled(!model.canArchiveSession(session.id))
         }
     }
 
+    static let limitResetTitle = "Until limit resets"
+    static let customTitle = "Custom…"
+
+    private func snooze(_ session: CompanionSession, until: Date) {
+        model.sessionActionsID = nil
+        model.undoable(.snoozed, session.id) { model.snoozeSession(session.id, until: until) }
+    }
+
     /// The open row's snooze choices; they wrap in the narrow sidebar.
-    private func snoozeChoices(_ session: CompanionSession) -> some View {
-        let choices = SnoozeChoice.allCases.map { choice in
-            Button(choice.title) {
-                model.sessionActionsID = nil
-                model.snoozeSession(session.id, until: choice.until())
+    @ViewBuilder private func snoozeChoices(_ session: CompanionSession) -> some View {
+        if model.customSnoozeShown {
+            customSnooze(session)
+        } else {
+            let choices = SnoozeChoice.allCases.map { choice in
+                Button(choice.title) { snooze(session, until: choice.until()) }.help(choice.help())
             }
-            .help(choice.help())
+            let reset = model.limitResetDate(for: session.id)
+            let others = HStack(spacing: 6) {
+                if let reset {
+                    Button(Self.limitResetTitle) { snooze(session, until: reset) }
+                        .help("Snooze until \(session.runtime.title)’s usage limit resets, \(SnoozeChoice.time(reset))")
+                }
+                Button(Self.customTitle) { customSnoozeDate = Self.defaultCustomDate(); model.customSnoozeShown = true }
+                    .help("Choose a day and time")
+            }
+            let cancel = Button("Cancel") { model.snoozeChoicesShown = false }.help("Keep \(session.title) in your sessions")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) { ForEach(0..<4) { choices[$0] }; others; cancel }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) { ForEach(0..<4) { choices[$0] } }
+                    HStack(spacing: 6) { others; cancel }
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) { ForEach(0..<2) { choices[$0] } }
+                    HStack(spacing: 6) { ForEach(2..<4) { choices[$0] } }
+                    others
+                    cancel
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Snooze \(session.title)")
         }
-        let cancel = Button("Cancel") { model.snoozeChoicesShown = false }.help("Keep \(session.title) in your sessions")
+    }
+
+    /// The next whole hour at least an hour away: a round, future starting point.
+    static func defaultCustomDate(now: Date = Date(), calendar: Calendar = .app) -> Date {
+        let later = now.addingTimeInterval(3_600)
+        return calendar.nextDate(after: later, matching: DateComponents(minute: 0), matchingPolicy: .nextTime) ?? later
+    }
+
+    /// Custom…: a date and time on the user's calendar, future times only.
+    private func customSnooze(_ session: CompanionSession) -> some View {
+        // A choice left over from an earlier, now past, visit starts over.
+        let date = customSnoozeDate.flatMap { $0 > Date() ? $0 : nil } ?? Self.defaultCustomDate()
+        let picker = DatePicker("Wake at", selection: Binding(get: { date }, set: { customSnoozeDate = $0 }),
+                                in: Date()..., displayedComponents: [.date, .hourAndMinute])
+            .labelsHidden().datePickerStyle(.field)
+            .environment(\.locale, .app).environment(\.calendar, .app)
+            .fixedSize()
+            .accessibilityLabel("Snooze until")
+        let confirm = Button("Snooze") { snooze(session, until: date) }
+            .disabled(date <= Date())
+            .help("Snooze until \(SnoozeChoice.time(date))")
+        let cancel = Button("Cancel") { model.customSnoozeShown = false }.help("Back to the snooze choices")
         return ViewThatFits(in: .horizontal) {
-            HStack(spacing: 6) { ForEach(0..<4) { choices[$0] }; cancel }
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) { ForEach(0..<2) { choices[$0] } }
-                HStack(spacing: 6) { ForEach(2..<4) { choices[$0] } }
-                cancel
-            }
+            HStack(spacing: 6) { picker; confirm; cancel }
+            VStack(alignment: .leading, spacing: 6) { picker; HStack(spacing: 6) { confirm; cancel } }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Snooze \(session.title)")
+        .accessibilityLabel("Snooze \(session.title) until a chosen time")
     }
 
     private func finishRename(_ id: String) {
@@ -579,5 +678,35 @@ private struct ProjectLabelStyle: LabelStyle {
             configuration.icon.font(.system(size: 11)).foregroundStyle(CompanionStyle.tertiary).frame(width: 16)
             configuration.title
         }
+    }
+}
+
+/// The list's quiet confirmation of an archive, snooze or unpin, with its Undo.
+struct SessionUndoToast: View {
+    var undo: SessionUndo
+    var action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // The verb stays whole; a long title truncates.
+            HStack(spacing: 4) {
+                Text(undo.kind.rawValue).fixedSize()
+                Text(undo.title).lineLimit(1).truncationMode(.tail)
+            }.font(.system(size: 12)).foregroundStyle(CompanionStyle.secondary)
+            Text("·").font(.system(size: 12)).foregroundStyle(CompanionStyle.tertiary).accessibilityHidden(true)
+            Button("Undo", action: action)
+                .buttonStyle(.plain).font(.system(size: 12, weight: .semibold)).foregroundStyle(CompanionStyle.text)
+                .keyboardShortcut("z", modifiers: .command)
+                .pressableCursor()
+                .help("Undo (⌘Z)")
+        }
+        .padding(.horizontal, 14).frame(height: 30)
+        .background(Color(white: 0.11), in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.1), lineWidth: 0.75))
+        .shadow(color: .black.opacity(0.4), radius: 8, y: 3)
+        .padding(.horizontal, 12)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(undo.message)
+        .accessibilityAction(named: "Undo", action)
     }
 }
