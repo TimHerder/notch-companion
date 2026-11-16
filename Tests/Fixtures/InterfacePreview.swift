@@ -992,6 +992,17 @@ import ImageIO
                 .environment(\.colorScheme, .dark),
                 size: NSSize(width: 560, height: 3200), name: "settings-parakeet-560", output: output)
             model.dictationEngine = .system
+            // macOS notifications turned on but denied in System Settings; the fixture
+            // executable has no app bundle, so nothing reaches UserNotifications.
+            SystemNotifications.shared.enabled = true
+            SystemNotifications.shared.setDeniedForPreview(true)
+            try render(SettingsContent(model: model, inNotch: true).padding(20)
+                .frame(width: 560, height: 1200, alignment: .top)
+                .background(CompanionStyle.background).foregroundStyle(CompanionStyle.text)
+                .environment(\.colorScheme, .dark),
+                size: NSSize(width: 560, height: 1200), name: "settings-notifications-denied-560", output: output)
+            SystemNotifications.shared.setDeniedForPreview(false)
+            SystemNotifications.shared.enabled = false
             return
         }
         if CommandLine.arguments.contains("--busy-composer-only") {
@@ -1259,14 +1270,33 @@ import ImageIO
         let unreported = model.sessions.map(\.turnTokens)
         for index in model.sessions.indices where index % 2 == 0 {
             for message in model.sessions[index].messages where message.role == "user" {
-                model.sessions[index].turnTokens[message.turnID ?? message.id] = 18_400 * (index + 1)
+                let tokens = 18_400 * (index + 1)
+                model.sessions[index].turnTokens[message.turnID ?? message.id] = tokens
+                // Every other reported session has a priced split; the rest count as unpriced.
+                if index % 4 == 0 {
+                    model.sessions[index].turnUsage[message.turnID ?? message.id] = ["claude-sonnet-4-6":
+                        ModelTokens(input: tokens / 4, output: tokens / 4, cacheRead: tokens / 2, cacheWriteHour: 0)]
+                }
             }
         }
+        // Earlier days: a Codex day with a priced turn and an unpriced model, and a
+        // Claude day recorded before the per-model split (its cost is —).
+        let usageDays = [(RuntimeKind.codex, 1, ["gpt-5.4": ModelTokens(input: 120_000, output: 30_000, cacheRead: 600_000)], 790_000),
+                         (RuntimeKind.claude, 2, [:], 412_000)].map { runtime, daysAgo, usage, tokens in
+            var session = CompanionSession(); session.runtime = runtime; session.title = "Usage fixture"
+            let message = ChatMessage(id: UUID().uuidString, role: "user", text: "Fixture", createdAt: Date().addingTimeInterval(-Double(daysAgo) * 86_400))
+            session.messages = [message]
+            session.turnTokens = [message.id: tokens]
+            session.turnUsage = usage.isEmpty ? [:] : [message.id: usage]
+            return session
+        }
+        model.sessions += usageDays
         model.page = .usage
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-usage", output: output)
-        try render(UsageView(model: model).padding(.horizontal, 20).frame(width: 560, height: 760)
+        try render(UsageView(model: model).padding(.horizontal, 20).frame(width: 560, height: 960)
             .background(CompanionStyle.background).foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
-            size: NSSize(width: 560, height: 760), name: "usage-page", output: output)
+            size: NSSize(width: 560, height: 960), name: "usage-page", output: output)
+        model.sessions.removeAll { session in usageDays.contains { $0.id == session.id } }
         model.page = .sessions
         try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-usage", output: output)
         model.page = .session
@@ -1291,7 +1321,7 @@ import ImageIO
             size: NSSize(width: 560, height: 420), name: "context-details-limits-claude-old", output: output)
         model.sessions[0].runtime = fixtureRuntime
         model.page = .session
-        for index in model.sessions.indices { model.sessions[index].turnTokens = unreported[index] }
+        for index in model.sessions.indices { model.sessions[index].turnTokens = unreported[index]; model.sessions[index].turnUsage = [:] }
         model.showUsage = false
         // SnapShot's composer button and the Screen Recording hint; no real capture.
         model.showSnapShot = true

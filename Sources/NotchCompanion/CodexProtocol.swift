@@ -25,6 +25,12 @@ struct CodexProtocolState {
     /// started here) and the total each turn started from.
     var tokenTotals: [String: Int] = [:]
     private var turnBaselines: [String: (turn: String, total: Int)] = [:]
+    /// The model each parent thread's next turn runs on, set by the client before turn/start.
+    var models: [String: String] = [:]
+    /// Cumulative tokens by kind, and each turn's start, model (nil once rerouted)
+    /// and whether a request went past the 272K-token prompt price tier.
+    var splitTotals: [String: ModelTokens] = [:]
+    private var turnSplits: [String: (turn: String, model: String?, base: ModelTokens, long: Bool)] = [:]
     private var latestTurns: [String: String] = [:]
     private var messageOrder: [String: [String]] = [:]
     private var messageTexts: [String: [String: String]] = [:]
@@ -33,6 +39,15 @@ struct CodexProtocolState {
     /// Agent messages that carry `request_user_input_async` questions. Their
     /// text is Codex's plain rendering of the questions, shown as a card instead.
     private var questionMessages = Set<String>()
+
+    /// `inputTokens` includes the cached input; the kinds must add up to the total.
+    static func split(_ value: Any?) -> ModelTokens? {
+        guard let total = value as? [String: Any], let input = total["inputTokens"] as? Int, let output = total["outputTokens"] as? Int,
+              let all = total["totalTokens"] as? Int, input + output == all else { return nil }
+        let cached = total["cachedInputTokens"] as? Int ?? 0
+        guard cached >= 0, cached <= input, output >= 0 else { return nil }
+        return ModelTokens(input: input - cached, output: output, cacheRead: cached)
+    }
 
     func root(for thread: String) -> String? {
         if ownedThreads.contains(thread) { return thread }
@@ -101,15 +116,32 @@ struct CodexProtocolState {
                 if let base = turnBaselines[tid], base.turn == incomingTurn, total >= base.total { info["turn_tokens"] = total - base.total }
                 tokenTotals[tid] = total
             }
+            if let split = Self.split(usage["total"]) {
+                if var turn = turnSplits[tid], turn.turn == incomingTurn {
+                    turn.long = turn.long || ((usage["last"] as? [String: Any])?["inputTokens"] as? Int ?? 0) > 272_000
+                    turnSplits[tid] = turn
+                    let delta = ModelTokens(input: split.input - turn.base.input, output: split.output - turn.base.output,
+                                            cacheRead: split.cacheRead - turn.base.cacheRead, cacheWriteHour: 0)
+                    if let model = turn.model, !turn.long, min(delta.input, delta.output, delta.cacheRead) >= 0,
+                       delta.total == info["turn_tokens"] as? Int {
+                        info["turn_usage"] = [model: delta.payload]
+                    }
+                }
+                splitTotals[tid] = split
+            }
             return [event("session.info", info)]
         case "model/rerouted":
             guard !child, let model = params["toModel"] as? String else { return [] }
+            models[tid] = model
+            // A turn that changed model mid-way cannot say which tokens each used.
+            turnSplits[tid]?.model = nil
             return [event("session.info", ["model": model])]
         case "turn/started":
             guard let turn = params["turn"] as? [String: Any], let id = turn["id"] as? String else { return [] }
             activeTurns[tid] = id
             latestTurns[tid] = id
             if !child { turnBaselines[tid] = tokenTotals[tid].map { (id, $0) } }
+            if !child { turnSplits[tid] = splitTotals[tid].map { (id, models[tid], $0, false) } }
             startingThreads.remove(tid)
             messageOrder[tid] = []
             messageTexts[tid] = [:]

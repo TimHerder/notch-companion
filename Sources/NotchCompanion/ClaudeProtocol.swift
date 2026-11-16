@@ -29,6 +29,12 @@ struct ClaudeProtocolState {
     private var contextWindow: Int?
     /// modelUsage is cumulative for this process; each result adds the difference.
     private var processTokens = 0
+    /// The same per model and kind, for the turn's priced split.
+    private var processModelTokens: [String: ModelTokens] = [:]
+    /// Each assistant message's model and usage since the last result, by message ID
+    /// (a message repeats its usage on every content block): only these tell
+    /// 5-minute from 1-hour cache writes.
+    private var messageUsage: [String: (model: String, usage: [String: Any])] = [:]
 
     init(sessionID: String) { self.sessionID = sessionID }
 
@@ -42,7 +48,7 @@ struct ClaudeProtocolState {
     mutating func begin(_ id: String) throws {
         guard !active, children.isEmpty, requests.isEmpty else { throw AppError("Claude Code still has active work or a pending interaction.") }
         active = true; turnID = id; result = nil; text = ""; failedChild = false; interrupted = false; errorCategory = nil
-        partialMessages.removeAll(); tools.removeAll(); taskAliases.removeAll(); agentTools.removeAll()
+        partialMessages.removeAll(); tools.removeAll(); taskAliases.removeAll(); agentTools.removeAll(); messageUsage.removeAll()
         contextUsed = nil
         if nativeState != nil { nativeState = "running" }
     }
@@ -326,6 +332,10 @@ struct ClaudeProtocolState {
             let message = frame["message"] as? [String: Any] ?? [:]
             let content = message["content"] as? [[String: Any]] ?? []
             var events: [Event] = []
+            if type == "assistant", let id = message["id"] as? String, let model = message["model"] as? String,
+               let usage = message["usage"] as? [String: Any] {
+                messageUsage[id] = (model, usage)
+            }
             if type == "assistant", child == nil, frame["error"] == nil,
                let model = message["model"] as? String, !model.isEmpty, !model.hasPrefix("<") {
                 contextModelChanged(model)
@@ -361,13 +371,54 @@ struct ClaudeProtocolState {
                 let total = rows.values.reduce(0) { sum, row in
                     sum + ["inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"].compactMap { Self.tokenCount(row[$0]) }.reduce(0, +)
                 }
-                if total >= processTokens { events.append(event("session.info", ["turn_tokens": total - processTokens])) }
+                var info: [String: Any] = [:]
+                if total >= processTokens { info["turn_tokens"] = total - processTokens }
+                if let usage = turnUsage(rows), !usage.isEmpty, info["turn_tokens"] != nil {
+                    info["turn_usage"] = usage.mapValues(\.payload)
+                }
+                if !info.isEmpty { events.append(event("session.info", info)) }
                 processTokens = total
+                processModelTokens = Self.modelTokens(rows)
             }
             result = frame
+            messageUsage.removeAll()
             return events + completeIfSettled()
         }
         return []
+    }
+
+    private static func modelTokens(_ rows: [String: [String: Any]]) -> [String: ModelTokens] {
+        rows.mapValues { row in
+            ModelTokens(input: tokenCount(row["inputTokens"]) ?? 0, output: tokenCount(row["outputTokens"]) ?? 0,
+                        cacheRead: tokenCount(row["cacheReadInputTokens"]) ?? 0, cacheWrite: tokenCount(row["cacheCreationInputTokens"]) ?? 0)
+        }
+    }
+
+    /// This result's per-model difference from modelUsage, which also counts
+    /// calls no message shows. Cache writes are split by retention only when the
+    /// messages account for every one; a fast-mode model is left out (unpriced).
+    private func turnUsage(_ rows: [String: [String: Any]]) -> [String: ModelTokens]? {
+        var usage: [String: ModelTokens] = [:]
+        for (model, now) in Self.modelTokens(rows) {
+            let before = processModelTokens[model] ?? ModelTokens()
+            var delta = ModelTokens(input: now.input - before.input, output: now.output - before.output,
+                                    cacheRead: now.cacheRead - before.cacheRead, cacheWrite: now.cacheWrite - before.cacheWrite)
+            guard min(delta.input, delta.output, delta.cacheRead, delta.cacheWrite) >= 0 else { return nil }
+            guard delta.total > 0 else { continue }
+            let messages = messageUsage.values.filter { $0.model == model }.map(\.usage)
+            if messages.contains(where: { ($0["speed"] as? String).map { $0 != "standard" } ?? false }) { continue }
+            var minutes = 0, hour = 0, complete = true
+            for message in messages where Self.tokenCount(message["cache_creation_input_tokens"]) != 0 {
+                let split = message["cache_creation"] as? [String: Any]
+                guard let five = Self.tokenCount(split?["ephemeral_5m_input_tokens"]), let one = Self.tokenCount(split?["ephemeral_1h_input_tokens"]),
+                      five + one == Self.tokenCount(message["cache_creation_input_tokens"]) ?? 0 else { complete = false; break }
+                minutes += five; hour += one
+            }
+            if delta.cacheWrite == 0 { delta.cacheWriteHour = 0 }
+            else if complete, minutes + hour == delta.cacheWrite { delta.cacheWriteHour = hour }
+            usage[model] = delta
+        }
+        return usage
     }
 
     private mutating func completeIfSettled() -> [Event] {

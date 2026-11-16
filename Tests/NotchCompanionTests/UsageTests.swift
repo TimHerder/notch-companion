@@ -232,4 +232,96 @@ import XCTest
         XCTAssertEqual(restored.rateLimits["claude"]?.count, 2)
         XCTAssertEqual(restored.sessions.first { $0.runtime == .codex }?.turnTokens, [turn: 90])
     }
+
+    func testPricesOnlyConfirmedModelsAndNeverGuessesACacheWriteRetention() throws {
+        XCTAssertEqual(ModelPrice.price("claude-opus-4-5-20251101"), ModelPrice.price("claude-opus-4-5"), "A dated snapshot prices like its model")
+        XCTAssertEqual(ModelPrice.price("claude-opus-4-6[1m]")?.input, 5)
+        XCTAssertEqual(ModelPrice.price("claude-opus-5-5")?.input, 4, "claude-opus-5 never prices claude-opus-5-5")
+        XCTAssertNil(ModelPrice.price("claude-haiku-5-5"), "Prompt-length tiers the usage cannot tell apart stay unpriced")
+        XCTAssertNil(ModelPrice.price("gpt-6-astra"), "Cache writes Codex does not report stay unpriced")
+        XCTAssertNil(ModelPrice.price("local-model"))
+        let opus = try XCTUnwrap(ModelPrice.price("claude-opus-5-5"))
+        let tokens = ModelTokens(input: 1_000_000, output: 100_000, cacheRead: 2_000_000, cacheWrite: 300_000, cacheWriteHour: 100_000)
+        // 4 + 2 + 0.40 + 200k × 5/M + 100k × 8/M
+        XCTAssertEqual(try XCTUnwrap(opus.cost(tokens)), 8.2, accuracy: 0.0001)
+        var unsplit = tokens; unsplit.cacheWriteHour = nil
+        XCTAssertNil(opus.cost(unsplit), "Cache writes of unknown retention have no price")
+        unsplit.cacheWrite = 0
+        XCTAssertNotNil(opus.cost(unsplit), "Without cache writes the retention does not matter")
+        XCTAssertEqual(try XCTUnwrap(ModelPrice.price("gpt-5")?.cost(ModelTokens(input: 1_000_000, output: 1_000_000, cacheRead: 1_000_000))), 11.375, accuracy: 0.0001)
+        XCTAssertEqual(ModelTokens.decode(["m": tokens.payload]), ["m": tokens])
+        XCTAssertNil(ModelTokens.decode(["m": ["input": 1, "output": 1, "cache_read": 0, "cache_write": 1, "cache_write_1h": 2]]), "More hour writes than writes is malformed")
+    }
+
+    func testDaysEstimateCostAndCountUnpricedTokens() {
+        let calendar = Calendar(identifier: .gregorian)
+        let today = calendar.startOfDay(for: Date())
+        func message(_ id: String) -> ChatMessage { ChatMessage(id: id, role: "user", text: id, createdAt: today.addingTimeInterval(60), turnID: id) }
+        var claude = CompanionSession(); claude.runtime = .claude
+        claude.messages = [message("priced"), message("mixed"), message("old"), message("unreported")]
+        claude.turnTokens = ["priced": 2_000_000, "mixed": 1_500, "old": 700]
+        claude.turnUsage = ["priced": ["claude-sonnet-4-6": ModelTokens(input: 1_000_000, output: 1_000_000, cacheWriteHour: 0)],
+                            "mixed": ["claude-haiku-4-5": ModelTokens(input: 1_000, cacheWriteHour: 0), "unknown-model": ModelTokens(input: 500)]]
+        let day = UsageDay.days([claude], calendar: calendar)[0]
+        XCTAssertEqual(day.cost ?? 0, 18.001, accuracy: 0.000001)
+        XCTAssertEqual(day.unpricedTokens, 1_200, "An unknown model and a day recorded before the split are unpriced")
+        XCTAssertEqual(UsageView.describeCost(day.cost, unpriced: day.unpricedTokens), "Estimated $18.00 · 1.2k tokens unpriced")
+        XCTAssertEqual(UsageView.describeCost(nil, unpriced: 700), "Estimated — · 700 tokens unpriced")
+        XCTAssertEqual(UsageView.money(0.001), "<$0.01")
+        XCTAssertEqual(UsageView.money(nil), "—")
+    }
+
+    func testClaudeSplitsTurnUsagePerModelFromModelUsageAndMessages() throws {
+        var state = ClaudeProtocolState(sessionID: "s")
+        try state.begin("t1")
+        func assistant(_ id: String, _ model: String, write: Int, hour: Int?, child: String? = nil) throws {
+            var usage: [String: Any] = ["input_tokens": 1, "output_tokens": 1, "cache_read_input_tokens": 0, "cache_creation_input_tokens": write]
+            if let hour { usage["cache_creation"] = ["ephemeral_5m_input_tokens": write - hour, "ephemeral_1h_input_tokens": hour] }
+            var frame: [String: Any] = ["type": "assistant", "message": ["id": id, "model": model, "content": [], "usage": usage]]
+            if let child { frame["parent_tool_use_id"] = child }
+            _ = try state.receive(frame)
+        }
+        try assistant("a", "claude-opus-5-5", write: 300, hour: 200)
+        try assistant("a", "claude-opus-5-5", write: 300, hour: 200) // the same message, another content block
+        try assistant("b", "claude-haiku-4-5", write: 50, hour: nil, child: "agent")
+        let events = try state.receive(["type": "result", "modelUsage": [
+            "claude-opus-5-5": ["inputTokens": 10, "outputTokens": 20, "cacheReadInputTokens": 30, "cacheCreationInputTokens": 300],
+            "claude-haiku-4-5": ["inputTokens": 5, "outputTokens": 5, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 50]]])
+        let info = try XCTUnwrap(events.first { $0.payload["turn_tokens"] != nil }?.payload)
+        XCTAssertEqual(info["turn_tokens"] as? Int, 420)
+        let usage = try XCTUnwrap(ModelTokens.decode(info["turn_usage"]))
+        XCTAssertEqual(usage["claude-opus-5-5"], ModelTokens(input: 10, output: 20, cacheRead: 30, cacheWrite: 300, cacheWriteHour: 200))
+        XCTAssertEqual(usage["claude-haiku-4-5"]?.cacheWriteHour, nil, "Writes without a retention split stay unsplit, so unpriced")
+
+        try state.begin("t2")
+        try assistant("c", "claude-opus-5-5", write: 0, hour: nil)
+        let next = try state.receive(["type": "result", "modelUsage": [
+            "claude-opus-5-5": ["inputTokens": 15, "outputTokens": 20, "cacheReadInputTokens": 30, "cacheCreationInputTokens": 300],
+            "claude-haiku-4-5": ["inputTokens": 5, "outputTokens": 5, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 50]]])
+        let second = try XCTUnwrap(ModelTokens.decode(next.first { $0.payload["turn_usage"] != nil }?.payload["turn_usage"]))
+        XCTAssertEqual(second, ["claude-opus-5-5": ModelTokens(input: 5, cacheWriteHour: 0)], "Each turn reports its own difference per model")
+    }
+
+    func testCodexSplitsTurnUsageForTheTurnsModel() throws {
+        var state = CodexProtocolState()
+        _ = try state.register(["id": "t"])
+        state.tokenTotals["t"] = 0
+        state.splitTotals["t"] = ModelTokens()
+        state.models["t"] = "gpt-5.4"
+        func usage(_ turn: String, input: Int, cached: Int, output: Int, last: Int = 1_000) -> [String: Any] {
+            state.notifications("thread/tokenUsage/updated", ["threadId": "t", "turnId": turn, "tokenUsage": [
+                "total": ["totalTokens": input + output, "inputTokens": input, "cachedInputTokens": cached, "outputTokens": output],
+                "last": ["inputTokens": last]]]).first?.payload ?? [:]
+        }
+        _ = state.notifications("turn/started", ["threadId": "t", "turn": ["id": "a"]])
+        let first = usage("a", input: 1_000, cached: 600, output: 50)
+        XCTAssertEqual(ModelTokens.decode(first["turn_usage"]), ["gpt-5.4": ModelTokens(input: 400, output: 50, cacheRead: 600, cacheWriteHour: 0)])
+        _ = state.notifications("turn/completed", ["threadId": "t", "turn": ["id": "a", "status": "completed"]])
+        _ = state.notifications("turn/started", ["threadId": "t", "turn": ["id": "b"]])
+        _ = state.notifications("model/rerouted", ["threadId": "t", "turnId": "b", "toModel": "gpt-5.4-mini"])
+        XCTAssertNil(usage("b", input: 2_000, cached: 600, output: 80)["turn_usage"], "A rerouted turn cannot say which model used what")
+        _ = state.notifications("turn/completed", ["threadId": "t", "turn": ["id": "b", "status": "completed"]])
+        _ = state.notifications("turn/started", ["threadId": "t", "turn": ["id": "c"]])
+        XCTAssertNil(usage("c", input: 300_000, cached: 0, output: 100, last: 290_000)["turn_usage"], "A prompt past 272K is priced at a tier left out")
+    }
 }

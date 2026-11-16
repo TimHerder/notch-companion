@@ -35,6 +35,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
         }
         host = NativeHost(model: model)
+        SystemNotifications.shared.install { [weak model] id in model?.openSessionFromNotch(id) }
         connectTask = Task { await model.connect() }
         if CommandLine.arguments.contains("--open") { host?.show() }
     }

@@ -669,6 +669,30 @@ or first observed in this process; children are not added. Claude: the change in
 summed `modelUsage` (input, output, cache read/creation, including subagents)
 between results. Other harnesses report none: unreported, not zero.
 
+**Estimated cost** prices `session.info.turn_usage`, stored per turn as
+`turnUsage` (optional; turns recorded before it, and turns without a usable
+split, have none): per model, `input` (excluding cache), `output`, `cache_read`,
+`cache_write` and `cache_write_1h` (the cache writes kept for an hour; absent
+when unknown). `ModelPrice.table` holds USD per million tokens for models whose
+standard list price was confirmed on the providers' pages (source and date in
+the code); IDs match exactly after dropping a dated suffix or `[1m]`. A model
+missing from the table, or cache writes of unknown retention, count as
+unpriced tokens, never as a guess. Left out: tiers the recorded usage cannot
+tell apart (Claude Haiku 5.5's prompt-length prices, Sonnet 4.5's long context)
+and OpenAI GPT-6 and GPT-5.6, which bill cache writes Codex does not report.
+Batch, priority/fast and data-residency prices are not applied.
+
+- **Codex:** the parent thread's `total` split (`inputTokens` includes
+  `cachedInputTokens`; input plus output must equal `totalTokens`) minus the
+  turn-start split, under the model the client sent on `turn/start` (selected,
+  else the thread's). A turn that reroutes, or has a request whose `last`
+  input exceeds 272K tokens (a higher price tier), reports no split.
+- **Claude:** each model's change in `modelUsage` between results. Its cache
+  writes split by retention only when the result's assistant messages for that
+  model (deduplicated by message ID) carry `cache_creation`
+  `ephemeral_5m`/`ephemeral_1h` counts that add up to the change; a model with
+  a fast-mode message (`usage.speed` other than `standard`) is left out.
+
 ## Delegation
 
 An agent in the notch can hand a task to another configured harness. Tool names,

@@ -252,6 +252,25 @@ that is on screen. VoiceOver hears each announcement.
 toasts, the aura and the rim comet; its Preview button closes the panel and
 plays the finished effect. Dots, eyes, sounds and receipts are unaffected.
 
+**macOS notifications** (`notch.systemNotifications`, Settings, default off)
+also posts each announced moment of a top-level session (finished, failed,
+needs you) to Notification Center at the moment the notch announces it,
+independent of Status effects: the session title, then the harness and the verb
+(“Codex · Done”), then the announcement's message (the answer's first line, the
+failure's reason, the question or the command). Never while that conversation is
+on screen in the panel or the full-session window, never for a snoozed session,
+and never for a delegated child's own result; a child's question appears under
+its parent's title and opens the child's card. No sound of its own (the app's
+cues play). Each session keeps at most one notification, replaced by the next
+and removed once the session is read (opening it, or Mark all as read) or
+deleted. Clicking one opens the panel on its session. Turning the switch on asks
+macOS for permission (alerts only); while denied, an **Allow in System
+Settings** button beside the switch opens System Settings → Notifications on the
+app's page. Authorization belongs to the bundle identifier
+(`com.notchcompanion.mac`) and needs no entitlement, so the ad-hoc signature
+does not affect delivery and a rebuild keeps the choice; a bare SwiftPM
+executable has no bundle and never posts.
+
 ## Living island
 
 None of these adds a window or a second outline animation.
@@ -1320,7 +1339,13 @@ row, opening **Usage**, a scrolling page within the panel bounds; Back returns.
   accent-colored capsule, Instrument a segment meter across the width.
 - **Sessions started here**: tokens per day and harness for messages sent from
   the companion, newest first (30 rows). An unreported day shows `—`; a partly
-  reported day adds “N unreported”.
+  reported day adds “N unreported”. Under each reported day's tokens a caption
+  reads **Estimated $1.24**, the API-equivalent cost at the providers' standard
+  list prices ([price table](backend-runtime.md#usage)), adding “N tokens
+  unpriced” for tokens no confirmed price covers; with none priced it reads
+  **Estimated —**. A last **Estimated total** row sums the rows shown (`—` when
+  none is priced) with the period's unpriced tokens, and a note says
+  subscriptions aren't billed this way.
 - **In a session** (with Show usage and **Show context usage** on), the context
   bubble adds a **<Harness> usage** section below the context for a harness that
   reports limits: Updated time (Instrument's rule label shows the bare time)
