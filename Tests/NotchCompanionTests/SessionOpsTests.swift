@@ -9,6 +9,7 @@ import XCTest
     var pending: CheckedContinuation<[String: Any], Error>?
     var created = "fresh"
     var history: [[String: Any]] = []
+    var running = false
 
     func connect() async throws { onConnectionChange?(true, nil) }
     func disconnect() {}
@@ -17,7 +18,7 @@ import XCTest
         if method == pausedMethod { return try await withCheckedThrowingContinuation { pending = $0 } }
         switch method {
         case "session.create": return ["session_id": "live-\(created)", "stored_session_id": created, "messages": []]
-        case "session.resume": return ["session_id": "live-resumed", "stored_session_id": params["session_id"] ?? "", "messages": history]
+        case "session.resume": return ["session_id": "live-resumed", "stored_session_id": params["session_id"] ?? "", "messages": history, "running": running]
         default: return [:]
         }
     }
@@ -273,6 +274,66 @@ import XCTest
         model.receive("message.complete", payload: ["session_id": "live-old", "text": "", "status": "error"])
         XCTAssertNil(model.current?.limitResets["u3"])
         XCTAssertFalse(model.canResumeAtReset(id, turn: "u3"))
+    }
+
+    func testAStoppedTurnIsNeverResumedWhicheverEndingArrivesFirst() async throws {
+        model.resumeAutomatically = true
+        started()
+        model.sessions[0].messages.append(ChatMessage(id: "u2", role: "user", text: "Keep going", turnID: "u2"))
+        model.sessions[0].state = .working
+        model.sessions[0].parentTurnComplete = false
+        model.receive("runtime.rateLimits", payload: ["runtime": "codex",
+            "limits": [RuntimeRateLimit(name: "5-hour", usedPercent: 100, resetsAt: Date().addingTimeInterval(3_600), reached: true)]])
+        await model.interrupt()
+        model.receive("message.complete", payload: ["session_id": "live-old", "text": "", "status": "error", "limit_reached": true])
+        XCTAssertNil(model.current?.limitResets["u2"])
+        XCTAssertTrue(model.current?.queuedSends.isEmpty == true)
+        XCTAssertFalse(model.canResumeAtReset(model.currentID!, turn: "u2"))
+    }
+
+    func testAResumeChecksNativeHistoryRestoredAtDelivery() async throws {
+        _ = limitStopped()
+        let id = model.currentID!
+        model.resumeAtReset(id, turn: "u2")
+        // Reopened after a restart: native history holds a message sent elsewhere meanwhile.
+        model.sessions[0].runtimeID = nil
+        model.sessions[0].state = .failed
+        model.sessions[0].parentTurnComplete = true
+        transport.history = [["role": "user", "text": "First"], ["role": "assistant", "text": "Done"],
+                             ["role": "user", "text": "Keep going"], ["role": "user", "text": "Sent in the native app"]]
+        model.sendResumeNow(try XCTUnwrap(model.current?.queuedSends.first?.id))
+        try await wait { model.current?.queuedSends.isEmpty == true }
+        XCTAssertTrue(transport.methods("prompt.submit").isEmpty, "Not sent after a newer message")
+        XCTAssertNotEqual(model.current?.state, .working)
+    }
+
+    func testAResumeWaitsForNativeWorkFoundWhileReopening() async throws {
+        _ = limitStopped()
+        let id = model.currentID!
+        model.resumeAtReset(id, turn: "u2")
+        model.sessions[0].runtimeID = nil
+        model.sessions[0].state = .failed
+        model.sessions[0].parentTurnComplete = true
+        transport.history = [["role": "user", "text": "First"], ["role": "assistant", "text": "Done"], ["role": "user", "text": "Keep going"]]
+        transport.running = true
+        model.sendResumeNow(try XCTUnwrap(model.current?.queuedSends.first?.id))
+        try await wait { transport.methods("session.resume").count == 1 }
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(model.current?.queuedSends.count, 1, "Kept until the native work ends")
+        XCTAssertTrue(transport.methods("prompt.submit").isEmpty)
+    }
+
+    func testStartFreshEndsTheEarlierTurnsResume() {
+        _ = limitStopped()
+        let id = model.currentID!
+        XCTAssertTrue(model.canResumeAtReset(id, turn: "u2"))
+        model.startFreshDecision = { _ in true }
+        model.sessions[0].runtimeID = "live-old"
+        model.startFresh(id)
+        XCTAssertFalse(model.canResumeAtReset(id, turn: "u2"), "A fresh session has no turn to continue")
+        model.resumeAutomatically = true
+        model.recordLimitStop(id, turn: "u2")
+        XCTAssertTrue(model.current?.queuedSends.isEmpty == true, "A late reset report schedules nothing either")
     }
 
     func testResumeAutomaticallySchedulesAndSurvivesRestart() async throws {

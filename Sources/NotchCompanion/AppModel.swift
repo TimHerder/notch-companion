@@ -189,6 +189,8 @@ final class AppModel: ObservableObject {
     var worktreeTimer: Task<Void, Never>?
     /// Sleeps until the next Resume at reset is due.
     var resumeTimer: Task<Void, Never>?
+    /// Turns the user stopped this run; a limit failure arriving for one schedules nothing.
+    var stoppedTurns: Set<String> = []
     /// Sessions whose native compaction is running.
     @Published var compactingSessionIDs: Set<String> = []
     /// Settings → Resume automatically after limit resets.
@@ -1806,6 +1808,9 @@ final class AppModel: ObservableObject {
             try await prepareWorktree(localID)
             let sid = try await ensureRuntime(localID)
             runtimeID = sid
+            // Native history restored just now may hold a newer message than the turn a resume continues.
+            if let turn = sessions.first(where: { $0.id == localID })?.queuedSends.first(where: { $0.id == turnID })?.resumesTurnID,
+               sessions.first(where: { $0.id == localID })?.canContinue(turn) != true || stoppedTurns.contains(turn) { throw ResumeSuperseded() }
             let capabilities = sessions.first(where: { $0.id == localID })?.capabilities ?? session.capabilities
             guard attachments.isEmpty || capabilities.attachments else { throw AppError("\(session.runtime.title) cannot receive attachments through this interface. Remove the staged files before sending.") }
             guard !attachments.contains(where: \.isImage) || capabilities.images else { throw AppError("\(session.runtime.title) cannot receive images through this interface. Remove the staged images before sending.") }
@@ -1891,7 +1896,7 @@ final class AppModel: ObservableObject {
             if let sid = runtimeID {
                 for path in imagePaths { _ = try? await client.request("image.detach", params: ["session_id": sid, "path": path]) }
             }
-            if !(error is NativeSessionBusy || error is DelegationCancelled) {
+            if !(error is NativeSessionBusy || error is DelegationCancelled || error is ResumeSuperseded) {
                 let uncertain = appendedTurnID != nil && sessions.first(where: { $0.id == localID })?.pendingSubmission != nil
                 let rejected = Self.definitiveRejection(error)
                 // An observed start/completion is authoritative even if the RPC
@@ -1936,6 +1941,7 @@ final class AppModel: ObservableObject {
     /// wakes; a plain interrupt (`cascade: false`) leaves them running.
     func interrupt(sessionID: String? = nil, cascade: Bool = true) async {
         guard let localID = sessionID ?? currentID, let session = sessions.first(where: { $0.id == localID }) else { return }
+        if let turn = session.latestUserRowID { stoppedTurns.insert(turn) }
         pauseQueuedSends(localID)
         save()
         if let sid = session.runtimeID { await interruptOwnWork(localID, session: session, sid: sid) }

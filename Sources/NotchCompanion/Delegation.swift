@@ -812,7 +812,7 @@ extension AppModel {
             return !requests.contains { ($0.requestID ?? $0.id) == request && $0.sessionID == asker }
         } ?? false
         // Resume at reset continues only the turn the limit stopped, if nothing was sent since.
-        let superseded = next.resumesTurnID.map { session.latestUserRowID != $0 } ?? false
+        let superseded = next.resumesTurnID.map { !session.canContinue($0) || stoppedTurns.contains($0) } ?? false
         if answered || superseded || session.wasDelivered(next.id) {
             update(id) { $0.queuedSends.removeAll { $0.id == next.id } }
             save()
@@ -825,6 +825,8 @@ extension AppModel {
         if sent || after?.messages.contains(where: { $0.id == next.id }) == true || after?.pendingSubmission?.id == next.id {
             update(id) { $0.queuedSends.removeAll { $0.id == next.id } }
             save()
+        } else if next.resumesTurnID != nil, after?.isBusy == true || after.map(acceptsDelegationSend) == false {
+            // Native work found while reopening: it waits for that work like any queued message.
         } else if next.resumesTurnID != nil {
             // A resume is one attempt; its error stays on the session.
             update(id) { $0.queuedSends.removeAll { $0.id == next.id } }

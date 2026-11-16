@@ -28,6 +28,15 @@ extension CompanionSession {
     var segmentUserTurnCount: Int { messages[segmentStart...].filter { $0.role == "user" && SessionHistory.isVisibleConversation($0) }.count }
     /// The latest visible user row, which keys a turn's outcome and limit reset.
     var latestUserRowID: String? { messages.last { $0.role == "user" && SessionHistory.isVisibleConversation($0) }?.id }
+    /// Resume at reset continues this turn only while it is the current native session's latest.
+    func canContinue(_ turn: String) -> Bool {
+        latestUserRowID == turn && messages[segmentStart...].contains { $0.id == turn }
+    }
+}
+
+/// A newer message reached the session (seen once its native history was restored).
+struct ResumeSuperseded: LocalizedError {
+    var errorDescription: String? { "A newer message reached this session, so it was not resumed." }
 }
 
 extension SessionHistory {
@@ -147,7 +156,8 @@ extension AppModel {
     /// A turn the account limit stopped. Its reset comes from the harness's limit report,
     /// read again once when the turn's own report has none yet (Codex may report after the turn).
     func recordLimitStop(_ id: String, turn: String, refreshed: Bool = false) {
-        guard let session = sessions.first(where: { $0.id == id }) else { return }
+        // A turn the user stopped is never resumed, whichever ending arrived first.
+        guard !stoppedTurns.contains(turn), let session = sessions.first(where: { $0.id == id }) else { return }
         guard let reset = limitReset(session.runtime) else {
             if !refreshed, session.runtime.capabilities.rateLimits == true {
                 Task { [weak self] in
@@ -165,7 +175,8 @@ extension AppModel {
     /// Only the latest turn, stopped by a limit with a known reset, with nothing sent since.
     func canResumeAtReset(_ id: String, turn: String) -> Bool {
         guard let session = sessions.first(where: { $0.id == id }) else { return false }
-        return session.limitResets[turn] != nil && session.latestUserRowID == turn && session.turnOutcome[turn] == .failed
+        return session.limitResets[turn] != nil && session.canContinue(turn) && session.turnOutcome[turn] == .failed
+            && !stoppedTurns.contains(turn)
             && session.runtime.isSupported && !session.isLegacyPrivate && session.pendingSubmission == nil
             && !session.queuedSends.contains { $0.resumesTurnID != nil }
     }

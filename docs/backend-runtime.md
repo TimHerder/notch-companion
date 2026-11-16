@@ -219,7 +219,13 @@ visible user row), so older registries decode. Delivery skips an entry before
 its `notBefore`; restart, Stop, failure and disconnect never pause a resume
 entry, and one not yet due does not keep the app busy. A one-shot timer (and
 launch) runs delivery when one comes due. At delivery it is dropped unless that
-turn's row is still the session's latest visible user row; any send through
+turn's row is still the latest visible user row of the current native session
+(after Start fresh it never is) and the user did not stop that turn (Stop
+records the turn before interrupting, so a limit failure arriving afterwards
+schedules nothing). The check runs again inside `submit` after `ensureRuntime`
+restores native history, before any send intent: a newer message found there
+drops the entry unsent. Native work found while reopening keeps the entry until
+that work ends. Any send through
 `submit` drops the session's other resume entries as it appends its row, and
 Start fresh drops them too. A failed resume send is dropped, not
 retried; an uncertain one keeps the usual Check last send protection. Approval and question cards stay authoritative; sending
