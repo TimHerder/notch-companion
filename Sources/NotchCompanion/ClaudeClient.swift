@@ -373,6 +373,10 @@ final class ClaudeClient: RuntimeTransport {
     /// Bypass can only be allowed at launch: reopen this idle conversation with it.
     private func reopen(_ old: Session, allowBypass: Bool) async throws -> Session {
         let id = old.state.sessionID
+        // An unsent whole-session fork would copy whatever the source holds now, past the answer it showed.
+        if !old.resumable, let fork = old.fork, fork.at == nil {
+            throw AppError("Claude Code cannot switch this unsent fork to Full access without forking its source again. Send a message first, or fork with Full access chosen in the source.")
+        }
         sessions.removeValue(forKey: id)
         old.close(AppError("Claude Code reopened this session to allow Full access."))
         let session = try await open(id: id, cwd: old.cwd, resume: old.resumable, allowBypass: allowBypass, delegation: old.delegation,

@@ -2070,7 +2070,7 @@ final class AppModel: ObservableObject {
         // A fork nothing was sent to yet may not be saved natively: it forks its source again.
         let refork = session.forkedFrom != nil && !session.nativeSubmissionAttempted
         if refork, let fork = session.forkedFrom {
-            if let blocker = reforkBlocker(fork) { throw AppError(blocker) }
+            if let blocker = reforkBlocker(fork, runtime: session.runtime) { throw AppError(blocker) }
             params["fork"] = fork.parameters
         }
         let delegation = await delegationLaunch(for: session)

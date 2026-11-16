@@ -61,9 +61,9 @@ extension AppModel {
     }
 
     /// A fork nothing was sent to is forked again on reopen. A whole-session fork (Claude Code without the
-    /// answer's message ID) is the same fork only while that answer still ends an idle source.
-    func reforkBlocker(_ fork: ForkRecord) -> String? {
-        guard fork.nativeMessageID == nil, fork.latest, let answer = fork.answerID else { return nil }
+    /// answer's message ID) is the same fork only while that answer still ends an idle source; Codex keeps its turn.
+    func reforkBlocker(_ fork: ForkRecord, runtime: RuntimeKind) -> String? {
+        guard runtime == .claude, fork.nativeMessageID == nil, fork.latest, let answer = fork.answerID else { return nil }
         guard let source = sessions.first(where: { $0.id == fork.sourceSessionID }), !source.isBusyIgnoringDelegates,
               source.messages.last(where: SessionHistory.isVisibleConversation)?.id == answer else {
             return "“\(fork.sourceTitle)” has moved on since this fork was made, so its native fork cannot be made again. Fork it anew."

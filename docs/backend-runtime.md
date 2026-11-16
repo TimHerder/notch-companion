@@ -1017,7 +1017,9 @@ source again from the same point, since an unprompted fork may not be saved
 natively; the earlier unused fork may remain in the harness's own store. A
 whole-session fork (Claude Code without the answer's ID) is made again only
 while that answer (`answerID`) still ends the idle source; otherwise the send
-fails with an explanation rather than forking a longer history. The fork's transcript is the source's saved messages,
+fails with an explanation rather than forking a longer history; for the same
+reason Claude refuses to reopen such an unsent fork for Full access. Codex forks
+keep their recorded turn and are always made again. The fork's transcript is the source's saved messages,
 tools and turn ends up to the answer; native history becomes authoritative on
 later resumes. A side chat adds `parentSessionID` and a `ChildAgent` row (role
 `side chat`, its own turn ID) with no `delegation`, so busy, attention,

@@ -161,9 +161,10 @@ import XCTest
         fork.forkedFrom = model.forkPoint("a2", in: model.sessions[0])
         XCTAssertNil(fork.forkedFrom?.nativeMessageID)
         model.sessions.append(fork)
-        XCTAssertNil(model.reforkBlocker(fork.forkedFrom!))
+        XCTAssertNil(model.reforkBlocker(fork.forkedFrom!, runtime: .claude))
         model.update("source") { $0.messages.append(ChatMessage(id: "u3", role: "user", text: "More", turnID: "u3")) }
-        XCTAssertNotNil(model.reforkBlocker(fork.forkedFrom!))
+        XCTAssertNotNil(model.reforkBlocker(fork.forkedFrom!, runtime: .claude))
+        XCTAssertNil(model.reforkBlocker(fork.forkedFrom!, runtime: .codex), "Codex forks through its recorded turn")
         do { _ = try await model.ensureRuntime("fork"); XCTFail("re-forking a moved source must fail") } catch {}
         XCTAssertFalse(transport.calls.contains { $0.0 == "session.create" })
     }
@@ -310,8 +311,18 @@ import XCTest
         model.sessions = [parent]
         await model.openSideChat("source")
         let chat = try XCTUnwrap(model.sessions.first { $0.isSideChat }).id
+        let runtime = try XCTUnwrap(model.sessions.first { $0.id == chat }?.runtimeID)
+        model.requests = [PendingRequest(id: "question", kind: .clarification, title: "Question", detail: "Which one?", choices: ["A", "B"], sessionID: runtime)]
+        XCTAssertNotNil(model.questionNoticeText(chat, "question"))
         model.queueQuestionNotice(childID: chat, requestID: "question")
         XCTAssertTrue(model.sessions[0].queuedSends.isEmpty, "a side chat's question is not relayed to the parent")
+        // The same question from a delegated task is relayed.
+        model.update(chat) { $0.delegation = DelegationRecord(taskID: "task") }
+        model.queueQuestionNotice(childID: chat, requestID: "question")
+        XCTAssertEqual(model.sessions[0].queuedSends.first?.kind, ChatMessage.delegationNotice)
+        model.update(chat) { $0.delegation = nil }
+        model.update("source") { $0.queuedSends = [] }
+        model.requests = []
         model.update(chat) { $0.state = .working }
         model.syncDelegatedChildren()
         model.update(chat) { $0.state = .finished; $0.completionID = "chat-done" }
