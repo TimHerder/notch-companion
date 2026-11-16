@@ -38,6 +38,77 @@ final class NativeInputTests: XCTestCase {
         XCTAssertEqual(view.string, "Keep this draft")
     }
 
+    private func arrow(up: Bool, _ modifiers: NSEvent.ModifierFlags = []) -> NSEvent {
+        let key = up ? NSUpArrowFunctionKey : NSDownArrowFunctionKey
+        let characters = String(Character(UnicodeScalar(UInt16(key))!))
+        return NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers.union([.function, .numericPad]),
+                                timestamp: 0, windowNumber: 0, context: nil, characters: characters,
+                                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: up ? 126 : 125)!
+    }
+
+    @MainActor func testArrowsRecallEarlierPromptsOnlyFromAnEmptyComposer() {
+        let view = editor()
+        view.recallPrompts = { ["First prompt", "Line one\nLine two", "Latest prompt"] }
+        var edits = 0
+        view.onEditQueued = { edits += 1; return false }
+        view.keyDown(with: arrow(up: false))
+        XCTAssertEqual(view.string, "", "↓ in an empty composer recalls nothing")
+        view.keyDown(with: arrow(up: true))
+        XCTAssertEqual(view.string, "Latest prompt")
+        view.keyDown(with: arrow(up: true))
+        XCTAssertEqual(view.string, "Line one\nLine two")
+        XCTAssertEqual(view.selectedRange().location, ("Line one\nLine two" as NSString).length, "The caret lands after the recalled text")
+        view.keyDown(with: arrow(up: true))
+        XCTAssertEqual(view.string, "Line one\nLine two", "A recalled prompt's own lines take the caret first")
+        view.keyDown(with: arrow(up: true))
+        XCTAssertEqual(view.string, "First prompt")
+        view.keyDown(with: arrow(up: true))
+        XCTAssertEqual(view.string, "First prompt", "↑ stays at the oldest prompt")
+        view.keyDown(with: arrow(up: false))
+        view.setSelectedRange(NSRange(location: view.string.utf16.count, length: 0))
+        view.keyDown(with: arrow(up: false))
+        view.keyDown(with: arrow(up: false))
+        XCTAssertEqual(view.string, "", "↓ past the newest prompt returns to empty")
+        view.keyDown(with: arrow(up: true, .option))
+        XCTAssertEqual(edits, 1, "Option–↑ still edits the newest queued message")
+        XCTAssertEqual(view.string, "")
+
+        view.keyDown(with: arrow(up: true))
+        view.insertText("!", replacementRange: view.selectedRange())
+        view.keyDown(with: arrow(up: true))
+        XCTAssertEqual(view.string, "Latest prompt!", "Once edited, the arrows move the caret again")
+        view.string = "Typed draft"
+        view.keyDown(with: arrow(up: true))
+        XCTAssertEqual(view.string, "Typed draft")
+    }
+
+    @MainActor func testPasteRoutingAndQuotes() {
+        let view = editor()
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("notch-input-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        view.pasteboard = pasteboard
+        let long = String(repeating: "b", count: 40_000)
+        pasteboard.clearContents(); pasteboard.setString(long, forType: .string)
+        var offered = 0
+        view.onPaste = { _ in offered += 1; return true }
+        view.paste(nil)
+        XCTAssertEqual(offered, 1)
+        XCTAssertEqual(view.string, "", "A staged paste types nothing")
+        view.pasteAsPlainText(nil)
+        XCTAssertEqual(offered, 1, "⌘⇧V never stages")
+        XCTAssertEqual(view.string, long, "⌘⇧V types the text however long")
+
+        XCTAssertEqual(ComposerTextView.blockQuote("  First line\n\nSecond line\n"), "> First line\n>\n> Second line\n\n")
+        view.string = "Before"
+        view.setSelectedRange(NSRange(location: 6, length: 0))
+        view.insertAtCaret(ComposerTextView.blockQuote("Quoted"))
+        XCTAssertEqual(view.string, "Before\n> Quoted\n\n", "A quote starts on its own line and keeps the draft")
+        view.string = "Ask about this"
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        view.insertAtCaret(ComposerTextView.blockQuote("Quoted"))
+        XCTAssertEqual(view.string, "> Quoted\n\nAsk about this")
+    }
+
     @MainActor func testShiftReturnAddsNewlineWithoutSubmitting() {
         let view = editor()
         view.string = "First line"

@@ -81,4 +81,67 @@ import XCTest
         await model.attachSnapShot()
         XCTAssertEqual(captured.count, 1, "Only offered where the harness accepts images")
     }
+
+    func testPasteStagesPicturesLongTextAndFilesButTypesOrdinaryText() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let suite = "notch-paste-tests-\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: suite)!
+        let transport = SnapShotFixture()
+        let model = AppModel(storageURL: folder.appendingPathComponent("sessions.json"), playsSounds: false, client: transport, preferences: preferences)
+        // A private pasteboard, so the test never touches the user's clipboard.
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("notch-paste-\(UUID().uuidString)"))
+        defer {
+            pasteboard.releaseGlobally(); model.shutdown()
+            preferences.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder)
+        }
+        await model.newSession(showPanel: false, runtime: .codex)
+        model.draft = "Look at this"
+        let context = CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let picture = NSImage(cgImage: context.makeImage()!, size: NSSize(width: 2, height: 2))
+
+        pasteboard.clearContents(); pasteboard.setString("Short text", forType: .string)
+        XCTAssertFalse(model.attachPasted(from: pasteboard), "Ordinary text is typed")
+        pasteboard.clearContents(); pasteboard.writeObjects([picture]); pasteboard.setString("Caption", forType: .string)
+        XCTAssertFalse(model.attachPasted(from: pasteboard), "Text that also carries a picture still types")
+        XCTAssertEqual(model.current?.attachments.count, 0)
+
+        pasteboard.clearContents(); pasteboard.writeObjects([picture])
+        XCTAssertTrue(model.attachPasted(from: pasteboard))
+        let image = try XCTUnwrap(model.current?.attachments.last)
+        XCTAssertEqual(image.name, "Pasted image.png")
+        XCTAssertTrue(image.isImage)
+        XCTAssertEqual(image.url.deletingLastPathComponent().standardizedFileURL, model.snapShotDirectory.standardizedFileURL)
+
+        let long = String(repeating: "a", count: AppModel.largePasteBytes)
+        pasteboard.clearContents(); pasteboard.setString(String(long.dropLast()), forType: .string)
+        XCTAssertFalse(model.attachPasted(from: pasteboard), "Just under 32 KiB still types")
+        pasteboard.clearContents(); pasteboard.setString(long, forType: .string)
+        XCTAssertTrue(model.attachPasted(from: pasteboard))
+        let text = try XCTUnwrap(model.current?.attachments.last)
+        XCTAssertEqual(text.name, "Pasted text.txt")
+        XCTAssertEqual(try String(contentsOf: text.url, encoding: .utf8), long)
+
+        let original = folder.appendingPathComponent("notes.txt")
+        try "Keep me".write(to: original, atomically: true, encoding: .utf8)
+        pasteboard.clearContents(); pasteboard.writeObjects([original as NSURL])
+        XCTAssertTrue(model.attachPasted(from: pasteboard), "Finder files attach like a drop")
+        let file = try XCTUnwrap(model.current?.attachments.last)
+        XCTAssertEqual(file.url.standardizedFileURL, original.standardizedFileURL)
+        XCTAssertEqual(model.current?.draft, "Look at this")
+        XCTAssertTrue(transport.calls.isEmpty, "Pasting never sends")
+
+        model.removeAttachment(image.id)
+        model.removeAttachment(text.id)
+        model.removeAttachment(file.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: image.url.path), "Removing an unsent picture deletes it")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: text.url.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: original.path), "A pasted file's original stays")
+
+        await model.newSession(showPanel: false, runtime: .antigravity)
+        pasteboard.clearContents(); pasteboard.writeObjects([picture])
+        XCTAssertTrue(model.attachPasted(from: pasteboard), "Refused rather than typed")
+        XCTAssertEqual(model.current?.attachments.count, 0, "Only harnesses that accept images take a picture")
+        XCTAssertEqual(model.errorMessage, "Antigravity CLI doesn't accept images, so the pasted picture wasn't attached.")
+    }
 }

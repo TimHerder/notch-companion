@@ -53,19 +53,27 @@ enum SnapShot {
     }
 
     static func write(_ image: CGImage, name: String, into directory: URL) throws -> URL {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        let safe = String(name.map { "/:\\".contains($0) || $0.isNewline ? "-" : $0 }.prefix(80)).trimmingCharacters(in: .whitespaces)
-        var url = directory.appendingPathComponent((safe.isEmpty ? "Window" : safe) + ".png")
-        var copy = 2
-        while FileManager.default.fileExists(atPath: url.path) {
-            url = directory.appendingPathComponent("\(safe) \(copy).png"); copy += 1
-        }
-        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else {
             throw AppError("The window picture could not be saved.")
         }
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else { throw AppError("The window picture could not be saved.") }
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        return try write(data as Data, name: name, pathExtension: "png", into: directory)
+    }
+
+    /// Stages a private file (owner-only) beside the registry under a free name.
+    static func write(_ data: Data, name: String, pathExtension: String, into directory: URL) throws -> URL {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let safe = String(name.map { "/:\\".contains($0) || $0.isNewline ? "-" : $0 }.prefix(80)).trimmingCharacters(in: .whitespaces)
+        var url = directory.appendingPathComponent((safe.isEmpty ? "Window" : safe) + "." + pathExtension)
+        var copy = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            url = directory.appendingPathComponent("\(safe) \(copy).\(pathExtension)"); copy += 1
+        }
+        guard FileManager.default.createFile(atPath: url.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+            throw AppError("The file could not be saved.")
+        }
         return url
     }
 

@@ -937,6 +937,34 @@ import ImageIO
             try render(UnifiedNotchView(model: model), size: compact, name: "busy-queue-only", output: output)
             return
         }
+        if CommandLine.arguments.contains("--composer-only") {
+            // A pasted picture and a long paste staged as files, as ⌘V leaves them.
+            model.sessions[0].runtime = .codex
+            let staged = model.snapShotDirectory
+            let context = CGContext(data: nil, width: 64, height: 40, bitsPerComponent: 8, bytesPerRow: 0,
+                                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.setFillColor(CGColor(red: 0.35, green: 0.55, blue: 0.85, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 64, height: 40))
+            let picture = try SnapShot.write(context.makeImage()!, name: "Pasted image", into: staged)
+            let text = try SnapShot.write(Data(String(repeating: "log line\n", count: 4_000).utf8), name: "Pasted text", pathExtension: "txt", into: staged)
+            model.sessions[0].attachments = [Attachment(url: picture), Attachment(url: text)]
+            model.draft = "Why does this fail?"
+            try render(UnifiedNotchView(model: model), size: compact, name: "composer-paste-staged", output: output)
+            try render(FullSessionView(model: model), size: full, name: "composer-paste-staged-full", output: output)
+            // A picture pasted for a harness that does not take images.
+            model.sessions[0].runtime = .antigravity
+            model.sessions[0].attachments = []
+            model.errorMessage = "Antigravity CLI doesn't accept images, so the pasted picture wasn't attached."
+            try render(UnifiedNotchView(model: model), size: compact, name: "composer-paste-refused", output: output)
+            model.errorMessage = nil
+            // The answer's hover controls with Quote in reply, and a quote placed in the draft.
+            model.sessions[0].runtime = .codex
+            ConversationHistoryView.revealsHoverControls = true
+            model.draft = ComposerTextView.blockQuote("Keep the current notch dimensions.") + "Why keep them?"
+            try render(UnifiedNotchView(model: model), size: compact, name: "composer-quote", output: output)
+            try render(FullSessionView(model: model), size: full, name: "composer-quote-full", output: output)
+            ConversationHistoryView.revealsHoverControls = false
+            return
+        }
         if CommandLine.arguments.contains("--full-body-only") {
             for style in NotchBodyStyle.allCases {
                 UserDefaults.standard.register(defaults: [NotchBodyStyle.key: style.rawValue])

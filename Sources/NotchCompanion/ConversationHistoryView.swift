@@ -3,6 +3,8 @@ import AppKit
 
 /// The same complete, scrollable transcript is used in the notch and full window.
 struct ConversationHistoryView: View {
+    /// Offscreen fixtures cannot hover, so they show the answers' hover controls this way.
+    nonisolated(unsafe) static var revealsHoverControls = false
     @ObservedObject var model: AppModel
     var inNotch = true
     /// The full-session window's find field is open; closing it resumes following.
@@ -212,7 +214,8 @@ extension ConversationHistoryView {
         TranscriptMessageView(message: message, runtimeTitle: session?.runtime.title ?? model.defaultRuntime.title,
                               questionStatus: questionStatus(message), commentary: commentary,
                               open: { url, reveal in model.openExternally(url, reveal: reveal) },
-                              reply: { questions, answers in await model.replyToQuestions(questions, answers: answers) })
+                              reply: { questions, answers in await model.replyToQuestions(questions, answers: answers) },
+                              quote: { [inNotch] text in model.quoteInReply(text, inNotch: inNotch) })
             .transcriptFindRow("message:\(message.id)")
     }
 
@@ -253,13 +256,35 @@ private struct TranscriptMessageView: View {
     var commentary = false
     var open: (URL, Bool) -> Void
     var reply: ([AsyncQuestion], [String]) async -> Bool
+    var quote: ((String) -> Void)? = nil
     @State private var hovering = false
     @FocusState private var copyFocused: Bool
+    @FocusState private var quoteFocused: Bool
+
+    /// Hover or keyboard focus shows Copy (and Quote in reply).
+    private var revealed: Bool { hovering || copyFocused || quoteFocused || ConversationHistoryView.revealsHoverControls }
+    /// An agent's own answer can be quoted into the reply; commentary and relayed messages cannot.
+    private var quotes: Bool {
+        quote != nil && !commentary && message.role == "assistant" && !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     /// Refined and Tahoe: your own words read as a sent bubble at the trailing edge.
     private var isOwnMessage: Bool { message.role == "user" && message.agentLabel == nil }
 
     var body: some View {
+        if quotes {
+            entry
+                .contextMenu {
+                    Button("Quote in reply", systemImage: "text.quote") { quote?(message.text) }
+                    Button("Copy message", systemImage: "doc.on.doc", action: copy)
+                }
+                .accessibilityAction(named: "Quote in reply") { quote?(message.text) }
+        } else {
+            entry
+        }
+    }
+
+    @ViewBuilder private var entry: some View {
         if commentary && message.role == "assistant" {
             commentaryBody
         } else {
@@ -290,11 +315,14 @@ private struct TranscriptMessageView: View {
 
     /// The answer's copy control floats at its top edge while the pointer is over it.
     private var floatingCopyButton: some View {
-        copyButton
-            .notchControlBackground(Circle(), fallback: CompanionStyle.surface)
-            .focused($copyFocused)
-            .opacity(hovering || copyFocused ? 1 : 0)
-            .animation(.easeOut(duration: 0.12), value: hovering || copyFocused)
+        HStack(spacing: 4) {
+            if quotes {
+                quoteButton.notchControlBackground(Circle(), fallback: CompanionStyle.surface).focused($quoteFocused)
+            }
+            copyButton.notchControlBackground(Circle(), fallback: CompanionStyle.surface).focused($copyFocused)
+        }
+        .opacity(revealed ? 1 : 0)
+        .animation(.easeOut(duration: 0.12), value: revealed)
     }
 
     /// Delivered files leave the text and appear as previews or cards.
@@ -320,6 +348,12 @@ private struct TranscriptMessageView: View {
         Button(action: copy) { Image(systemName: "doc.on.doc").font(.system(size: 10)) }
             .buttonStyle(NotchIconButtonStyle(size: 22))
             .help("Copy message").accessibilityLabel("Copy message")
+    }
+
+    private var quoteButton: some View {
+        Button { quote?(message.text) } label: { Image(systemName: "text.quote").font(.system(size: 10)) }
+            .buttonStyle(NotchIconButtonStyle(size: 22))
+            .help("Quote in reply").accessibilityLabel("Quote in reply")
     }
 
     private func copy() {
@@ -441,6 +475,7 @@ private struct TranscriptMessageView: View {
                 Rectangle().fill(CompanionStyle.rule).frame(height: 0.5)
                 Text(message.createdAt, format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
                     .font(.system(size: 11).monospacedDigit()).foregroundStyle(CompanionStyle.faint)
+                if quotes { quoteButton.padding(.vertical, -4) }
                 copyButton.padding(.vertical, -4)
             }
             messageBody(content, interpretsMarkdown: message.role != "user" || message.agentLabel != nil, questionGap: 3)
