@@ -5,14 +5,16 @@ struct ModelControlsView: View {
     @State private var choosingModel = false
     @State private var showingContext = false
     @State private var choosingPermissions = false
+    @State private var choosingGoal = false
     @State private var search = ""
     @StateObject private var popupDismissal = PopupDismissalMonitor()
 
-    init(model: AppModel, choosingModel: Bool = false, showingContext: Bool = false, choosingPermissions: Bool = false, search: String = "") {
+    init(model: AppModel, choosingModel: Bool = false, showingContext: Bool = false, choosingPermissions: Bool = false, choosingGoal: Bool = false, search: String = "") {
         self.model = model
         _choosingModel = State(initialValue: choosingModel)
         _showingContext = State(initialValue: showingContext)
         _choosingPermissions = State(initialValue: choosingPermissions)
+        _choosingGoal = State(initialValue: choosingGoal)
         _search = State(initialValue: search)
     }
 
@@ -51,7 +53,7 @@ struct ModelControlsView: View {
                 if model.showPermissionModes && !modes.isEmpty {
                     Button {
                         choosingPermissions.toggle()
-                        choosingModel = false; showingContext = false
+                        choosingModel = false; showingContext = false; choosingGoal = false
                     } label: {
                         // In a tight row the mode keeps its glyph; its name stays in help and VoiceOver.
                         let glyph = Image(systemName: session.effectivePermissionMode?.symbol ?? "shield")
@@ -89,11 +91,22 @@ struct ModelControlsView: View {
                     .accessibilityValue(permissionTitle)
                     .background(PopupDismissalRegion(monitor: popupDismissal))
                 }
+                if model.offersGoal(session) {
+                    Button {
+                        choosingGoal.toggle()
+                        choosingModel = false; showingContext = false; choosingPermissions = false
+                    } label: { GoalButtonLabel(goal: session.goal) }
+                    .sessionControlStyle()
+                    .help(GoalPanel.help)
+                    .accessibilityLabel("Goal")
+                    .accessibilityValue(session.goal.map { $0.pauseText ?? "Turn \($0.turns) of \($0.limit)" } ?? "None")
+                    .background(PopupDismissalRegion(monitor: popupDismissal))
+                }
                 Spacer(minLength: 8)
                 if model.showModelPicker {
                     Button {
                         choosingModel.toggle()
-                        showingContext = false; choosingPermissions = false
+                        showingContext = false; choosingPermissions = false; choosingGoal = false
                     } label: {
                         switch theme {
                         case .refined:
@@ -139,7 +152,7 @@ struct ModelControlsView: View {
                 if model.showContextUsage {
                     let toggle = {
                         showingContext.toggle()
-                        choosingModel = false; choosingPermissions = false
+                        choosingModel = false; choosingPermissions = false; choosingGoal = false
                     }
                     Group {
                         if theme == .instrument {
@@ -248,20 +261,30 @@ struct ModelControlsView: View {
                         .offset(y: -30)
                 }
             }
+            .overlay(alignment: .bottomLeading) {
+                if choosingGoal && model.offersGoal(session) {
+                    GoalPanel(model: model, session: session) { choosingGoal = false }
+                        .frame(width: PanelTheme.pick(320, 320, 340))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .popupSurface()
+                        .background(PopupDismissalRegion(monitor: popupDismissal))
+                        .offset(y: -30)
+                }
+            }
             .task(id: key) {
                 if model.showModelPicker { await model.loadModels(for: key) }
             }
             .onChange(of: model.showModelPicker) { _, visible in
                 if visible { Task { await model.loadModels(for: key) } }
             }
-            .onChange(of: model.currentID) { _, _ in choosingModel = false; showingContext = false; choosingPermissions = false; search = "" }
-            .onChange(of: session.runtime) { _, _ in choosingModel = false; showingContext = false; choosingPermissions = false; search = "" }
-            .onChange(of: model.expanded) { _, expanded in if !expanded { showingContext = false; choosingModel = false; choosingPermissions = false } }
+            .onChange(of: model.currentID) { _, _ in choosingModel = false; showingContext = false; choosingPermissions = false; choosingGoal = false; search = "" }
+            .onChange(of: session.runtime) { _, _ in choosingModel = false; showingContext = false; choosingPermissions = false; choosingGoal = false; search = "" }
+            .onChange(of: model.expanded) { _, expanded in if !expanded { showingContext = false; choosingModel = false; choosingPermissions = false; choosingGoal = false } }
             .onChange(of: session.isBusy) { _, busy in if busy { choosingModel = false; choosingPermissions = false } }
             .onChange(of: (choosingModel && model.showModelPicker) || (showingContext && model.showContextUsage)
-                        || (choosingPermissions && model.showPermissionModes), initial: true) { _, presented in
+                        || (choosingPermissions && model.showPermissionModes) || choosingGoal, initial: true) { _, presented in
                 if presented {
-                    popupDismissal.start { choosingModel = false; showingContext = false; choosingPermissions = false }
+                    popupDismissal.start { choosingModel = false; showingContext = false; choosingPermissions = false; choosingGoal = false }
                 } else { popupDismissal.stop() }
             }
             .onDisappear { popupDismissal.stop() }

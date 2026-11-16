@@ -47,6 +47,7 @@ struct ChatMessage: Identifiable, Codable, Equatable {
         case Self.delegationNotice: return "Delegated question"
         case Self.agentMessage: return from.map { "From \($0)" } ?? "From another session"
         case Self.sideChatMessage: return "From side chat"
+        case Self.goal: return "Goal"
         default: return Self.automationLabel(kind)
         }
     }
@@ -339,6 +340,8 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     /// Watching that pull request for checks, reviews and comments.
     var pullRequestWatch: PullRequestWatch? = nil
     var queuedSends: [QueuedSend] = []
+    /// The definition of done this session works toward across turns.
+    var goal: SessionGoal? = nil
     /// The mode in use when Plan was chosen, for Plan ready's Implement; nil is Default permissions.
     var prePlanPermissionMode: PermissionMode? = nil
     /// The turn whose Plan ready banner Keep planning set aside.
@@ -504,7 +507,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnUsage, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, isPinned, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic, worktreeBase, worktree, pullRequest, earlierStoredIDs, limitResets, forkedFrom, pullRequestWatch
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnUsage, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, isPinned, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic, worktreeBase, worktree, pullRequest, earlierStoredIDs, limitResets, forkedFrom, pullRequestWatch, goal
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -560,6 +563,8 @@ extension CompanionSession {
         forkedFrom = try values.decodeIfPresent(ForkRecord.self, forKey: .forkedFrom)
         pullRequestWatch = try? values.decodeIfPresent(PullRequestWatch.self, forKey: .pullRequestWatch)
         queuedSends = try values.decodeIfPresent([QueuedSend].self, forKey: .queuedSends) ?? []
+        // A goal this build cannot read is dropped rather than the conversation.
+        goal = try? values.decodeIfPresent(SessionGoal.self, forKey: .goal)
         lastSeenAt = try values.decodeIfPresent(Date.self, forKey: .lastSeenAt)
         snoozedUntil = try values.decodeIfPresent(Date.self, forKey: .snoozedUntil)
         isPinned = try values.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false

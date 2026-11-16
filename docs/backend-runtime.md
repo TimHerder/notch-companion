@@ -253,6 +253,63 @@ Start fresh drops them too. A failed resume send is dropped, not
 retried; an uncertain one keeps the usual Check last send protection. Approval and question cards stay authoritative; sending
 cannot bypass them.
 
+## Goals
+
+A goal keeps a top-level session working across turns until a definition of
+done is met. The registry saves it as the optional `goal` field
+(`SessionGoal`: objective, cap, current limit, turns sent, pause reason, latest
+goal turn); a goal this build cannot read is dropped, never the conversation.
+Delegated children have none.
+
+| Harness | Native goal mechanism | Used here |
+| --- | --- | --- |
+| Codex app-server | `thread/goal/set`/`get`/`clear` and `thread/goal/updated` (`goals` feature, stable in 0.162.1): an objective with a token budget; on an idle turn end the runtime starts a continuation turn itself, and the model reports `complete` or `blocked` through its `update_goal` tool. | No. Its continuation turns have no user message, so this app's turns (each keyed by a visible user row), Check last send's user-turn count and changes baselines cannot attribute them; it has no turn cap, and an active goal continues after the next turn of a relaunched app. |
+| Claude Code | `/goal <condition>` as user input: a session Stop hook that keeps the same turn going until it judges the condition met; trusted workspaces with hooks allowed only. | No. It runs inside one turn, so a turn cap and per-turn pausing cannot apply, and its progress event (`active_goal`) is undocumented for stream-json. Typing `/goal` in the composer still reaches Claude Code as its own command. |
+| Antigravity CLI, OpenCode | None found (installed `agy` and OpenCode 2.0.30). | — |
+| Every other harness | None known. | — |
+
+Every harness therefore runs the **companion loop**, labelled “Goal (Notch
+Companion)” in help:
+
+- Start goal queues one message (`ChatMessage.goal` kind, label **Goal**)
+  stating the definition of done and asking the agent, when it is fully met, to
+  end its final answer with a short summary and a last line containing exactly
+  `GOAL COMPLETE`. Every goal message is an ordinary `QueuedSend` delivered by
+  `submit` with its ID as the turn ID, so staging, send intents, receipts,
+  duplicate protection and Check last send apply unchanged. It waits for the
+  session and its children like a user's queued message, and Quit waits for it.
+- At `message.complete` (`goalTurnEnded`): when the turn's final answer (its last
+  assistant text after its user row) has `GOAL COMPLETE` as its last non-empty
+  line, outside a fenced (a fence is indented at most three spaces and closed
+  only by the same character, at least as long) or indented code block and not
+  quoted, the goal ends
+  and a `goalReached` session marker holds the paragraph above it. A
+  decorated, partial or mid-answer marker does not count. Otherwise, a turn
+  that finished (not waiting on children) queues one follow-up (“Continue
+  working toward the goal: … Reply with GOAL COMPLETE on its own last line when
+  it is fully done.”) and counts it, unless the goal is paused, a goal message
+  is already queued, a question from the turn or an approval is open (the
+  user's reply is their own turn, whose end continues), Quit or Reconnect is
+  waiting, or the turns sent reached the limit (paused at the cap; Continue
+  allows another cap). A goal message already waiting (a goal started during
+  the turn) is sent instead of a new one. A turn whose follow-up is queued is
+  not announced. Edit rewrites an unsent goal message with the new definition. A
+  turn that ends before its send is acknowledged still continues (its own
+  delivered entry does not count as queued), and a parent turn that settles
+  when its last native child finishes is evaluated then.
+- A user's own message never counts and never pauses the goal. Stop (recorded
+  before the interrupt), a failed or interrupted turn, a disconnect, a refused
+  goal send (never retried) and a usage limit pause it and drop an unsent
+  follow-up, uncounted. `submit` checks, after its asynchronous setup and before
+  the send intent, that a goal message is still queued, so Pause, Clear or Stop
+  during setup leaves it unsent. Resume at reset continuing the latest goal
+  turn counts as a goal turn however it ends (so repeated limits keep to the
+  cap) and lifts the limit pause when it finishes; it is not offered for a goal
+  turn once the goal has used its turns.
+- At launch an unsent follow-up is dropped and an active or limit-paused goal
+  reads paused (“Goal paused when the app quit”). A Resume at reset already
+  scheduled may still run as before, but the goal sends nothing until Resume.
+
 ## Composer commands and file mentions
 
 The composer's `/` list (see [interaction design](interaction-design.md#conversation-usability-and-session-management))

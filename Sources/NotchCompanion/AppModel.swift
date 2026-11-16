@@ -319,7 +319,7 @@ final class AppModel: ObservableObject {
         submitting || !backgroundSubmissions.isEmpty || !delegationCreations.isEmpty
             || sessions.contains { $0.isBusy || ($0.pendingSubmission != nil && $0.runtimeID != nil) } || !unfinishedParents.isEmpty
             || unfinishedChildren.values.contains(where: { !$0.isEmpty })
-            || sessions.contains { $0.runtime.isSupported && $0.pendingSubmission == nil && $0.queuedSends.contains { $0.isUserMessage && $0.paused != true && $0.isDue() || $0.isAutomation && !failedDeliveries.contains($0.id) } }
+            || sessions.contains { $0.runtime.isSupported && $0.pendingSubmission == nil && $0.queuedSends.contains { $0.waitsForIdle && !$0.isAutomation && $0.paused != true && $0.isDue() || $0.isAutomation && !failedDeliveries.contains($0.id) } }
     }
     var visibleSessions: [CompanionSession] {
         let query = sessionSearch.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -457,6 +457,7 @@ final class AppModel: ObservableObject {
                     if copy.queuedSends.contains(where: { $0.id == copy.stagedSubmission?.message.id }) { copy.stagedSubmission = nil }
                     else { copy.restoreStagedSubmission() }
                 }
+                copy.pauseGoalForLaunch()
                 // Delivered before the quit, or an unconfirmed send whose staged copy holds its text for Check last send.
                 // Without staged text (an agent's message, a notice, an older registry's entry) it waits for Check last send.
                 copy.queuedSends.removeAll { queued in
@@ -1684,6 +1685,7 @@ final class AppModel: ObservableObject {
             for i in target.queuedSends.indices where target.queuedSends[i].isUserMessage && target.queuedSends[i].resumesTurnID == nil {
                 target.queuedSends[i].paused = true
             }
+            target.pauseGoal(.interrupted)
         }
     }
 
@@ -1895,6 +1897,8 @@ final class AppModel: ObservableObject {
             }.value
             // A delegate stopped while it was starting never sends its task.
             if background, sessions.first(where: { $0.id == localID })?.delegation?.cancelled == true { throw DelegationCancelled() }
+            // Pause, Clear or Stop took a goal message out of the queue while it was being set up.
+            if kind == ChatMessage.goal, sessions.first(where: { $0.id == localID })?.queuedSends.contains(where: { $0.id == turnID }) != true { throw GoalCancelled() }
             // Mark working before the RPC response: streaming events may arrive first.
             update(localID) { target in
                 target.isArchived = false
@@ -1938,7 +1942,7 @@ final class AppModel: ObservableObject {
             if let sid = runtimeID {
                 for path in imagePaths { _ = try? await client.request("image.detach", params: ["session_id": sid, "path": path]) }
             }
-            if !(error is NativeSessionBusy || error is DelegationCancelled || error is ResumeSuperseded) {
+            if !(error is NativeSessionBusy || error is DelegationCancelled || error is ResumeSuperseded || error is GoalCancelled) {
                 let uncertain = appendedTurnID != nil && sessions.first(where: { $0.id == localID })?.pendingSubmission != nil
                 let rejected = Self.definitiveRejection(error)
                 // An observed start/completion is authoritative even if the RPC
@@ -1985,7 +1989,7 @@ final class AppModel: ObservableObject {
         guard let localID = sessionID ?? currentID, let session = sessions.first(where: { $0.id == localID }) else { return }
         if let turn = session.latestUserRowID { stoppedTurns.insert(turn) }
         // Stop also ends a resume scheduled for this session, which must not outlive a restart.
-        update(localID) { $0.queuedSends.removeAll { $0.resumesTurnID != nil } }
+        update(localID) { $0.queuedSends.removeAll { $0.resumesTurnID != nil }; $0.pauseGoal(.stopped) }
         pauseQueuedSends(localID)
         save()
         if let sid = session.runtimeID { await interruptOwnWork(localID, session: session, sid: sid) }
@@ -2431,14 +2435,17 @@ final class AppModel: ObservableObject {
                 if !wasFinished { sessions[index].completionID = UUID().uuidString }
             }
             endTurn(index)
-            if status == "error", payload["limit_reached"] as? Bool == true, let turn = sessions[index].latestUserRowID { recordLimitStop(localID, turn: turn) }
             for tool in sessions[index].tools.indices where sessions[index].tools[tool].state == .working {
                 sessions[index].tools[tool].state = status == "interrupted" ? .interrupted : (status == "error" ? .failed : .finished)
                 sessions[index].tools[tool].finishedAt = Date()
             }
             if sessions[index].nativeActivityUnverified == nil { requests.removeAll { $0.sessionID == sid } }
+            // A goal's next turn follows at once, so this one is not announced.
+            let goalContinues = goalTurnEnded(localID, status: status, limitReached: payload["limit_reached"] as? Bool == true)
+            // After the goal counted a resumed turn, so Resume at reset keeps to its cap.
+            if status == "error", payload["limit_reached"] as? Bool == true, let turn = sessions[index].latestUserRowID { recordLimitStop(localID, turn: turn) }
             // A child's result reaches its parent as a wake, not as its own announcement.
-            if status == "complete", sessions[index].state == .finished, sessions[index].parentSessionID == nil,
+            if status == "complete", !goalContinues, sessions[index].state == .finished, sessions[index].parentSessionID == nil,
                Date().timeIntervalSince(lastCompletion[localID] ?? .distantPast) > 1 {
                 lastCompletion[localID] = Date(); announceCompletion(localID)
             }
@@ -2656,10 +2663,12 @@ final class AppModel: ObservableObject {
                     sessions[index].state = .working
                 } else {
                     sessions[index].state = sessions[index].failedCurrentAgents.isEmpty ? .finished : .failed
+                    // The parent turn settles with its last native child, so a goal continues from here.
+                    let goalContinues = goalTurnEnded(sessions[index].id, status: "complete", limitReached: false)
                     if sessions[index].state == .finished {
                         sessions[index].completionID = UUID().uuidString
                         lastCompletion[sessions[index].id] = Date()
-                        announceCompletion(sessions[index].id)
+                        if !goalContinues { announceCompletion(sessions[index].id) }
                     }
                 }
             }

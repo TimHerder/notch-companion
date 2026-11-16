@@ -587,7 +587,8 @@ drop opens its session).
   streams (“Waiting for your reply…” while the agent waits on you, beside a
   still question mark in the needs-you colour in Refined and Tahoe and a steady
   amber LED in Instrument; never the spinner), followed by
-  any delegated agents still working.
+  any delegated agents still working and, during a goal turn, a quiet
+  **Goal · turn 3 of 10**.
 - **Finished turns** read: your message, a **Worked for 2:14** fold (collapsed
   by default), the answer, then its changes (open for the latest finished turn,
   see [Change summaries](#change-summaries)). The answer is the last text the
@@ -613,7 +614,9 @@ drop opens its session).
   finished; when the harness returned a summary, its chevron unfolds it as
   quiet selectable text on the same leading rule as a turn's work.
   **New session** (with its glyph, no chevron) marks where [Start fresh](#composer-model-controls)
-  opened a new native session; everything above it stays.
+  opened a new native session; everything above it stays. **Goal reached**
+  (a check in the done colour) ends a [goal](#conversation-usability-and-session-management),
+  with the agent's summary always shown beneath it on the same leading rule.
 - A turn that ended before writing any text has no answer: its work stays open
   under its header. A turn's own failure or stop names it, “Failed after 1:03”
   or “Stopped after 12s”, on that header or on the fold above whatever text it
@@ -1076,6 +1079,15 @@ identify selection.
   a session reopened without complete native history (Claude Code, Pi) drops it
   with a notice rather than guess. A send that fails is not retried. Settings → **Resume automatically after
   limit resets** (off by default) schedules it for every limit-stopped turn.
+- **Goals.** Goal messages (start and each follow-up) are transcript rows
+  labelled **Goal** with a scope glyph, like a relayed message; they never
+  appear among the queued rows above the field. A goal continues after each
+  finished turn until the answer ends with `GOAL COMPLETE` (a Goal reached
+  row), and pauses on Stop, a failed turn, a usage limit (Resume at reset may
+  continue it), a disconnect, its cap (“Goal paused after 10 turns”) or a quit;
+  an open question waits for your reply, and your own messages leave it running
+  ([Goal control](#composer-model-controls),
+  [runtime contract](backend-runtime.md#goals)).
 - **Plan ready.** When a turn finishes in Plan, the composer field gains a
   slim first row on its own surface, above a hairline: **Plan ·** and the
   plan's name, the first heading of the turn's last answer (as plain text,
@@ -1378,6 +1390,23 @@ flight. A send during a compaction is refused with “Wait for compaction to
 finish, then send.” Hover, accessibility and dismissal
 are unchanged. Opening one chooser closes the other; neither shifts the
 composer or transcript.
+
+**Goal** sits after the permission mode in the same row for a top-level
+session of a supported harness (not Legacy Hermes, delegated children or side
+chats), so the row shows on the session page whenever Goal is offered. It reads
+**Goal** with a scope glyph, **Goal · 3/10** (turns sent of those allowed) while
+one is active, and **Goal · 3/10 · Paused**; only the glyph stays when the row
+is tight. Its help names it “Goal (Notch Companion)”, since no harness's native
+goal is driven ([runtime contract](backend-runtime.md#goals)). It opens a
+bounded overlay from the row's leading edge, like the permission chooser: a
+**Goal · Notch Companion** header with Close; without a goal a **Definition of
+done** field (three to six lines), a **Turn cap** stepper (default 10, 1–50) and
+**Start goal**, which closes it and sends the first Goal message (after the
+current turn when one is running). With a goal it shows the definition, “Turn 3
+of 10” or why it paused (amber at the cap or a usage limit), then **Pause** or
+**Resume** (**Continue for 10 more** at the cap), **Edit** (the same form with
+Save and Cancel; the next follow-up states the new definition) and a quiet
+**Clear**. Opening it closes the other overlays, and it dismisses like them.
 
 Clicking outside the runtime picker, model picker or context bubble dismisses
 it in both surfaces, including clicks in another window or app, and the click

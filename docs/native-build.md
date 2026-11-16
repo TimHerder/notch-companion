@@ -286,6 +286,10 @@ Compact), a transcript with an unfolded Context compacted summary
 (`compact-context-compacted`), a New session row above a limit-stopped turn with
 Resume at reset (`compact-`/`full-limit-reached`) and the scheduled resume above
 the composer (`compact-`/`full-resume-scheduled`).
+`--goals-only` renders the Goal overlay without a goal (`goal-overlay-new`),
+active (`goal-overlay-active`) and paused at its cap (`goal-overlay-cap`), a
+goal turn working with its footer line (`compact-`/`full-goal-working`) and the
+Goal reached row (`compact-`/`full-goal-reached`).
 
 Run `scripts/render-ui-fixtures.sh` to render the actual SwiftUI/AppKit views
 with a mock transport and temporary session storage. It writes PNGs under

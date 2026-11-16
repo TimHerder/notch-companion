@@ -7,7 +7,7 @@ extension ChatMessage {
     static let contextCompacted = "contextCompacted"
     /// Where Start fresh opened a new native session for this conversation.
     static let newSession = "newSession"
-    var isSessionMarker: Bool { role == "system" && [Self.contextCompacted, Self.newSession].contains(kind ?? "") }
+    var isSessionMarker: Bool { role == "system" && [Self.contextCompacted, Self.newSession, Self.goalReached].contains(kind ?? "") }
 }
 
 extension QueuedSend {
@@ -191,7 +191,7 @@ extension AppModel {
         return session.limitResets[turn] != nil && session.canContinue(turn) && session.turnOutcome[turn] == .failed
             && !stoppedTurns.contains(turn)
             && session.runtime.isSupported && !session.isLegacyPrivate && session.pendingSubmission == nil
-            && !session.queuedSends.contains { $0.resumesTurnID != nil }
+            && !session.queuedSends.contains { $0.resumesTurnID != nil } && goalAllowsResume(session, turn: turn)
     }
 
     /// One follow-up through the queue, not before the reset.

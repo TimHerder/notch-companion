@@ -105,7 +105,7 @@ struct ComposerView: View {
             DictationStatus(model: model, dictation: model.dictation)
             // Session settings sit in their own row under the field: permissions at
             // the left, the model and context gauge at the right.
-            if (!isCompact || model.page == .session) && (model.showModelPicker || model.showContextUsage || model.showPermissionModes) {
+            if (!isCompact || model.page == .session) && (model.showModelPicker || model.showContextUsage || model.showPermissionModes || model.current.map(model.offersGoal) == true) {
                 ModelControlsView(model: model).padding(.horizontal, PanelTheme.pick(6, 8, 2)).padding(.top, -2)
             }
             if let hint {
