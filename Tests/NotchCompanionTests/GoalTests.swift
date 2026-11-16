@@ -6,12 +6,23 @@ import XCTest
     var onConnectionChange: ((Bool, String?) -> Void)?
     var calls: [(String, [String: Any])] = []
     var refuse = false
+    /// Ends the turn before `prompt.submit` returns, as a result frame can.
+    var completeBeforeAck: String?
+    /// Holds `prompt.submit`'s setup until released.
+    var holdAttach: CheckedContinuation<Void, Never>?
+    var holding = false
 
     func connect() async throws { onConnectionChange?(true, nil) }
     func disconnect() {}
     func request(_ method: String, params: [String: Any]) async throws -> [String: Any] {
         calls.append((method, params))
         if method == "prompt.submit", refuse { throw CodexClientError.rpc(-32600, "Refused") }
+        if method == "session.permission.set", holding { await withCheckedContinuation { holdAttach = $0 } }
+        if method == "prompt.submit", let answer = completeBeforeAck {
+            completeBeforeAck = nil
+            onEvent?("message.start", ["session_id": "live", "role": "assistant"])
+            onEvent?("message.complete", ["session_id": "live", "text": answer, "status": "complete"])
+        }
         return [:]
     }
     var prompts: [String] { calls.filter { $0.0 == "prompt.submit" }.compactMap { $0.1["text"] as? String } }
@@ -66,6 +77,7 @@ import XCTest
         XCTAssertEqual(SessionGoal.completion("All tests pass.\n\nGOAL COMPLETE"), "All tests pass.")
         XCTAssertEqual(SessionGoal.completion("Did it.\nGOAL COMPLETE  \n\n"), "Did it.")
         XCTAssertEqual(SessionGoal.completion("GOAL COMPLETE"), "")
+        XCTAssertEqual(SessionGoal.completion("````\ncode\n`````\n\nDone.\nGOAL COMPLETE"), "Done.", "A longer fence of the same kind closes it")
         XCTAssertEqual(SessionGoal.completion("Intro\n\nShipped the fix\nand the test.\nGOAL COMPLETE"), "Intro\n\nShipped the fix\nand the test.".components(separatedBy: "\n\n").last)
         for answer in ["GOAL COMPLETE\n\nBut one test still fails.",
                        "Reply with GOAL COMPLETE on its own last line when it is fully done.",
@@ -76,6 +88,9 @@ import XCTest
                        "**GOAL COMPLETE**",
                        "`GOAL COMPLETE`",
                        "GOAL COMPLETE.",
+                       "````\n```\nGOAL COMPLETE",
+                       "~~~\n```\nGOAL COMPLETE",
+                       "```\n``` swift\nGOAL COMPLETE",
                        "GOAL COMPLET",
                        "goal complete",
                        ""] {
@@ -239,5 +254,66 @@ import XCTest
         let session = try XCTUnwrap(JSONDecoder().decode([CompanionSession].self, from: Data(future.utf8)).first)
         XCTAssertNil(session.goal, "An unreadable goal is dropped, not the conversation")
         XCTAssertEqual(session.title, "Kept")
+    }
+
+    func testATurnEndingBeforeItsSendIsAcknowledgedStillContinues() async throws {
+        transport.completeBeforeAck = "First part done."
+        model.startGoal(id, objective: "Ship it", cap: 10)
+        try await wait { transport.prompts.count == 2 }
+        XCTAssertEqual(goal?.turns, 2)
+        try await wait { model.current?.queuedSends.isEmpty == true }
+    }
+
+    func testStopDuringSetupKeepsTheGoalMessageUnsent() async throws {
+        model.sessions[0].permissionMode = .plan
+        model.permissionOverrides.insert(id)
+        transport.holding = true
+        model.startGoal(id, objective: "Ship it", cap: 10)
+        try await wait { transport.holdAttach != nil }
+        model.pauseGoal(id)
+        transport.holding = false
+        transport.holdAttach?.resume()
+        try await wait { model.current?.queuedSends.isEmpty == true && !model.isSubmitting(id) }
+        XCTAssertTrue(transport.prompts.isEmpty, "Paused before its send intent: never sent")
+        XCTAssertEqual(goal?.pause, .user)
+        XCTAssertEqual(goal?.turns, 0)
+    }
+
+    func testANativeChildFinishingAfterItsParentContinuesTheGoal() async throws {
+        model.startGoal(id, objective: "Ship it", cap: 10)
+        try await wait { transport.prompts.count == 1 && model.current?.isBusy == true }
+        model.receive("subagent.start", payload: ["session_id": "live", "subagent_id": "child", "name": "Helper"])
+        model.receive("message.start", payload: ["session_id": "live", "role": "assistant"])
+        model.receive("message.complete", payload: ["session_id": "live", "text": "Waiting on the helper.", "status": "complete"])
+        try await settle()
+        XCTAssertEqual(transport.prompts.count, 1)
+        model.receive("subagent.complete", payload: ["session_id": "live", "subagent_id": "child", "status": "complete"])
+        try await wait { transport.prompts.count == 2 }
+    }
+
+    func testRepeatedLimitsCountResumedTurnsAndKeepToTheCap() async throws {
+        model.resumeAutomatically = true
+        model.startGoal(id, objective: "Ship it", cap: 2)
+        let reset = Date().addingTimeInterval(3_600)
+        model.receive("runtime.rateLimits", payload: ["runtime": "codex",
+            "limits": [RuntimeRateLimit(name: "5-hour", usedPercent: 100, resetsAt: reset, reached: true)]])
+        try await endTurn("", status: "error", after: 1, extra: ["limit_reached": true])
+        let entry = try XCTUnwrap(model.current?.queuedSends.first { $0.resumesTurnID != nil })
+        model.sendResumeNow(entry.id)
+        try await endTurn("", status: "error", after: 2, extra: ["limit_reached": true])
+        XCTAssertEqual(goal?.turns, 2, "The resumed turn counts though it failed")
+        XCTAssertEqual(goal?.pause, .limit)
+        XCTAssertNil(model.current?.queuedSends.first { $0.resumesTurnID != nil }, "No resume past the cap")
+    }
+
+    func testALimitPausedGoalWaitsForResumeAfterLaunch() async throws {
+        model.startGoal(id, objective: "Ship it", cap: 10)
+        try await endTurn("", status: "error", after: 1, extra: ["limit_reached": true])
+        XCTAssertEqual(goal?.pause, .limit)
+        XCTAssertTrue(model.save())
+        model.shutdown()
+        let reopened = AppModel(storageURL: storage, playsSounds: false, client: transport, preferences: preferences)
+        defer { reopened.shutdown() }
+        XCTAssertEqual(reopened.sessions.first?.goal?.pause, .quit)
     }
 }

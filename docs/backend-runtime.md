@@ -280,7 +280,8 @@ Companion)” in help:
   session and its children like a user's queued message, and Quit waits for it.
 - At `message.complete` (`goalTurnEnded`): when the turn's final answer (its last
   assistant text after its user row) has `GOAL COMPLETE` as its last non-empty
-  line, outside a fenced or indented code block and not quoted, the goal ends
+  line, outside a fenced (closed only by the same character, at least as long)
+  or indented code block and not quoted, the goal ends
   and a `goalReached` session marker holds the paragraph above it. A
   decorated, partial or mid-answer marker does not count. Otherwise, a turn
   that finished (not waiting on children) queues one follow-up (“Continue
@@ -289,14 +290,22 @@ Companion)” in help:
   is already queued, a question from the turn or an approval is open (the
   user's reply is their own turn, whose end continues), Quit or Reconnect is
   waiting, or the turns sent reached the limit (paused at the cap; Continue
-  allows another cap). A turn whose follow-up is queued is not announced.
+  allows another cap). A turn whose follow-up is queued is not announced. A
+  turn that ends before its send is acknowledged still continues (its own
+  delivered entry does not count as queued), and a parent turn that settles
+  when its last native child finishes is evaluated then.
 - A user's own message never counts and never pauses the goal. Stop (recorded
   before the interrupt), a failed or interrupted turn, a disconnect, a refused
   goal send (never retried) and a usage limit pause it and drop an unsent
-  follow-up, uncounted. Resume at reset continuing the latest goal turn counts
-  as a goal turn and lifts the limit pause when it finishes.
-- At launch an unsent follow-up is dropped and an active goal reads paused
-  (“Goal paused when the app quit”); nothing sends until Resume.
+  follow-up, uncounted. `submit` checks, after its asynchronous setup and before
+  the send intent, that a goal message is still queued, so Pause, Clear or Stop
+  during setup leaves it unsent. Resume at reset continuing the latest goal
+  turn counts as a goal turn however it ends (so repeated limits keep to the
+  cap) and lifts the limit pause when it finishes; it is not offered for a goal
+  turn once the goal has used its turns.
+- At launch an unsent follow-up is dropped and an active or limit-paused goal
+  reads paused (“Goal paused when the app quit”). A Resume at reset already
+  scheduled may still run as before, but the goal sends nothing until Resume.
 
 ## Composer commands and file mentions
 

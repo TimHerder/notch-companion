@@ -48,21 +48,27 @@ struct SessionGoal: Codable, Equatable {
     /// block or quote, is exactly `GOAL COMPLETE`; nil otherwise. A quoted, fenced, indented,
     /// decorated or partial marker never counts.
     static func completion(_ answer: String) -> String? {
-        var fenced = false
+        // The open fence's character and length: only the same character, at least as long, closes it.
+        var fence: (Character, Int)?
         var last: (index: Int, counts: Bool)?
         let lines = answer.components(separatedBy: .newlines)
         for (index, line) in lines.enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                fenced.toggle()
-                last = (index, false)
-                continue
+            if let mark = trimmed.first, mark == "`" || mark == "~" {
+                let run = trimmed.prefix { $0 == mark }.count
+                if run >= 3 {
+                    if let open = fence {
+                        if mark == open.0, run >= open.1, trimmed.count == run { fence = nil }
+                    } else { fence = (mark, run) }
+                    last = (index, false)
+                    continue
+                }
             }
             guard !trimmed.isEmpty else { continue }
             let indented = line.hasPrefix("    ") || line.hasPrefix("\t")
-            last = (index, !fenced && !indented && trimmed == marker)
+            last = (index, fence == nil && !indented && trimmed == marker)
         }
-        guard let last, last.counts, !fenced else { return nil }
+        guard let last, last.counts, fence == nil else { return nil }
         // The last paragraph above the marker.
         let above = lines[..<last.index].reversed().drop { $0.trimmingCharacters(in: .whitespaces).isEmpty }
         let paragraph = above.prefix { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.reversed()
@@ -86,12 +92,15 @@ extension QueuedSend {
 extension CompanionSession {
     /// A goal turn: a Goal message, or Resume at reset continuing the latest goal turn.
     func isGoalTurn(_ row: ChatMessage) -> Bool {
-        if row.kind == ChatMessage.goal { return true }
+        if row.kind == ChatMessage.goal || row.id == goal?.turnID { return true }
         guard row.text == QueuedSend.resumeText, let turnID = goal?.turnID else { return false }
         let rows = messages.filter { $0.role == "user" && SessionHistory.isVisibleConversation($0) }
         guard let index = rows.lastIndex(where: { $0.id == row.id }), index > 0 else { return false }
         return rows[index - 1].id == turnID
     }
+
+    /// A goal message waiting to be sent; one whose turn already began (the send not yet acknowledged) is not.
+    var hasUnsentGoalTurn: Bool { queuedSends.contains { $0.kind == ChatMessage.goal && !wasDelivered($0.id) } }
 
     /// The working footer's quiet line while a goal turn runs.
     var goalFooter: String? {
@@ -106,7 +115,8 @@ extension CompanionSession {
         queuedSends.removeAll { $0.kind == ChatMessage.goal }
         guard var goal else { return }
         goal.turns = max(0, goal.turns - unsent)
-        if goal.pause == nil { goal.pause = .quit }
+        // A goal's Resume at reset may still run; the goal itself waits for Resume.
+        if goal.pause == nil || goal.pause == .limit { goal.pause = .quit }
         self.goal = goal
     }
 
@@ -122,7 +132,18 @@ extension CompanionSession {
     }
 }
 
+/// A goal message Pause, Clear or Stop removed while its send was being set up.
+struct GoalCancelled: LocalizedError {
+    var errorDescription: String? { "The goal was paused before its message was sent." }
+}
+
 extension AppModel {
+    /// Resume at reset never continues a goal turn past the goal's cap.
+    func goalAllowsResume(_ session: CompanionSession, turn: String) -> Bool {
+        guard let goal = session.goal, let row = session.messages.first(where: { $0.id == turn }), session.isGoalTurn(row) else { return true }
+        return goal.turns < goal.limit
+    }
+
     /// Top-level sessions of a supported harness; not delegated children.
     func offersGoal(_ session: CompanionSession) -> Bool {
         session.parentSessionID == nil && session.runtime.isSupported && !session.isLegacyPrivate
@@ -159,7 +180,7 @@ extension AppModel {
         if goal.turns >= goal.limit { goal.limit = goal.turns + goal.cap }
         goal.pause = nil
         update(id) { $0.goal = goal }
-        if session.isBusy || isSubmitting(id) || session.queuedSends.contains(where: { $0.kind == ChatMessage.goal }) {
+        if session.isBusy || isSubmitting(id) || session.hasUnsentGoalTurn {
             guard save() else { update(id) { $0.goal = session.goal }; return }
         } else { queueGoalTurn(id, start: false) }
     }
@@ -173,8 +194,7 @@ extension AppModel {
 
     /// One goal message through the queue, counted; never a second while one waits.
     private func queueGoalTurn(_ id: String, start: Bool) {
-        guard let session = sessions.first(where: { $0.id == id }), let goal = session.goal,
-              !session.queuedSends.contains(where: { $0.kind == ChatMessage.goal }) else { return }
+        guard let session = sessions.first(where: { $0.id == id }), let goal = session.goal, !session.hasUnsentGoalTurn else { return }
         let entry = QueuedSend(id: UUID().uuidString, text: start ? goal.startText : goal.continueText, kind: ChatMessage.goal)
         update(id) {
             $0.queuedSends.append(entry)
@@ -200,18 +220,24 @@ extension AppModel {
         guard let session = sessions.first(where: { $0.id == id }), let goal = session.goal, offersGoal(session),
               let row = session.messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) }) else { return false }
         let goalTurn = session.isGoalTurn(row)
+        // A resumed limit-stopped goal turn counts however it ends, so repeated limits keep to the cap.
+        if goal.pause == .limit, goalTurn, row.kind != ChatMessage.goal, goal.turnID != row.id {
+            update(id) { $0.goal?.turns += 1; $0.goal?.turnID = row.id }
+        }
         switch status {
         case "error":
             update(id) { $0.pauseGoal(limitReached ? .limit : .failed) }
-            if goalTurn { update(id) { $0.goal?.turnID = row.id } }
             save(); return false
         case "interrupted":
             update(id) { $0.pauseGoal(.stopped) }
             save(); return false
         default: break
         }
-        // A child still working or waiting ends this turn later, through its wake.
-        guard session.state == .finished else { return false }
+        // A child still working or waiting ends this turn later; a failed child fails it.
+        guard session.state == .finished else {
+            if session.state == .failed { update(id) { $0.pauseGoal(.failed) }; save() }
+            return false
+        }
         // The turn's final answer: its last text after its own user row.
         let turn = session.messages[((session.messages.lastIndex { $0.id == row.id } ?? 0) + 1)...]
         let answer = turn.last { $0.role == "assistant" && $0.questions == nil && !$0.text.isEmpty }
@@ -223,10 +249,8 @@ extension AppModel {
             }
             save(); return false
         }
-        // A resumed limit-stopped goal turn counts and lifts the limit pause.
-        if goal.pause == .limit, goalTurn, row.kind != ChatMessage.goal {
-            update(id) { $0.goal?.turns += 1; $0.goal?.turnID = row.id; $0.goal?.pause = nil }
-        }
+        // A resumed limit-stopped goal turn that finished lifts the limit pause.
+        if goal.pause == .limit, goalTurn, row.kind != ChatMessage.goal { update(id) { $0.goal?.pause = nil } }
         guard let current = sessions.first(where: { $0.id == id })?.goal, current.isActive else { save(); return false }
         // An open question or approval waits for the user's reply; that turn's end continues.
         let asking = turn.contains { $0.questions != nil }
@@ -235,6 +259,6 @@ extension AppModel {
         if deferredOperation != nil { update(id) { $0.pauseGoal(.quit) }; save(); return false }
         if current.turns >= current.limit { update(id) { $0.pauseGoal(.cap) }; save(); return false }
         queueGoalTurn(id, start: false)
-        return sessions.first(where: { $0.id == id })?.queuedSends.contains { $0.kind == ChatMessage.goal } == true
+        return sessions.first(where: { $0.id == id })?.hasUnsentGoalTurn == true
     }
 }
