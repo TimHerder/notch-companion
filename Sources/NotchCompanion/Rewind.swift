@@ -35,7 +35,9 @@ extension AppModel {
         guard session.rewindsConversation, session.storedID != nil, session.pendingSubmission?.id != messageID,
               let index = session.messages.firstIndex(where: { $0.id == messageID }),
               session.messages[index].role == "user", session.messages[index].kind == nil,
-              SessionHistory.isVisibleConversation(session.messages[index]) else { return nil }
+              SessionHistory.isVisibleConversation(session.messages[index]),
+              // A steer continues an earlier row's turn: cutting there would split that turn's tools, changes and outcome.
+              (session.messages[index].turnID ?? messageID) == messageID else { return nil }
         // Only the current native session, and in a fork only what it added after the source's copied history.
         var start = session.segmentStart
         if let fork = session.forkedFrom {
@@ -77,6 +79,11 @@ extension AppModel {
         if !treeIsIdle(session.id) { return "Wait for this session and its delegated work to finish." }
         if files, !gitActionsIdle(session.id) { return "Another session is working in this folder, and restoring files could undo its edits." }
         return nil
+    }
+
+    /// A rewind restoring files in this session's checkout, which a send there must wait for.
+    func restoringFiles(near id: String) -> Bool {
+        restoringFilesSessionIDs.contains { $0 == id || sharesCheckout(id, $0) }
     }
 
     /// Asks first, then rewinds natively; the message's text and files return to the composer, never sent.
@@ -131,8 +138,9 @@ extension AppModel {
         // Counts as a send in flight: other sends, archive, cleanup and Quit/Reconnect wait for it.
         rewindingSessionIDs.insert(id)
         backgroundSubmissions.insert(id)
+        if files { restoringFilesSessionIDs.insert(id) }
         defer {
-            rewindingSessionIDs.remove(id); backgroundSubmissions.remove(id)
+            rewindingSessionIDs.remove(id); backgroundSubmissions.remove(id); restoringFilesSessionIDs.remove(id)
             scheduleDeferredOperationIfIdle()
         }
         var requested = false
@@ -193,6 +201,12 @@ extension AppModel {
             target.updatedAt = Date()
         }
         for child in children { update(child) { $0.isArchived = true; $0.snoozedUntil = nil; $0.isPinned = false } }
+        // A result whose wake left the conversation, or from a child of a removed turn, never wakes the parent again.
+        let wakes = Set(removed.map(\.id))
+        for child in sessions where child.parentSessionID == id && child.delegation != nil
+            && (children.contains(child.id) || child.delegation?.wakeMessageID.map(wakes.contains) == true) {
+            update(child.id) { $0.delegation?.completionWake = false }
+        }
         save()
         if available.count < files.count {
             errorMessage = "\(files.count - available.count) of the message's attached files no longer exist, so they were not added back."

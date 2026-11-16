@@ -1770,7 +1770,7 @@ session** divider) offers **Edit from here** where its harness can rewind the
 conversation to before it ([runtime matrix](backend-runtime.md#edit-from-here)):
 a pencil beside Copy on hover (next to the bubble in Refined and Tahoe, in the
 log header in Instrument), the context menu and an accessibility action. It is
-hidden for relayed and agent messages, delegated children and side chats, and
+hidden for relayed and agent messages, steers, delegated children and side chats, and
 where the harness has no native rewind; it is disabled, with the reason as
 help, while the session, a child or an unconfirmed send is busy, a question or
 approval is open, a message is queued or a Git action runs.
@@ -1778,7 +1778,7 @@ approval is open, a message is queued or a Git action runs.
 Choosing it asks “Edit from here?”, saying how many later turns go with the
 message: **Rewind**, **Rewind and Restore Files** where the harness reverts
 files natively (refused, with the reason, while another session works in the
-same folder), and **Cancel**. On success the message and everything after it
+same folder; sends in that folder wait until it finishes), and **Cancel**. On success the message and everything after it
 leave the conversation, and its text and files return to the composer ahead of
 any draft, separated by a blank line, with the composer focused; nothing is
 sent. On failure nothing changes and the harness's error shows. Fixtures:

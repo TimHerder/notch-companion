@@ -365,8 +365,9 @@ final class OpenCodeClient: RuntimeTransport {
                 _ = try? await rawCall("DELETE", endpoint)
                 throw error
             }
-            try requireGeneration(operation)
-            return try await refresh(sid, restoring: true)
+            // Committed: a failed read must not report failure, or the app would keep the removed turns.
+            do { return try await refresh(sid, restoring: true) }
+            catch { return ["rewound": true, "history_complete": false] }
         case "session.rename":
             _ = try await call("PATCH", "/session/\(component(sid))", cwd: cwd, body: ["title": params["title"] as? String ?? ""]); return [:]
         default: throw AppError("OpenCode's native HTTP interface does not implement \(method) here.")

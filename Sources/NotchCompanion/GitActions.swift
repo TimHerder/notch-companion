@@ -342,7 +342,7 @@ enum GitActions {
 
 extension AppModel {
     /// Sessions sharing a checkout (one folder inside the other) share its Git actions' safety.
-    private func sharesCheckout(_ first: String, _ second: String) -> Bool {
+    func sharesCheckout(_ first: String, _ second: String) -> Bool {
         func folder(_ id: String) -> String? {
             sessions.first { $0.id == id }.map { URL(fileURLWithPath: $0.workspacePath ?? workspacePath).standardizedFileURL.path }
         }

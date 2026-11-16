@@ -199,6 +199,8 @@ final class AppModel: ObservableObject {
     @Published var compactingSessionIDs: Set<String> = []
     /// Sessions whose Edit from here rewind is running.
     @Published var rewindingSessionIDs: Set<String> = []
+    /// Sessions restoring files natively; no session in the same checkout may start a turn meanwhile.
+    var restoringFilesSessionIDs: Set<String> = []
     /// Settings → Resume automatically after limit resets.
     @Published var resumeAutomatically = false {
         didSet { preferences.set(resumeAutomatically, forKey: Self.resumeAutomaticallyKey) }
@@ -1791,6 +1793,7 @@ final class AppModel: ObservableObject {
         backgroundSendErrors.removeValue(forKey: localID)
         // A commit or push in progress must not race a new turn's edits.
         guard !gitActionRunning(near: localID) else { errorMessage = "Wait for the Git action to finish, then send."; return false }
+        guard !restoringFiles(near: localID) else { errorMessage = "Wait for the rewind to restore files, then send."; return false }
         guard !persistenceBlocked else { errorMessage = "Restore the saved session registry before sending."; return false }
         guard session.runtime.isSupported else { errorMessage = session.runtime.capabilityNote; return false }
         guard isProjectTrusted(session) else {

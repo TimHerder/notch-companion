@@ -123,6 +123,7 @@ import XCTest
         XCTAssertEqual(model.rewindPoint("u1", in: opencode)?.turns, 3)
         var restored = opencode
         restored.messages[2].id = "hermes-msg_native2"
+        restored.messages[2].turnID = "hermes-msg_native2"
         XCTAssertEqual(model.rewindPoint("hermes-msg_native2", in: restored)?.nativeMessageID, "msg_native2")
 
         let hermes = session(.hermes)
@@ -259,6 +260,40 @@ import XCTest
         let sent = await model.submit(reply: nil)
         XCTAssertTrue(sent, model.errorMessage ?? "")
         XCTAssertNil(model.sessions[0].resumeAt, "the send extends the native chain from the rewind point")
+    }
+
+    func testASteerIsNotARewindPoint() {
+        var opencode = session(.opencode)
+        opencode.messages.insert(ChatMessage(id: "steer", role: "user", text: "Also the docs.", turnID: "u2"), at: 3)
+        XCTAssertNil(model.rewindPoint("steer", in: opencode), "cutting inside a turn would drop the turn's earlier tools and changes")
+        XCTAssertNotNil(model.rewindPoint("u2", in: opencode))
+    }
+
+    func testSendsInTheSameFolderWaitWhileFilesAreRestored() async {
+        var other = CompanionSession(id: "other", title: "Other", draft: "Edit README", workspacePath: folder.path)
+        other.runtime = .hermes
+        model.sessions = [session(.opencode), other]
+        model.restoringFilesSessionIDs = ["s"]
+        model.currentID = "other"
+        let sent = await model.submit(reply: nil)
+        XCTAssertFalse(sent)
+        XCTAssertEqual(model.errorMessage, "Wait for the rewind to restore files, then send.")
+        XCTAssertEqual(model.sessions[1].draft, "Edit README")
+    }
+
+    func testARemovedResultNeverWakesTheParentAgain() async {
+        var delegated = child()
+        delegated.delegation = DelegationRecord(taskID: "task", wokenCompletionID: "result", wakeMessageID: "wake")
+        var earlier = CompanionSession(id: "earlier", title: "Earlier", workspacePath: folder.path)
+        earlier.parentSessionID = "s"
+        earlier.delegation = DelegationRecord(taskID: "task-2", wakeMessageID: "wake-2")
+        var rewinding = session(.opencode)
+        rewinding.messages.insert(ChatMessage(id: "wake-2", role: "user", text: "Delegated task \"Explore\" finished", turnID: "wake-2", kind: ChatMessage.delegationResult), at: 4)
+        model.sessions = [rewinding, delegated, earlier]
+        model.rewindDecision = { _, _ in .conversation }
+        await model.editFromHere("u2", in: "s")
+        XCTAssertEqual(model.sessions.first { $0.id == "child" }?.delegation?.completionWake, false, "a child of a removed turn")
+        XCTAssertEqual(model.sessions.first { $0.id == "earlier" }?.delegation?.completionWake, false, "a wake that left the conversation")
     }
 
     func testOlderRegistriesDecodeWithoutRewindFields() throws {
