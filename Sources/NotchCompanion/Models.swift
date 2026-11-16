@@ -160,6 +160,10 @@ struct QueuedSend: Codable, Equatable {
     var questionSessionID: String? = nil
     var attachments: [Attachment]? = nil
     var paused: Bool? = nil
+    /// Not sent before this time; Resume at reset's follow-up waits for its limit to reset.
+    var notBefore: Date? = nil
+    /// Resume at reset: the limit-stopped turn (its visible user row) this message continues.
+    var resumesTurnID: String? = nil
 
     var isUserMessage: Bool { kind == nil }
 }
@@ -318,6 +322,10 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     var worktree: SessionWorktree? = nil
     /// The pull request Git actions opened for this session's branch.
     var pullRequest: String? = nil
+    /// Native sessions this conversation used before Start fresh, oldest first.
+    var earlierStoredIDs: [String]? = nil
+    /// When the account limit that stopped a turn resets, keyed by the turn's visible user row.
+    var limitResets: [String: Date] = [:]
     var queuedSends: [QueuedSend] = []
     /// The mode in use when Plan was chosen, for Plan ready's Implement; nil is Default permissions.
     var prePlanPermissionMode: PermissionMode? = nil
@@ -484,7 +492,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnUsage, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, isPinned, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic, worktreeBase, worktree, pullRequest
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnUsage, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, isPinned, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic, worktreeBase, worktree, pullRequest, earlierStoredIDs, limitResets
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -535,6 +543,8 @@ extension CompanionSession {
         worktreeBase = try values.decodeIfPresent(String.self, forKey: .worktreeBase)
         worktree = try values.decodeIfPresent(SessionWorktree.self, forKey: .worktree)
         pullRequest = try values.decodeIfPresent(String.self, forKey: .pullRequest)
+        earlierStoredIDs = try values.decodeIfPresent([String].self, forKey: .earlierStoredIDs)
+        limitResets = try values.decodeIfPresent([String: Date].self, forKey: .limitResets) ?? [:]
         queuedSends = try values.decodeIfPresent([QueuedSend].self, forKey: .queuedSends) ?? []
         lastSeenAt = try values.decodeIfPresent(Date.self, forKey: .lastSeenAt)
         snoozedUntil = try values.decodeIfPresent(Date.self, forKey: .snoozedUntil)

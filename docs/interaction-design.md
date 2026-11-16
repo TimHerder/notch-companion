@@ -602,7 +602,16 @@ drop opens its session).
   fold holds the commentary and runs in order, indented on a thin leading rule;
   unfolding it stops transcript following. With nothing to fold, the duration
   is a quiet line; a turn saved without its end reads “Worked · N steps”.
-  Durations read 8s, 2:14, 1:02:10.
+  Durations read 8s, 2:14, 1:02:10. A turn the account's usage limit stopped,
+  when its harness reports the reset, reads **Limit reached · resets 3:40 PM**
+  (the app's time style, a weekday and date when not today) in place of
+  “Failed after”, with **Resume at reset** at the end of that line while it is
+  the latest turn and nothing is scheduled (see Queue).
+- **Context compacted** is a quiet rule-line row where a [Compact](#composer-model-controls)
+  finished; when the harness returned a summary, its chevron unfolds it as
+  quiet selectable text on the same leading rule as a turn's work.
+  **New session** (with its glyph, no chevron) marks where [Start fresh](#composer-model-controls)
+  opened a new native session; everything above it stays.
 - A turn that ended before writing any text has no answer: its work stays open
   under its header. A turn's own failure or stop names it, “Failed after 1:03”
   or “Stopped after 12s”, on that header or on the fold above whatever text it
@@ -1028,6 +1037,16 @@ identify selection.
   them until **Resume queued messages**. A refused queued send keeps its one
   saved copy and pauses the rest. Unconfirmed sends keep **Check last send**
   protection. A normal idle send works while the queue is paused.
+  **Resume at reset** queues one “Continue where you left off.” that is not
+  sent before the reset. Its row reads **Resumes at 3:40 PM** with **Send
+  now** and Cancel (no Edit or Steer; Option–↑ and Command–Shift–Return skip
+  it). It waits for parent and child work like any queued message, is never
+  paused by Stop, a failure, a disconnect or a restart, and is sent only while
+  the app runs (at launch when it came due meanwhile). Until then it does not
+  hold Quit. It is dropped, unsent, once any other message reaches the session
+  (yours, a wake, another session's) or Start fresh opens a new native session;
+  a send that fails is not retried. Settings → **Resume automatically after
+  limit resets** (off by default) schedules it for every limit-stopped turn.
 - **Plan ready.** When a turn finishes in Plan, the composer field gains a
   slim first row on its own surface, above a hairline: **Plan ·** and the
   plan's name, the first heading of the turn's last answer (as plain text,
@@ -1309,7 +1328,24 @@ between states: a **Context** section label with Close, the percentage
 (`42k used`) and has no bar, and `—` stands only before the first report. A
 caption follows (**Estimate**, **Window not
 reported**, **Over the reported window**, then **Updated** and the report time;
-**No report yet** before the first report). Hover, accessibility and dismissal
+**No report yet** before the first report). A row of quiet text buttons ends the
+section:
+
+- **Compact** (only for harnesses whose native compaction the app drives:
+  Codex, Claude Code, Pi, shared Hermes; [runtime contract](backend-runtime.md#models-and-context-usage))
+  runs the harness's own compaction, reading **Compacting…** with a spinner
+  until it returns, then adds a [Context compacted](#compact-panel) row. The gauge
+  refreshes from the harness's next report.
+- **Start fresh** (every harness except Legacy Hermes; not for delegated
+  children) asks first, then closes the bubble: the next message opens a new
+  native session for this conversation with the same harness, profile, folder,
+  model and permission choices and an empty context, under a **New session**
+  row. Earlier delegated children stay in the team.
+
+Both are disabled (help says why) before the first message, while the session,
+a child, a question or approval, a compaction or an unconfirmed send is in
+flight. A send during a compaction is refused with “Wait for compaction to
+finish, then send.” Hover, accessibility and dismissal
 are unchanged. Opening one chooser closes the other; neither shifts the
 composer or transcript.
 
@@ -1384,6 +1420,9 @@ row, opening **Usage**, a scrolling page within the panel bounds; Back returns.
   and a refresh button in its header, then the
   same rows as the page. Past four windows the rows scroll inside the bubble.
   Opening it asks Codex again; Claude Code's rows come from its last turn.
+- **Limit stops.** A turn that ends at the account limit takes its reset from
+  these reports and offers Resume at reset
+  ([Compact panel](#compact-panel), [Queue](#conversation-usability-and-session-management)).
 
 ## SnapShot
 

@@ -21,6 +21,8 @@ struct CodexProtocolState {
     var startingThreads = Set<String>()
     var requests: [String: ServerRequest] = [:]
     var completedTurns = Set<String>()
+    /// Threads running the companion's `thread/compact/start`: its turn is not a conversation turn.
+    var compactingThreads = Set<String>()
     /// Parent-thread cumulative tokens seen in this process (0 for threads
     /// started here) and the total each turn started from.
     var tokenTotals: [String: Int] = [:]
@@ -99,6 +101,21 @@ struct CodexProtocolState {
             payload["session_id"] = sid
             if child { payload["subagent_id"] = tid }
             return Event(name: name, payload: payload)
+        }
+        // Compaction runs as its own native turn. It keeps the thread busy and ends with
+        // `session.compacted`; only its token report (the gauge's next sample) passes.
+        if !child, compactingThreads.contains(tid), method != "thread/tokenUsage/updated" {
+            let turn = params["turn"] as? [String: Any] ?? [:]
+            if method == "turn/started", let id = turn["id"] as? String {
+                activeTurns[tid] = id; latestTurns[tid] = id; startingThreads.remove(tid)
+            } else if method == "turn/completed" {
+                activeTurns.removeValue(forKey: tid); startingThreads.remove(tid); compactingThreads.remove(tid)
+                if let incomingTurn { completedTurns.insert(tid + ":" + incomingTurn) }
+                var payload: [String: Any] = ["status": Self.status(turn["status"] as? String ?? "failed")]
+                if let message = (turn["error"] as? [String: Any])?["message"] as? String { payload["error"] = message }
+                return [event("session.compacted", payload)]
+            }
+            return []
         }
         switch method {
         case "turn/diff/updated":
@@ -254,7 +271,10 @@ struct CodexProtocolState {
             if let error = turn["error"] as? [String: Any], let message = error["message"] as? String {
                 events.append(event("runtime.notice", ["message": message]))
             }
-            events.append(event(child ? "subagent.complete" : "message.complete", ["text": text, "status": status]))
+            var payload: [String: Any] = ["text": text, "status": status]
+            // The account's usage limit, not a provider rate limit; its reset comes from the limit report.
+            if (turn["error"] as? [String: Any])?["codexErrorInfo"] as? String == "usageLimitExceeded" { payload["limit_reached"] = true }
+            events.append(event(child ? "subagent.complete" : "message.complete", payload))
             return events
         case "serverRequest/resolved":
             let id = Self.requestKey(params["requestId"])

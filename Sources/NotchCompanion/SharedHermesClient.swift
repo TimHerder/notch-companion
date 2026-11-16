@@ -267,6 +267,7 @@ final class SharedHermesClient: RuntimeTransport {
             }
             return ["steered": true]
         }
+        if method == "session.compact" { return try await Self.compact(sessionID: params["session_id"] ?? "", request: request) }
         if method == "runtime.models" {
             let result = try await request("model.options", params: ["explicit_only": true])
             return ["catalog": RuntimeModelCatalog.hermes(result)]
@@ -295,7 +296,8 @@ final class SharedHermesClient: RuntimeTransport {
         let result = try await withCheckedThrowingContinuation { continuation in
             pending[identifier] = continuation
             timeouts[identifier] = Task { @MainActor [weak self] in
-                do { try await Task.sleep(for: .seconds(90)) } catch { return }
+                // Compression summarizes with the model; Hermes's own desktop waits 660 s.
+                do { try await Task.sleep(for: .seconds(method == "session.compress" ? 660 : 90)) } catch { return }
                 guard let self, self.generation == runID else { return }
                 self.timeouts.removeValue(forKey: identifier)
                 self.pending.removeValue(forKey: identifier)?.resume(throwing: HermesClientError.timedOut(method))
@@ -317,6 +319,17 @@ final class SharedHermesClient: RuntimeTransport {
             }
         }
         return result
+    }
+
+    /// Hermes's own idle-gated `/compress`. It rotates the stored key; resume follows it to the
+    /// compressed tip. Only `status: compressed` counts (`aborted`, or `compressed: false` with
+    /// another holder's lock, does not); its summary is feedback, not the kept context.
+    static func compact(sessionID: Any, request: (String, [String: Any]) async throws -> [String: Any]) async throws -> [String: Any] {
+        let result = try await request("session.compress", ["session_id": sessionID])
+        guard result["status"] as? String == "compressed" else {
+            throw AppError(result["message"] as? String ?? "Hermes did not compress this session.")
+        }
+        return [:]
     }
 
     /// Fields other adapters consume. Hermes never read them, and builds with

@@ -213,7 +213,16 @@ An unconfirmed send without staged text (an agent's message, a notice, or an
 older registry's user entry) stays queued: it waits for Check last send, which
 drops it once delivery is confirmed or lets it be delivered when the send proves absent.
 Edit and Steer refuse an ID that is the unconfirmed send or in the transcript. Paused queues do
-not keep the app busy. Approval and question cards stay authoritative; sending
+not keep the app busy. **Resume at reset** is an ordinary user entry with
+optional `notBefore` (the reset) and `resumesTurnID` (the limit-stopped turn's
+visible user row), so older registries decode. Delivery skips an entry before
+its `notBefore`; restart, Stop, failure and disconnect never pause a resume
+entry, and one not yet due does not keep the app busy. A one-shot timer (and
+launch) runs delivery when one comes due. At delivery it is dropped unless that
+turn's row is still the session's latest visible user row; any send through
+`submit` drops the session's other resume entries as it appends its row, and
+Start fresh drops them too. A failed resume send is dropped, not
+retried; an uncertain one keeps the usual Check last send protection. Approval and question cards stay authoritative; sending
 cannot bypass them.
 
 ## Composer commands and file mentions
@@ -262,7 +271,10 @@ receipts, `lastSeenAt` (optional; older entries decode without it), which
 only drives the derived auto-archive, and `snoozedUntil` (optional, likewise),
 which only hides the entry from the active list until it wakes, and `isPinned`
 (older entries decode unpinned), which only lists it under Pinned and keeps it
-from auto-archiving. None reaches a runtime. `runtimeID` is a connection-local alias cleared on restart. Native IDs are never rewritten
+from auto-archiving. None reaches a runtime. `earlierStoredIDs` (optional) lists the native sessions a
+conversation used before **Start fresh**, oldest first, and `limitResets`
+(defaulted) keeps when the limit that stopped a turn resets, keyed by its
+visible user row. `runtimeID` is a connection-local alias cleared on restart. Native IDs are never rewritten
 into another profile's IDs. The router isolates identical
 live and request IDs across runtimes/profiles; a connection failure interrupts
 only that route, and an unavailable installation does not disable others.
@@ -620,6 +632,30 @@ their native effort.
   unsent, when `ultracodeAvailable` is false (dynamic workflows off) or missing
   (an older CLI). Delegated children keep their own profile's setting.
 
+**Compact** (`RuntimeKind.compactsContext`) sends `session.compact
+{session_id}` to an idle, resumed session, answered once the native compaction
+finishes with an optional `summary`; the app then appends a `system` row of
+kind `contextCompacted` (never sent, never native history). While it runs the
+session counts as submitting, so sends wait and Quit asks first.
+
+| Harness | Native compaction |
+| --- | --- |
+| Codex | `thread/compact/start {threadId}`. It runs as its own native turn: the adapter keeps the thread busy, suppresses that turn's items, deltas and errors, passes only its `thread/tokenUsage/updated` (no `turn_tokens`), and answers on its `turn/completed` (failed → error). No summary. |
+| Claude Code | User input `"/compact"` in stream-json, the documented slash command. The turn's text, tools, titles and `turn_tokens` stay out of the transcript; success needs the native `system/compact_boundary`, else it fails. No summary. |
+| Pi | RPC [`compact`](https://pi.dev/docs/latest/rpc-commands#compact) (10-minute deadline); its `summary` becomes the row's text. The app's own `compaction_start` neither marks a run nor posts a notice; `compaction_end` refreshes context as before. |
+| Shared Hermes | Typed `session.compress {session_id}` (idle-gated; 660-second deadline, as Hermes's own desktop waits). Only `status: compressed` succeeds; `aborted` or `compressed: false` (another client's lock, with its `message`) fails. Compression rotates the stored key and `session.resume` follows it to the compressed tip, so `storedID` stays. Its `summary` is feedback (`headline`), not the kept context, so the row has none. |
+| Others | Not offered. Legacy Hermes's private bridge is not extended; OpenCode's summarize runs a turn its SSE mapping would report as a conversation turn; ACP `/compact` would be an ordinary prompt turn; OpenClaw exposes none. |
+
+**Start fresh** clears `storedID` and `runtimeID` (appending the old ID to
+`earlierStoredIDs`), resets `nativeSubmissionAttempted`, the context sample, the
+in-process permission override and the delegation grant, and appends a `system`
+row of kind `newSession`. The next send's ordinary `session.create` opens the
+new native session with the same runtime, profile, folder, model and mode, and
+always sends the conversation's title so a runtime does not rename it. Every
+adapter creates sessions this way; Legacy Hermes cannot (no new private
+sessions) and delegated children are not offered it. The previous native
+session is not closed; its process stays until the adapter reconnects.
+
 Context usage is the latest native occupancy/request snapshot (`context_used`
 or `last.totalTokens`; Hermes `session.info`/`session.usage`/completion usage,
 Codex `thread/tokenUsage/updated` and reroute events), never cumulative usage
@@ -693,6 +729,15 @@ when every such window has one.
 - **Claude:** `rate_limit_event.rate_limit_info` during turns only
   (`unifiedWindows` when present, else the top-level window; `status: rejected`
   marks it reached).
+
+**Limit stops.** A failed `message.complete` carries `limit_reached: true` when
+the harness says the account's usage limit ended it: Codex's
+`turn.error.codexErrorInfo` `usageLimitExceeded` (not `rateLimitExceeded`, a
+provider rate limit), Claude's assistant `error: "rate_limit"` on a failed
+result. The app takes the reset from the stored limits for that harness (the
+latest future `resetsAt` of a window reached or at 100 %), reading them once
+more when none is known yet, and saves it in `limitResets`. Without a known
+reset the turn keeps its ordinary failure line and offers no resume.
 
 **Companion totals** count only companion turns. Adapters report
 `session.info.turn_tokens` (the current turn's running total), stored as the
@@ -952,7 +997,9 @@ before another send; a missing submitted record is never guessed away. A worktre
 worktree is created or recreated after the staging record and before the send
 intent, so a Git failure restores the draft like any setup failure. Git
 actions on a change card wait for the same idle state as worktree cleanup and
-never run while a send is staged or unconfirmed. Busy
+never run while a send is staged or unconfirmed. Start fresh is refused while any of
+this is pending, and the turns, receipts and change summaries of earlier native
+sessions stay with their rows. Busy
 native conversations are observed without appending competing turns.
 Quit/Reconnect offer wait, explicit stop or cancel, and wait for tracked
 parent/child terminal events, not just interrupt acknowledgements.
@@ -1024,6 +1071,7 @@ methods and events.
 | `session.resume` | `session_id: durableID` | `session_id`, `session_key`, `messages`, `running`, `status`, `info` |
 | `prompt.submit` | `session_id`, `text`, `surface: "hud"` | `status: "streaming"`; content arrives by event |
 | `session.interrupt` | `session_id` | acknowledgement; wait for the terminal turn event |
+| `session.compact` | `session_id` (idle) | after the native compaction finishes; optional `summary` |
 | `file.attach` | `session_id`, absolute `path` | `attached`, `path`, `ref_path`, `ref_text` |
 | `image.attach` | `session_id`, absolute `path` | image added to pending attachments |
 | `image.detach` | `session_id`, attached `path` | `detached`, remaining `count` |
@@ -1041,7 +1089,7 @@ omits it). Images are implicit pending attachments, so removing one must call
 | `message.start` | starts a turn |
 | `message.delta` | `text` delta |
 | `message.interim` | `text`, `already_streamed` |
-| `message.complete` | authoritative `text`, `status` (`complete`, `interrupted`, `error`), `usage`, optional warning/error |
+| `message.complete` | authoritative `text`, `status` (`complete`, `interrupted`, `error`), `usage`, optional warning/error, optional `limit_reached` |
 | `tool.start` | `tool_id`, `name`, `context`, optional `args` |
 | `tool.complete` | same `tool_id`, `name`, `summary`, `result`, `duration_s` |
 | `session.info` | model, working directory, tools and other metadata |
@@ -1076,7 +1124,12 @@ consecutive assistant messages and splits at tool parts (a refresh delivers text
 written before a tool part it has not seen yet, then the poll's tools, then
 later text), and ACP load replay joins agent chunks until a
 tool call. A restored reply without a native time or saved match takes the
-previous row's time instead of the restore time.
+previous row's time instead of the restore time. Resume history covers only the
+current native session: rows up to the latest `newSession` row stay as saved,
+the rest are matched against the native rows, and the current segment's
+`contextCompacted` rows are put back after the message they followed. A send's
+`userTurnCount` and Check last send's prefix comparison count only that
+segment.
 
 Native delegated work emits `subagent.start`, `subagent.thinking`,
 `subagent.tool` and `subagent.complete` on the parent session, identified by

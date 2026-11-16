@@ -34,6 +34,9 @@ final class CodexClient: RuntimeTransport {
     private var sequence = 0
     private var pending: [Int: CheckedContinuation<[String: Any], Error>] = [:]
     private var timeouts: [Int: Task<Void, Never>] = [:]
+    /// Each thread's `session.compact`, answered when its compaction turn completes.
+    private var compactions: [String: CheckedContinuation<[String: Any], Error>] = [:]
+    private var compactionTasks: [String: Task<Void, Never>] = [:]
     private var state = CodexProtocolState()
     private var images: [String: [String]] = [:]
     private var titles: [String: String] = [:]
@@ -220,6 +223,29 @@ final class CodexClient: RuntimeTransport {
         case "image.detach":
             if let path = params["path"] as? String { images[sid]?.removeAll { $0 == path } }
             return ["detached": true]
+        case "session.compact":
+            guard state.activeTurns[sid] == nil, !state.startingThreads.contains(sid), compactions[sid] == nil,
+                  !state.parents.contains(where: { $0.value == sid && state.activeTurns[$0.key] != nil }) else {
+                throw CodexClientError.unavailable("Wait for this session and its delegated work before compacting.")
+            }
+            state.compactingThreads.insert(sid)
+            state.startingThreads.insert(sid)
+            return try await withCheckedThrowingContinuation { continuation in
+                compactions[sid] = continuation
+                let runID = generation
+                compactionTasks[sid] = Task { @MainActor [weak self] in
+                    do {
+                        _ = try await self?.rpc("thread/compact/start", ["threadId": sid])
+                        try await Task.sleep(for: .seconds(600))
+                        guard let self, self.generation == runID else { return }
+                        self.compactions.removeValue(forKey: sid)?.resume(throwing: CodexClientError.timedOut("thread/compact/start"))
+                    } catch {
+                        guard let self, self.generation == runID, let pending = self.compactions.removeValue(forKey: sid) else { return }
+                        self.state.compactingThreads.remove(sid); self.state.startingThreads.remove(sid)
+                        pending.resume(throwing: error)
+                    }
+                }
+            }
         case "prompt.submit":
             guard state.activeTurns[sid] == nil, !state.startingThreads.contains(sid),
                   !state.parents.contains(where: { $0.value == sid && state.activeTurns[$0.key] != nil }) else {
@@ -398,6 +424,13 @@ final class CodexClient: RuntimeTransport {
                     if let reply = result.reply { try? write(reply) }
                 } else { events = state.notifications(method, params) }
                 for event in events {
+                    if event.name == "session.compacted" {
+                        guard let sid = event.payload["session_id"] as? String, let pending = compactions.removeValue(forKey: sid) else { continue }
+                        compactionTasks.removeValue(forKey: sid)?.cancel()
+                        if event.payload["status"] as? String == "complete" { pending.resume(returning: [:]) }
+                        else { pending.resume(throwing: CodexClientError.unavailable(event.payload["error"] as? String ?? "Codex could not compact this thread.")) }
+                        continue
+                    }
                     // Announce the accepted choice before usage can arrive; a
                     // late RPC response must not clear fresh stats or reroutes.
                     if event.name == "message.start", let sid = event.payload["session_id"] as? String,
@@ -424,6 +457,9 @@ final class CodexClient: RuntimeTransport {
         timeouts.removeAll()
         for continuation in pending.values { continuation.resume(throwing: error) }
         pending.removeAll()
+        for continuation in compactions.values { continuation.resume(throwing: error) }
+        compactions.removeAll()
+        compactionTasks.values.forEach { $0.cancel() }; compactionTasks.removeAll()
         output?.readabilityHandler = nil
         errorOutput?.readabilityHandler = nil
         try? input?.close()

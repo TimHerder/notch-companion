@@ -38,6 +38,8 @@ final class ClaudeClient: RuntimeTransport {
         var timeouts: [String: Task<Void, Never>] = [:]
         var send: CheckedContinuation<[String: Any], Error>?
         var sendTimeout: Task<Void, Never>?
+        var compaction: CheckedContinuation<[String: Any], Error>?
+        var compactionTimeout: Task<Void, Never>?
         var steers: [String: CheckedContinuation<[String: Any], Error>] = [:]
         var steerTimeouts: [String: Task<Void, Never>] = [:]
         var steeringReceipts = Set<String>()
@@ -50,6 +52,8 @@ final class ClaudeClient: RuntimeTransport {
             for value in pending { value.resume(throwing: error) }
             sendTimeout?.cancel(); sendTimeout = nil
             let submitted = send; send = nil; submitted?.resume(throwing: error)
+            compactionTimeout?.cancel(); compactionTimeout = nil
+            let compacting = compaction; compaction = nil; compacting?.resume(throwing: error)
             for task in steerTimeouts.values { task.cancel() }; steerTimeouts.removeAll()
             let steering = steers.values; steers.removeAll()
             for value in steering { value.resume(throwing: error) }
@@ -233,6 +237,22 @@ final class ClaudeClient: RuntimeTransport {
             return ["ref_text": "Attached local file (read with your native file tools and permissions): " + CodexProtocolState.describe([url.path])]
         case "image.detach":
             if let path = params["path"] as? String { session.images.removeAll { $0 == path } }; return [:]
+        case "session.compact":
+            // The documented slash command, sent as user input like the SDK's `/compact` prompt.
+            try session.state.beginCompaction(UUID().uuidString)
+            let turn = session.state.turnID
+            return try await withCheckedThrowingContinuation { continuation in
+                session.compaction = continuation
+                session.compactionTimeout = Task { @MainActor [weak session] in
+                    do { try await Task.sleep(for: .seconds(600)) } catch { return }
+                    guard let session else { return }
+                    let pending = session.compaction; session.compaction = nil
+                    pending?.resume(throwing: AppError("Claude Code did not finish compacting. Check the session before sending again."))
+                }
+                do { try session.process.send(["type": "user", "session_id": session.state.sessionID, "uuid": turn,
+                    "parent_tool_use_id": NSNull(), "message": ["role": "user", "content": "/compact"]]) }
+                catch { failed(session, error) }
+            }
         case "prompt.steer":
             guard session.state.supportsSteering, session.state.active, session.state.result == nil, session.state.requests.isEmpty else {
                 throw BusyInputRejection(message: "This Claude Code session has no running turn that accepts steering. Use Command–Return to queue.")
@@ -523,7 +543,24 @@ final class ClaudeClient: RuntimeTransport {
             }
             let steeringID = type == "command_lifecycle" ? frame["command_uuid"] as? String : type == "user" ? frame["uuid"] as? String : nil
             let ownedSteer = steeringID.map { session.state.pendingSteering.contains($0) || session.steers[$0] != nil || session.steeringReceipts.contains($0) } ?? false
-            let events = try session.state.receive(frame)
+            let compacting = session.state.compacting
+            var events = try session.state.receive(frame)
+            if compacting {
+                // A compaction is no conversation turn: its text, tools and token total stay out of the transcript.
+                events = events.compactMap { event in
+                    if event.name == "session.compacted" {
+                        session.compactionTimeout?.cancel(); session.compactionTimeout = nil
+                        let pending = session.compaction; session.compaction = nil
+                        if event.payload["status"] as? String == "complete" { pending?.resume(returning: [:]) }
+                        else { pending?.resume(throwing: AppError(event.payload["error"] as? String ?? "Claude Code did not compact this session.")) }
+                        return nil
+                    }
+                    guard !["message.start", "message.delta", "message.interim", "tool.start", "tool.complete", "session.title"].contains(event.name) else { return nil }
+                    var kept = event
+                    kept.payload.removeValue(forKey: "turn_tokens")
+                    return kept
+                }
+            }
             if frame["parent_tool_use_id"] as? String == nil {
                 let state = frame["state"] as? String ?? ""
                 if ownedSteer, let id = steeringID, type == "user" || ["queued", "started", "completed", "refused", "cancelled", "discarded"].contains(state) {

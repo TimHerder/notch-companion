@@ -270,6 +270,12 @@ from a synthetic catalog and a temporary folder.
 window's Find selecting a call inside a folded turn (`full-find-folded`) and
 with no matches (`full-find-none`), and a Claude approval with its deny reason
 field (`compact-`/`full-approval-reason`).
+`--session-ops-only` renders the context bubble's Compact and Start fresh
+(`session-ops-bubble`, `-compacting`, `-start-fresh-only` for a harness without
+Compact), a transcript with an unfolded Context compacted summary
+(`compact-context-compacted`), a New session row above a limit-stopped turn with
+Resume at reset (`compact-`/`full-limit-reached`) and the scheduled resume above
+the composer (`compact-`/`full-resume-scheduled`).
 
 Run `scripts/render-ui-fixtures.sh` to render the actual SwiftUI/AppKit views
 with a mock transport and temporary session storage. It writes PNGs under
