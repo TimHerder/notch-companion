@@ -91,6 +91,7 @@ import XCTest
                        "````\n```\nGOAL COMPLETE",
                        "~~~\n```\nGOAL COMPLETE",
                        "```\n``` swift\nGOAL COMPLETE",
+                       "```\n    ```\nGOAL COMPLETE",
                        "GOAL COMPLET",
                        "goal complete",
                        ""] {
@@ -315,5 +316,31 @@ import XCTest
         let reopened = AppModel(storageURL: storage, playsSounds: false, client: transport, preferences: preferences)
         defer { reopened.shutdown() }
         XCTAssertEqual(reopened.sessions.first?.goal?.pause, .quit)
+    }
+
+    func testAOneTurnGoalStartedDuringAnotherTurnStillSends() async throws {
+        await model.submit(reply: "Look around first")
+        try await wait { transport.prompts.count == 1 && model.current?.isBusy == true }
+        model.startGoal(id, objective: "Ship it", cap: 1)
+        model.editGoal(id, objective: "Ship it today", cap: 1)
+        model.receive("message.start", payload: ["session_id": "live", "role": "assistant"])
+        model.receive("message.complete", payload: ["session_id": "live", "text": "Looked.", "status": "complete"])
+        try await wait { transport.prompts.count == 2 }
+        XCTAssertTrue(transport.prompts[1].hasPrefix("Goal: Ship it today"), "An unsent goal message states the edited definition")
+        XCTAssertNil(goal?.pause)
+    }
+
+    func testClearingDuringSetupThenStartingAgainLeavesTheNewGoalAlone() async throws {
+        model.sessions[0].permissionMode = .plan
+        transport.holding = true
+        model.startGoal(id, objective: "Old", cap: 10)
+        try await wait { transport.holdAttach != nil }
+        model.clearGoal(id)
+        transport.holding = false
+        model.startGoal(id, objective: "New", cap: 10)
+        transport.holdAttach?.resume()
+        try await wait { transport.prompts.count == 1 }
+        XCTAssertTrue(transport.prompts[0].hasPrefix("Goal: New"))
+        XCTAssertNil(goal?.pause)
     }
 }

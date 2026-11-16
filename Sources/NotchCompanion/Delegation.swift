@@ -838,7 +838,7 @@ extension AppModel {
             // Native work found while reopening: it waits for that work like any queued message.
         } else if next.kind == ChatMessage.goal {
             // Never retried: the goal pauses, with the error on the session.
-            goalSendFailed(id)
+            goalSendFailed(id, entry: next.id)
         } else if next.resumesTurnID != nil {
             // A resume is one attempt; its error stays on the session.
             update(id) { $0.queuedSends.removeAll { $0.id == next.id } }

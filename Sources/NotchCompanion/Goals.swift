@@ -54,7 +54,8 @@ struct SessionGoal: Codable, Equatable {
         let lines = answer.components(separatedBy: .newlines)
         for (index, line) in lines.enumerated() {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if let mark = trimmed.first, mark == "`" || mark == "~" {
+            // A fence is indented at most three spaces; deeper, the line is content.
+            if line.prefix(while: { $0 == " " }).count <= 3, !line.hasPrefix("\t"), let mark = trimmed.first, mark == "`" || mark == "~" {
                 let run = trimmed.prefix { $0 == mark }.count
                 if run >= 3 {
                     if let open = fence {
@@ -162,7 +163,14 @@ extension AppModel {
         let text = objective.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let session = sessions.first(where: { $0.id == id }), session.goal != nil, !text.isEmpty else { return }
         let cap = min(max(cap, SessionGoal.caps.lowerBound), SessionGoal.caps.upperBound)
-        update(id) { $0.goal?.objective = text; $0.goal?.cap = cap; $0.goal?.limit = cap }
+        update(id) { target in
+            target.goal?.objective = text; target.goal?.cap = cap; target.goal?.limit = cap
+            // An unsent goal message states the new definition too.
+            for index in target.queuedSends.indices where target.queuedSends[index].kind == ChatMessage.goal && !target.wasDelivered(target.queuedSends[index].id) {
+                let start = target.queuedSends[index].text.hasPrefix("Goal: ")
+                if let goal = target.goal { target.queuedSends[index].text = start ? goal.startText : goal.continueText }
+            }
+        }
         guard save() else { update(id) { $0.goal = session.goal }; return }
     }
 
@@ -206,7 +214,9 @@ extension AppModel {
     }
 
     /// A goal message the runtime refused or never received pauses the goal; it is not retried.
-    func goalSendFailed(_ id: String) {
+    func goalSendFailed(_ id: String, entry: String) {
+        // Pause, Clear or Stop already took it out of the queue: nothing more to do, even for a newer goal.
+        guard sessions.first(where: { $0.id == id })?.queuedSends.contains(where: { $0.id == entry }) == true else { return }
         // The unsent entry leaves the queue uncounted.
         update(id) { $0.pauseGoal(.failed) }
         save()
@@ -221,7 +231,7 @@ extension AppModel {
               let row = session.messages.last(where: { $0.role == "user" && SessionHistory.isVisibleConversation($0) }) else { return false }
         let goalTurn = session.isGoalTurn(row)
         // A resumed limit-stopped goal turn counts however it ends, so repeated limits keep to the cap.
-        if goal.pause == .limit, goalTurn, row.kind != ChatMessage.goal, goal.turnID != row.id {
+        if goalTurn, row.kind != ChatMessage.goal, goal.turnID != row.id {
             update(id) { $0.goal?.turns += 1; $0.goal?.turnID = row.id }
         }
         switch status {
@@ -257,6 +267,8 @@ extension AppModel {
             || session.runtimeID.map { sid in requests.contains { $0.sessionID == sid } } == true
         if asking { save(); return false }
         if deferredOperation != nil { update(id) { $0.pauseGoal(.quit) }; save(); return false }
+        // The first message of a goal started during this turn is already counted and waiting.
+        if session.hasUnsentGoalTurn { save(); return true }
         if current.turns >= current.limit { update(id) { $0.pauseGoal(.cap) }; save(); return false }
         queueGoalTurn(id, start: false)
         return sessions.first(where: { $0.id == id })?.hasUnsentGoalTurn == true

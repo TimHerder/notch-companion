@@ -280,8 +280,9 @@ Companion)” in help:
   session and its children like a user's queued message, and Quit waits for it.
 - At `message.complete` (`goalTurnEnded`): when the turn's final answer (its last
   assistant text after its user row) has `GOAL COMPLETE` as its last non-empty
-  line, outside a fenced (closed only by the same character, at least as long)
-  or indented code block and not quoted, the goal ends
+  line, outside a fenced (a fence is indented at most three spaces and closed
+  only by the same character, at least as long) or indented code block and not
+  quoted, the goal ends
   and a `goalReached` session marker holds the paragraph above it. A
   decorated, partial or mid-answer marker does not count. Otherwise, a turn
   that finished (not waiting on children) queues one follow-up (“Continue
@@ -290,7 +291,9 @@ Companion)” in help:
   is already queued, a question from the turn or an approval is open (the
   user's reply is their own turn, whose end continues), Quit or Reconnect is
   waiting, or the turns sent reached the limit (paused at the cap; Continue
-  allows another cap). A turn whose follow-up is queued is not announced. A
+  allows another cap). A goal message already waiting (a goal started during
+  the turn) is sent instead of a new one. A turn whose follow-up is queued is
+  not announced. Edit rewrites an unsent goal message with the new definition. A
   turn that ends before its send is acknowledged still continues (its own
   delivered entry does not count as queued), and a parent turn that settles
   when its last native child finishes is evaluated then.
