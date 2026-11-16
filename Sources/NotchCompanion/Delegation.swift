@@ -133,26 +133,42 @@ enum Delegation {
         return String(slug.prefix(40)) + (slug.isEmpty ? "" : "-") + String(taskID.prefix(8))
     }
 
-    /// A new worktree and `notch/<name>` branch from the folder's repository
-    /// HEAD, as T3 Code prepares a child checkout; uncommitted edits stay out.
-    /// Returns the folder's counterpart inside it.
-    nonisolated static func makeWorktree(from folder: String, name: String, root: URL) throws -> String {
+    /// A new worktree and `notch/<name>` branch from `base` (the folder's
+    /// repository HEAD by default), as T3 Code prepares a child checkout;
+    /// uncommitted edits stay out. A taken name gets the next free suffix.
+    /// Returns the folder's counterpart inside it and the record cleanup uses.
+    nonisolated static func makeWorktree(from folder: String, name: String, root: URL, base: String = "HEAD") throws -> (folder: String, worktree: SessionWorktree) {
         let source = URL(fileURLWithPath: folder).standardizedFileURL.resolvingSymlinksInPath()
         guard let top = try? WorkspaceChanges.run(["rev-parse", "--show-toplevel"], at: source.path).trimmingCharacters(in: .whitespacesAndNewlines),
               !top.isEmpty else {
             throw DelegationFailure("invalid_request", "isolation worktree needs your folder to be in a Git repository.")
         }
         let repository = URL(fileURLWithPath: top).standardizedFileURL.resolvingSymlinksInPath()
+        // Git commands run in the main checkout, which outlives any worktree (this folder may be one).
+        let main = (try? WorkspaceChanges.run(["worktree", "list", "--porcelain"], at: repository.path))?
+            .split(separator: "\n").first.flatMap { $0.hasPrefix("worktree ") ? String($0.dropFirst(9)) : nil } ?? repository.path
         let digest = SHA256.hash(data: Data(repository.path.utf8)).prefix(4).map { String(format: "%02x", $0) }.joined()
-        let worktree = root.appendingPathComponent(repository.lastPathComponent + "-" + digest, isDirectory: true).appendingPathComponent(name, isDirectory: true)
-        try FileManager.default.createDirectory(at: worktree.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let parent = root.appendingPathComponent(repository.lastPathComponent + "-" + digest, isDirectory: true)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        var unique = name
+        var suffix = 1
+        while FileManager.default.fileExists(atPath: parent.appendingPathComponent(unique).path)
+                || (try? WorkspaceChanges.run(["rev-parse", "--verify", "--quiet", "refs/heads/notch/" + unique], at: repository.path)) != nil {
+            suffix += 1
+            unique = name + "-\(suffix)"
+        }
+        let worktree = parent.appendingPathComponent(unique, isDirectory: true)
         do {
-            _ = try WorkspaceChanges.run(["worktree", "add", "-b", "notch/" + name, worktree.path, "HEAD"], at: repository.path, timeout: 120)
+            // No upstream: a remote base must never become the new branch's push target.
+            _ = try WorkspaceChanges.run(["worktree", "add", "--no-track", "-b", "notch/" + unique, worktree.path, base],
+                                         at: repository.path, timeout: 120, reportingErrors: true)
         } catch {
-            throw DelegationFailure("orchestration_error", "Git could not create a worktree for the child. The repository needs a commit, and the branch notch/\(name) must not exist.")
+            throw DelegationFailure("orchestration_error", "Git could not create a worktree from \(base): \(error.localizedDescription)")
         }
         let relative = source.path == repository.path ? "" : String(source.path.dropFirst(repository.path.count + 1))
-        return relative.isEmpty ? worktree.path : worktree.appendingPathComponent(relative).path
+        let record = SessionWorktree(repository: main, project: URL(fileURLWithPath: folder).standardizedFileURL.path,
+                                     branch: "notch/" + unique, path: worktree.path)
+        return (relative.isEmpty ? worktree.path : worktree.appendingPathComponent(relative).path, record)
     }
 
     static let tools: [[String: Any]] = {
@@ -499,9 +515,10 @@ extension AppModel {
             let folder = parent.workspacePath ?? workspacePath
             let root = worktreesDirectory
             let name = Delegation.worktreeName(title: named, taskID: taskID)
-            let worktree = try await Task.detached { try Delegation.makeWorktree(from: folder, name: name, root: root) }.value
+            let (worktree, record) = try await Task.detached { try Delegation.makeWorktree(from: folder, name: name, root: root) }.value
             try Task.checkCancellation()
             child.workspacePath = worktree
+            child.worktree = record
             // A worktree checks out the same project, so the folder's trust carries over.
             if child.trustedProjectPath != nil { child.trustedProjectPath = URL(fileURLWithPath: worktree).standardizedFileURL.resolvingSymlinksInPath().path }
         }

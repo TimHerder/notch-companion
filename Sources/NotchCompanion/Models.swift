@@ -308,6 +308,10 @@ struct CompanionSession: Identifiable, Codable, Equatable {
     /// An app-owned child lives inside this parent session only.
     var parentSessionID: String? = nil
     var delegation: DelegationRecord? = nil
+    /// A draft's New worktree choice: the base branch its first send branches from; nil works in place.
+    var worktreeBase: String? = nil
+    /// The worktree the app created for this session or delegated child.
+    var worktree: SessionWorktree? = nil
     var queuedSends: [QueuedSend] = []
     /// The mode in use when Plan was chosen, for Plan ready's Implement; nil is Default permissions.
     var prePlanPermissionMode: PermissionMode? = nil
@@ -472,7 +476,7 @@ extension CompanionSession {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic
+        case id, runtimeID, storedID, title, state, messages, tools, agents, changes, createdAt, updatedAt, draft, attachments, workspacePath, parentTurnComplete, completionID, acknowledgedCompletionID, isArchived, runtime, profileID, isLegacyPrivate, migratedFromSessionID, nativeSubmissionAttempted, pendingSubmission, stagedSubmission, modelOverride, permissionMode, fullAccessConfirmed, turnTokens, turnEndedAt, turnOutcome, runtimeInfo, trustedProjectPath, nativeActivityUnverified, parentSessionID, delegation, queuedSends, lastSeenAt, snoozedUntil, prePlanPermissionMode, planReadyDismissedTurnID, planTurnID, titleIsAutomatic, worktreeBase, worktree
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -519,6 +523,8 @@ extension CompanionSession {
         nativeActivityUnverified = try values.decodeIfPresent(String.self, forKey: .nativeActivityUnverified)
         parentSessionID = try values.decodeIfPresent(String.self, forKey: .parentSessionID)
         delegation = try values.decodeIfPresent(DelegationRecord.self, forKey: .delegation)
+        worktreeBase = try values.decodeIfPresent(String.self, forKey: .worktreeBase)
+        worktree = try values.decodeIfPresent(SessionWorktree.self, forKey: .worktree)
         queuedSends = try values.decodeIfPresent([QueuedSend].self, forKey: .queuedSends) ?? []
         lastSeenAt = try values.decodeIfPresent(Date.self, forKey: .lastSeenAt)
         snoozedUntil = try values.decodeIfPresent(Date.self, forKey: .snoozedUntil)

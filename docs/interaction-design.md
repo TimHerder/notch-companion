@@ -638,7 +638,8 @@ snapshot against the turn-start commit, including staged, unstaged and
 untracked non-ignored files; its note says it includes pre-existing and
 concurrent edits. Snapshots wait for parent and delegated work to settle.
 Summaries stay attached to their turns; old conversations are not backfilled.
-Empty results and non-Git folders without a native diff add no card. Read
+Empty results and non-Git folders without a native diff add no card. A
+[worktree session](#projects) snapshots, and opens files in, its worktree. Read
 errors and oversized diffs show an explanation and the editor action, never a
 partial total. See the [runtime limits](backend-runtime.md#change-summaries).
 
@@ -855,6 +856,18 @@ no native menu tracking.
   to Settings and keep drafts and files editable with Send disabled. The
   detailed chooser stays in Settings for the default agent. Connection timing:
   [runtime contract](backend-runtime.md#multi-harness-contract).
+- When the draft's folder is in a Git repository with a commit, a third
+  button follows them: the **workspace** choice, **Local** (default, the
+  folder itself) or **Worktree · <base>**. Its overlay opens from its trailing
+  edge with **Local** and **New worktree**; choosing New worktree keeps it open
+  on a **Base branch** section: a **Search branches…** field over the local
+  and remote-tracking branches (`origin/HEAD` left out), the repository's
+  current branch first, marked “current”, and chosen by default. Choosing a
+  branch or Local closes it. OpenClaw drafts (their agent's workspace) and
+  folders outside Git offer no choice; changing the folder or choosing OpenClaw
+  returns the draft to Local. On the first send the companion creates the
+  worktree (see [projects](#projects)); if Git refuses, the draft, files and
+  choice stay, the error shows and nothing is sent.
 - The Archived chip toggles; choosing it again returns to the active list. Row
   ellipses expand actions inline; right-click keeps the native menu.
 
@@ -971,6 +984,18 @@ identify selection.
     The selection never auto-archives; `lastSeenAt` is set when a session is
     opened, read, restored or stops being the selection. The list re-evaluates every minute. Sending,
     opening or Restore brings it back.
+  - **Remove worktrees** (`sessions.removeWorktrees`, below it in Settings):
+    **When the session is archived** (default; by hand or auto-archive),
+    **After 7 days inactive** (the later of last activity and `lastSeenAt`;
+    never the selection) or **Never**, reading **Archived**, **7 days** and
+    **Never** where the row has no room for the full names (which VoiceOver
+    reads). It applies only to worktrees the app created, for
+    [worktree sessions](#projects) and isolated delegated children (which
+    follow their top-level parent), and only while that whole tree is idle.
+    A worktree with uncommitted changes, a detached checkout or one another
+    session works in is kept, shown as kept and retried an hour later; an
+    unmerged branch is kept
+    ([runtime contract](backend-runtime.md#delegation)).
   - Archived lists manual and auto-archived sessions by project; archived
     attention and unread results keep their dots. A search query covers every
     top-level session, titles and conversations, archived ones marked with
@@ -1003,8 +1028,9 @@ identify selection.
     rows share a height; a long title truncates at its end.
     The title and latest message are the tooltip and part of the accessibility label.
     Hover, focus or open swaps the age for the ellipsis, which expands Rename,
-    Snooze or Wake now, Archive or Restore, and Continue in Hermes… (legacy
-    only) inline, wrapping onto further rows in the sidebar rather than
+    Snooze or Wake now, Archive or Restore (which also recreates a removed
+    [worktree](#projects), showing Git's error if it cannot), and Continue in
+    Hermes… (legacy only) inline, wrapping onto further rows in the sidebar rather than
     truncating. Snooze swaps those actions for its four choices and Cancel
     (wrapping the same way); the right-click menu shows them as a submenu.
   - Order keeps the stable order used by the dots. Archiving keeps history,
@@ -1041,6 +1067,15 @@ folder whose sessions are all archived leaves the default list.
   Moving a draft to another folder moves it to that project.
 - The global **+** uses the default folder. OpenClaw drafts group under their
   agent's workspace.
+- A **worktree session** (New worktree in a draft) runs in a new
+  `notch/<name>` worktree under the app's Worktrees folder, in the subfolder
+  matching the chosen one, and stays grouped under the folder it branched
+  from. Its folder chip in the composer's bar shows a branch mark and the
+  branch name, and its tooltip names the branch, project and checkout path,
+  plus cleanup's outcome: **Removed** (sending or Restore recreates it from
+  its branch) or **Kept** and why (uncommitted changes, retried later). A
+  started worktree session's folder cannot change. Cleanup:
+  [runtime contract](backend-runtime.md#delegation).
 
 ## Agent questions and delivered files
 

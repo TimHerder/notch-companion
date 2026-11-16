@@ -479,43 +479,8 @@ struct ModelControlsView: View {
         .disabled(!model.canChangeModel(session.id))
     }
 
-    @ViewBuilder
     private func searchField(session: CompanionSession) -> some View {
-        switch PanelTheme.current {
-        case .refined:
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(CompanionStyle.tertiary)
-                    .accessibilityHidden(true)
-                TextField("Search models…", text: $search).textFieldStyle(.plain).textCursor()
-                    .accessibilityLabel("Find a \(session.runtime.title) model")
-            }
-            .font(CompanionStyle.callout)
-            .padding(.horizontal, 10).frame(height: 30)
-            .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(CompanionStyle.hairline, lineWidth: 0.75))
-        case .tahoe:
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(CompanionStyle.secondary)
-                    .accessibilityHidden(true)
-                TextField("Search models…", text: $search).textFieldStyle(.plain).textCursor()
-                    .font(.system(size: 13))
-                    .accessibilityLabel("Find a \(session.runtime.title) model")
-            }
-            .padding(.horizontal, 9).frame(height: 28)
-            // The inset well of a native search field.
-            .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
-        case .instrument:
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass").font(.system(size: 10.5)).foregroundStyle(CompanionStyle.secondary)
-                    .accessibilityHidden(true)
-                TextField("Search models…", text: $search).textFieldStyle(.plain).font(CompanionStyle.mono(11)).textCursor()
-                    .accessibilityLabel("Find a \(session.runtime.title) model")
-            }
-            .padding(.horizontal, 8).frame(height: 28)
-            .background(CompanionStyle.inset, in: RoundedRectangle(cornerRadius: CompanionStyle.radius))
-            .overlay(RoundedRectangle(cornerRadius: CompanionStyle.radius).strokeBorder(CompanionStyle.ruleStrong, lineWidth: 0.75))
-        }
+        NotchSearchField(prompt: "Search models…", text: $search, label: "Find a \(session.runtime.title) model")
     }
 
     @ViewBuilder
@@ -682,5 +647,50 @@ extension View {
         return background(Color(white: 0.045), in: shape)
             .overlay(shape.strokeBorder(CompanionStyle.ruleStrong, lineWidth: 0.5))
             .shadow(color: .black.opacity(0.6), radius: 14, x: 0, y: 6)
+    }
+}
+
+/// The inset search field of the bounded pickers, in the current design.
+struct NotchSearchField: View {
+    let prompt: String
+    @Binding var text: String
+    let label: String
+
+    var body: some View {
+        switch PanelTheme.current {
+        case .refined:
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(CompanionStyle.tertiary)
+                    .accessibilityHidden(true)
+                TextField(prompt, text: $text).textFieldStyle(.plain).textCursor()
+                    .accessibilityLabel(label)
+            }
+            .font(CompanionStyle.callout)
+            .padding(.horizontal, 10).frame(height: 30)
+            .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(CompanionStyle.hairline, lineWidth: 0.75))
+        case .tahoe:
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(CompanionStyle.secondary)
+                    .accessibilityHidden(true)
+                TextField(prompt, text: $text).textFieldStyle(.plain).textCursor()
+                    .font(.system(size: 13))
+                    .accessibilityLabel(label)
+            }
+            .padding(.horizontal, 9).frame(height: 28)
+            // The inset well of a native search field.
+            .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
+        case .instrument:
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass").font(.system(size: 10.5)).foregroundStyle(CompanionStyle.secondary)
+                    .accessibilityHidden(true)
+                TextField(prompt, text: $text).textFieldStyle(.plain).font(CompanionStyle.mono(11)).textCursor()
+                    .accessibilityLabel(label)
+            }
+            .padding(.horizontal, 8).frame(height: 28)
+            .background(CompanionStyle.inset, in: RoundedRectangle(cornerRadius: CompanionStyle.radius))
+            .overlay(RoundedRectangle(cornerRadius: CompanionStyle.radius).strokeBorder(CompanionStyle.ruleStrong, lineWidth: 0.75))
+        }
     }
 }

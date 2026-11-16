@@ -232,7 +232,11 @@ a runtime. `runtimeID` is a connection-local alias cleared on restart. Native ID
 into another profile's IDs. The router isolates identical
 live and request IDs across runtimes/profiles; a connection failure interrupts
 only that route, and an unavailable installation does not disable others.
-Projects derive from each entry's working folder; there is no project field.
+Projects derive from each entry's working folder, or for a worktree session its
+`worktree.project`; there is no project field. `worktreeBase` (a draft's New
+worktree base) and `worktree` (the app-created worktree) are optional, so older
+registries decode without them; neither reaches a runtime, which sees only the
+working folder.
 
 Only companion-created entries (and their delegated children) appear in lists,
 search, navigation and indicators. The router refuses `session.list`, ignores
@@ -698,11 +702,39 @@ harness. Any ready harness can be a child; only hosting harnesses give it tools.
 Claude, Antigravity, Cursor and Copilot children need the user's existing trust for that
 harness and folder (`capability_denied` otherwise).
 
-**Worktrees.** `isolation: worktree` runs `git worktree add -b notch/<name>` from
-HEAD of the parent folder's repository into `Worktrees/<repository>-<hash>/`
-beside the registry and starts the child in the matching subfolder. Uncommitted
-edits stay out; outside Git is `invalid_request`. The worktree inherits the
-folder's trust. Worktrees and branches are never removed by the app.
+**Worktrees.** `isolation: worktree` runs `git worktree add --no-track -b
+notch/<name>` from HEAD of the parent folder's repository into
+`Worktrees/<repository>-<hash>/` beside the registry and starts the child in the
+matching subfolder. A name already taken by a folder or branch gets the next
+`-2`, `-3` suffix. Uncommitted edits stay out; outside Git is
+`invalid_request`; Git's own error is reported. The worktree inherits the
+folder's trust. A draft that chose **New worktree** uses the same code on its
+first send, before the native session opens, from its chosen base branch
+(`worktreeBase`; local or remote-tracking, never set as upstream), named from
+its title and the first 8 characters of its ID; a refusal restores the draft
+and sends nothing. Both save a `worktree` record (main checkout, project
+folder, branch, path).
+
+The app removes only worktrees it recorded, and only under its own Worktrees
+folder, never the user's. Settings → **Remove worktrees** (`archived` default,
+`inactive` after 7 days, `never`) is checked 30 seconds after launch and every
+ten minutes against each top-level session, whose children follow it; it
+needs the whole tree idle (not busy, submitting, unconfirmed, queued, waiting
+on children or creating a child). A worktree another session works in (such as
+one `create_sessions` started in the caller's folder) is kept. Removal first
+checks that Git still lists the path as a worktree on its recorded branch, so a
+detached HEAD (whose commits would lose their reference) or someone else's
+checkout at that path is kept. It is `git worktree remove <path>`
+without `--force`, so a worktree with uncommitted or untracked files is kept
+(`kept`, retried after an hour), then `git branch -d <branch>`, which keeps an
+unmerged branch. A removed worktree (`removed`) or one deleted by hand comes
+back before the next send or on Restore with `git worktree add <path>
+<branch>` (a shared child's send recreates the ancestor's worktree it works in;
+paths are compared with symlinks resolved); if that fails (the branch was merged and deleted, for example) the
+error shows, the draft stays and nothing is sent. A restore and a send share
+one attempt, and both wait for a cleanup pass in progress. Git's stderr is
+read alongside its output, so a noisy hook cannot stall a command. Continuing in the
+original folder instead is not offered.
 
 **Questions.** A child's question (not an approval) queues a “Delegated
 question” notice to its parent pointing at `pending_request_read`/`respond` or
@@ -812,7 +844,9 @@ acknowledgement keeps a recoverable intent, blocks automatic retry and silent
 reload of an attached session, and offers **Check last send**. After disconnect
 or restart that input alone does not block Quit/Reconnect, but its receipt
 protection persists. Resume reconciles the intent against recorded user turns
-before another send; a missing submitted record is never guessed away. Busy
+before another send; a missing submitted record is never guessed away. A worktree session's
+worktree is created or recreated after the staging record and before the send
+intent, so a Git failure restores the draft like any setup failure. Busy
 native conversations are observed without appending competing turns.
 Quit/Reconnect offer wait, explicit stop or cancel, and wait for tracked
 parent/child terminal events, not just interrupt acknowledgements.
