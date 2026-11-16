@@ -26,6 +26,20 @@ struct SessionWorktree: Codable, Equatable, Sendable {
         guard folder.hasPrefix(root.standardizedFileURL.resolvingSymlinksInPath().path + "/") else {
             return "It is outside Notch Companion’s Worktrees folder."
         }
+        // Only the checkout the app made, still on its branch: a detached HEAD's commits or a
+        // worktree someone else put at this path would be lost or taken.
+        guard let list = try? WorkspaceChanges.run(["worktree", "list", "--porcelain"], at: repository) else {
+            return "Git could not list the repository’s worktrees."
+        }
+        let entry = list.components(separatedBy: "\n\n").first { block in
+            block.split(separator: "\n").first.map { URL(fileURLWithPath: String($0.dropFirst(9))).standardizedFileURL.resolvingSymlinksInPath().path } == folder
+        }
+        guard let entry else {
+            return FileManager.default.fileExists(atPath: path) ? "It is no longer one of this repository’s worktrees." : nil
+        }
+        guard entry.split(separator: "\n").contains("branch refs/heads/" + branch) else {
+            return "It is no longer on \(branch), so removing it could lose commits."
+        }
         do { _ = try WorkspaceChanges.run(["worktree", "remove", path], at: repository, timeout: 60, reportingErrors: true) }
         catch {
             let message = error.localizedDescription
@@ -142,6 +156,8 @@ extension AppModel {
     /// Recreates a worktree cleanup removed (or one deleted by hand) from its kept branch.
     /// A restore and a send at once share one attempt.
     func recreateWorktree(_ id: String) async throws {
+        // A removal in progress finishes first, so it cannot take the recreated checkout.
+        await worktreeCleanupTask?.value
         if let running = worktreeRestores[id] { return try await running.value }
         guard let worktree = sessions.first(where: { $0.id == id })?.worktree,
               !FileManager.default.fileExists(atPath: worktree.path) else { return }
@@ -197,6 +213,17 @@ extension AppModel {
                       let worktree = sessions.first(where: { $0.id == id })?.worktree, worktree.removed != true,
                       worktreeAttempts[id].map({ now.timeIntervalSince($0) >= 3_600 }) ?? true else { continue }
                 worktreeAttempts[id] = now
+                // Another session working in it (`create_sessions` inherits the folder) keeps it.
+                let folder = URL(fileURLWithPath: worktree.path).standardizedFileURL.path
+                let tree = Set(delegatedDescendants(of: session.id) + [session.id])
+                if sessions.contains(where: { !tree.contains($0.id) && $0.workspacePath.map {
+                    let path = URL(fileURLWithPath: $0).standardizedFileURL.path
+                    return path == folder || path.hasPrefix(folder + "/")
+                } == true }) {
+                    update(id) { $0.worktree?.kept = "Another session works in it." }
+                    changed = true
+                    continue
+                }
                 let kept = await Task.detached(priority: .utility) { worktree.remove(under: root) }.value
                 update(id) { $0.worktree?.removed = kept == nil ? true : nil; $0.worktree?.kept = kept }
                 changed = true

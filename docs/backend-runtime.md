@@ -720,14 +720,19 @@ folder, never the user's. Settings → **Remove worktrees** (`archived` default,
 `inactive` after 7 days, `never`) is checked 30 seconds after launch and every
 ten minutes against each top-level session, whose children follow it; it
 needs the whole tree idle (not busy, submitting, unconfirmed, queued, waiting
-on children or creating a child). Removal is `git worktree remove <path>`
+on children or creating a child). A worktree another session works in (such as
+one `create_sessions` started in the caller's folder) is kept. Removal first
+checks that Git still lists the path as a worktree on its recorded branch, so a
+detached HEAD (whose commits would lose their reference) or someone else's
+checkout at that path is kept. It is `git worktree remove <path>`
 without `--force`, so a worktree with uncommitted or untracked files is kept
 (`kept`, retried after an hour), then `git branch -d <branch>`, which keeps an
 unmerged branch. A removed worktree (`removed`) or one deleted by hand comes
 back before the next send or on Restore with `git worktree add <path>
 <branch>`; if that fails (the branch was merged and deleted, for example) the
 error shows, the draft stays and nothing is sent. A restore and a send share
-one attempt, and a send waits for a cleanup pass in progress. Continuing in the
+one attempt, and both wait for a cleanup pass in progress. Git's stderr is
+read alongside its output, so a noisy hook cannot stall a command. Continuing in the
 original folder instead is not offered.
 
 **Questions.** A child's question (not an approval) queues a “Delegated

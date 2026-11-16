@@ -238,7 +238,6 @@ enum WorkspaceChanges {
         process.currentDirectoryURL = URL(fileURLWithPath: workspace, isDirectory: true)
         process.environment = ["PATH": "/usr/bin:/bin", "HOME": FileManager.default.homeDirectoryForCurrentUser.path, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"]
         process.standardInput = FileHandle.nullDevice
-        // Only short commands report errors, so their stderr cannot fill its pipe while stdout drains.
         let errors = reportingErrors ? Pipe() : nil
         process.standardError = errors ?? FileHandle.nullDevice
         let pipe = Pipe()
@@ -257,6 +256,17 @@ enum WorkspaceChanges {
         }
         try pipe.fileHandleForWriting.close()
         try errors?.fileHandleForWriting.close()
+        // Drained alongside stdout, so a noisy hook never blocks Git; only the last 64 KB are kept.
+        let drained = DispatchGroup()
+        nonisolated(unsafe) var errorData = Data()
+        if let errors {
+            DispatchQueue.global(qos: .utility).async(group: drained) {
+                while let chunk = try? errors.fileHandleForReading.read(upToCount: 65_536), !chunk.isEmpty {
+                    errorData.append(chunk)
+                    if errorData.count > 65_536 { errorData.removeFirst(errorData.count - 65_536) }
+                }
+            }
+        }
         var data = Data()
         var oversized = false
         while let chunk = try pipe.fileHandleForReading.read(upToCount: 65_536), !chunk.isEmpty {
@@ -267,10 +277,11 @@ enum WorkspaceChanges {
             }
         }
         process.waitUntilExit()
+        drained.wait()
         guard !oversized else { throw AppError("The diff is too large to preview. Open the project in your editor.") }
         guard process.terminationStatus == 0 || (acceptsDifference && process.terminationStatus == 1) else {
-            if let errors {
-                let output = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            if errors != nil {
+                let output = String(decoding: errorData, as: UTF8.self)
                 // Progress lines ("Preparing worktree…") come first; the failure is Git's fatal/error line.
                 let failures = output.split(separator: "\n").filter { $0.hasPrefix("fatal:") || $0.hasPrefix("error:") }
                 let message = (failures.isEmpty ? output : failures.joined(separator: "\n")).trimmingCharacters(in: .whitespacesAndNewlines)

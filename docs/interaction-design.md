@@ -992,8 +992,9 @@ identify selection.
     reads). It applies only to worktrees the app created, for
     [worktree sessions](#projects) and isolated delegated children (which
     follow their top-level parent), and only while that whole tree is idle.
-    A worktree with uncommitted changes is kept, shown as kept and retried an
-    hour later; an unmerged branch is kept
+    A worktree with uncommitted changes, a detached checkout or one another
+    session works in is kept, shown as kept and retried an hour later; an
+    unmerged branch is kept
     ([runtime contract](backend-runtime.md#delegation)).
   - Archived lists manual and auto-archived sessions by project; archived
     attention and unread results keep their dots. A search query covers every

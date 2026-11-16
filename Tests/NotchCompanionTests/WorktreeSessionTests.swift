@@ -228,6 +228,75 @@ import XCTest
         XCTAssertTrue(FileManager.default.fileExists(atPath: own.path))
     }
 
+    /// An archived worktree session with nothing uncommitted.
+    private func archivedWorktreeSession(_ model: AppModel, repository: URL) async throws -> (String, SessionWorktree) {
+        await model.connect()
+        let id = try await worktreeDraft(model, folder: repository.path, base: "main")
+        model.draft = "Work"
+        await model.send()
+        finish(model, id)
+        model.archiveSession(id)
+        return (id, try XCTUnwrap(model.sessions.first { $0.id == id }?.worktree))
+    }
+
+    func testADetachedOrReplacedCheckoutIsKept() async throws {
+        let (model, _) = makeModel()
+        let repository = try makeRepository()
+        let (id, worktree) = try await archivedWorktreeSession(model, repository: repository)
+        let checkout = URL(fileURLWithPath: worktree.path)
+        try git(["checkout", "-q", "--detach"], at: checkout)
+        try Data("x".utf8).write(to: checkout.appendingPathComponent("detached.txt"))
+        try git(["add", "."], at: checkout); try git(["commit", "-q", "-m", "Detached"], at: checkout)
+        await model.cleanUpWorktrees()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: worktree.path + "/detached.txt"), "A detached commit would lose its only reference")
+        XCTAssertTrue(model.sessions.first { $0.id == id }?.worktree?.kept?.contains(worktree.branch) == true)
+
+        // Someone else's worktree now at that path: not the app's checkout.
+        try git(["worktree", "remove", "--force", worktree.path], at: repository)
+        try git(["worktree", "add", "-q", "-b", "theirs", worktree.path], at: repository)
+        model.worktreeAttempts = [:]
+        await model.cleanUpWorktrees()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: worktree.path))
+        XCTAssertFalse(try git(["branch", "--list", "theirs"], at: repository).isEmpty)
+    }
+
+    func testAnotherSessionInTheWorktreeKeepsIt() async throws {
+        let (model, _) = makeModel()
+        let repository = try makeRepository()
+        let (id, worktree) = try await archivedWorktreeSession(model, repository: repository)
+        // As `create_sessions` makes one: a top-level session in the caller's folder.
+        model.sessions.append(CompanionSession(id: "sibling", title: "Sibling", state: .working, workspacePath: worktree.path))
+        await model.cleanUpWorktrees()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: worktree.path))
+        XCTAssertEqual(model.sessions.first { $0.id == id }?.worktree?.kept, "Another session works in it.")
+    }
+
+    func testRestoreWaitsForARemovalInProgress() async throws {
+        let (model, _) = makeModel()
+        let repository = try makeRepository()
+        let (id, worktree) = try await archivedWorktreeSession(model, repository: repository)
+        let checkout = URL(fileURLWithPath: worktree.path)
+        try Data("x".utf8).write(to: checkout.appendingPathComponent("kept.txt"))
+        try git(["add", "."], at: checkout); try git(["commit", "-q", "-m", "Unmerged"], at: checkout)
+        let cleanup = Task { await model.cleanUpWorktrees() }
+        await Task.yield()
+        model.restoreSession(id)
+        await model.recreateWorktrees(restoring: id)
+        await cleanup.value
+        XCTAssertTrue(FileManager.default.fileExists(atPath: worktree.path + "/kept.txt"), model.errorMessage ?? "Recreated after the removal")
+    }
+
+    func testNoisyGitStderrDoesNotStallTheCommand() throws {
+        let repository = try makeRepository()
+        let hooks = repository.appendingPathComponent("hooks")
+        try FileManager.default.createDirectory(at: hooks, withIntermediateDirectories: true)
+        let hook = hooks.appendingPathComponent("post-checkout")
+        try Data("#!/bin/sh\nhead -c 262144 /dev/zero | tr '\\0' x >&2\n".utf8).write(to: hook)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        _ = try WorkspaceChanges.run(["-c", "core.hooksPath=" + hooks.path, "checkout", "-q", "feature"], at: repository.path,
+                                     timeout: 10, reportingErrors: true)
+    }
+
     func testOlderRegistriesDecodeWithoutWorktreeFields() throws {
         let old = try JSONDecoder().decode(CompanionSession.self, from: Data(#"{"id":"old","runtime":"codex"}"#.utf8))
         XCTAssertNil(old.worktree)
