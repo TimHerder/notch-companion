@@ -296,7 +296,7 @@ extension AppModel {
 
     func handleDelegationTool(_ caller: DelegationCaller, name: String, arguments: [String: Any]) async throws -> [String: Any] {
         if caller.client != nil {
-            try checkOutsideCall(name, arguments)
+            try checkOutsideCall(caller, name, arguments)
         } else {
             guard delegationEnabled else { throw DelegationFailure("capability_denied", "Delegation is turned off in Notch Companion's settings.") }
             guard sessions.contains(where: { $0.id == caller.sessionID }) else { throw DelegationFailure("thread_not_found", "The calling session no longer exists.") }

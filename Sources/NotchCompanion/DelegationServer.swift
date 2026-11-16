@@ -189,7 +189,8 @@ final class DelegationServer {
         }
         if let batch = message as? [[String: Any]] {
             var replies: [[String: Any]] = []
-            for request in batch { if let reply = await handle(request, caller: caller) { replies.append(reply) } }
+            // A revoked client's closed request runs nothing more of its batch.
+            for request in batch where !Task.isCancelled { if let reply = await handle(request, caller: caller) { replies.append(reply) } }
             return replies.isEmpty ? Response(status: 202) : json(replies)
         }
         guard let request = message as? [String: Any] else { return json(Self.error(id: NSNull(), code: -32600, message: "Invalid request")) }
@@ -326,7 +327,11 @@ final class DelegationServer {
         var headers: [String: String] = [:]
         for line in lines.dropFirst() {
             guard let colon = line.firstIndex(of: ":") else { continue }
-            headers[String(line[..<colon]).trimmingCharacters(in: .whitespaces)] = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            let name = String(line[..<colon]).trimmingCharacters(in: .whitespaces)
+            // A repeated security header is ambiguous, so it cannot slip a foreign Host or Origin past `admits`.
+            if ["host", "origin", "authorization", "content-length"].contains(name.lowercased()),
+               headers.keys.contains(where: { $0.lowercased() == name.lowercased() }) { return .invalid(400) }
+            headers[name] = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
         }
         if headers.contains(where: { $0.key.lowercased() == "transfer-encoding" }) { return .invalid(411) }
         let length = Int(headers.first { $0.key.lowercased() == "content-length" }?.value ?? "0") ?? -1

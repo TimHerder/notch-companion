@@ -1600,16 +1600,30 @@ extension DelegationTests {
     }
 
     func testOutsideClientsKeepTheirPortAndRevokingDisconnects() async throws {
-        let (model, transport, _, defaults) = makeModel()
-        let (parentID, _) = try await activeParent(model)
-        // A port someone else holds falls back to a new one, which is saved and flagged.
+        // A free saved port is taken again.
+        let first = DelegationServer()
+        let started = try await first.start()
+        let free = try XCTUnwrap(started.port)
+        first.stop()
+        // The cancelled listener frees its port asynchronously, as a quit app's does before relaunch.
+        var reused: Int?
+        for _ in 0..<40 where reused != free {
+            let again = DelegationServer()
+            reused = try await again.start(preferredPort: UInt16(free)).port
+            again.stop()
+            if reused != free { try await Task.sleep(for: .milliseconds(50)) }
+        }
+        XCTAssertEqual(reused, free)
+        // At launch, a saved port someone else holds falls back to a new one, which is saved and flagged.
         let blocker = DelegationServer()
         let blocked = try await blocker.start()
         let taken = try XCTUnwrap(blocked.port)
         defer { blocker.stop() }
+        let defaults = preferences()
+        defaults.set(true, forKey: OutsideClients.enabledKey)
         defaults.set(taken, forKey: OutsideClients.portKey)
         defaults.set(taken, forKey: OutsideClients.seenPortKey)
-        model.outsideClientsEnabled = true
+        let (model, transport, _, _) = makeModel(preferences: defaults)
         await eventually { model.outsideURL != nil }
         let url = try XCTUnwrap(model.outsideURL)
         XCTAssertNotEqual(url.port, taken)
@@ -1617,6 +1631,8 @@ extension DelegationTests {
         XCTAssertTrue(model.outsidePortChanged, "Settings says clients need the new URL")
         let token = try XCTUnwrap(model.createOutsideClient(name: "Codex"))
         XCTAssertFalse(model.outsidePortChanged, "The new token's snippets use the current URL")
+        let (parentID, _) = try await activeParent(model)
+        XCTAssertEqual(model.delegationServer.url, url, "Session launches share the outside port")
 
         // A long wait over the socket ends when its token is revoked.
         var request = URLRequest(url: url)
@@ -1630,6 +1646,29 @@ extension DelegationTests {
         let ended = await waiting.result
         XCTAssertThrowsError(try ended.get(), "The connection closed without an answer")
         XCTAssertNil(model.delegationServer.caller(token: token))
-        _ = transport
+
+        // A batch revoked during its wait sends nothing after it.
+        let second = try XCTUnwrap(model.createOutsideClient(name: "Cursor"))
+        var batch = URLRequest(url: url)
+        batch.httpMethod = "POST"
+        batch.httpBody = try JSONSerialization.data(withJSONObject: [
+            ["jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": ["name": "notch_session_wait", "arguments": ["sessionId": parentID, "timeoutMs": 600_000]]],
+            ["jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": ["name": "notch_session_send", "arguments": ["sessionId": parentID, "message": "After revoke", "mode": "queue"]]]])
+        batch.setValue("Bearer " + second, forHTTPHeaderField: "Authorization")
+        let batched = Task { try await URLSession(configuration: .ephemeral).data(for: batch) }
+        try await Task.sleep(for: .milliseconds(300))
+        model.revokeOutsideClient(try XCTUnwrap(model.outsideClients.first?.id))
+        _ = await batched.result
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(model.sessions.first { $0.id == parentID }?.queuedSends.contains { $0.text == "After revoke" } ?? true)
+        XCTAssertFalse(transport.prompts(parentID).contains("After revoke"))
+    }
+
+    func testRepeatedSecurityHeadersAreRefused() {
+        func parse(_ head: String) -> DelegationServer.Parsed { DelegationServer.parse(Data((head + "\r\n\r\n").utf8)) }
+        XCTAssertEqual(parse("POST /mcp HTTP/1.1\r\nHost: attacker.example\r\nHost: 127.0.0.1:4100"), .invalid(400))
+        XCTAssertEqual(parse("POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:4100\r\nOrigin: https://attacker.example\r\norigin: null"), .invalid(400))
+        XCTAssertEqual(parse("POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:4100\r\nAuthorization: Bearer a\r\nAuthorization: Bearer b"), .invalid(400))
+        if case .request = parse("POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:4100\r\nOrigin: null") {} else { XCTFail("One of each is fine") }
     }
 }
