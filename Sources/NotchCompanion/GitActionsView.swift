@@ -159,7 +159,7 @@ struct GitActionsView: View {
     }
 }
 
-private extension View {
+extension View {
     /// A recessed field in each design, like a written answer.
     func gitField(lines: ClosedRange<Int>) -> some View {
         let shape = RoundedRectangle(cornerRadius: PanelTheme.pick(CompanionStyle.Radius.small, 8, CompanionStyle.radius), style: .continuous)

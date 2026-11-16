@@ -515,7 +515,7 @@ import XCTest
         let server = model.delegationServer
         let token = server.issueToken(for: caller)
         func post(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {
-            let response = await server.respond(method: "POST", path: "/mcp", headers: ["Authorization": "Bearer " + token],
+            let response = await server.respond(method: "POST", path: "/mcp", headers: ["Authorization": "Bearer " + token, "Host": "127.0.0.1:\(server.url?.port ?? 0)"],
                                                 body: try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 1, "method": method, "params": params]))
             return try XCTUnwrap((try JSONSerialization.jsonObject(with: response.body) as? [String: Any])?["result"] as? [String: Any])
         }
@@ -1440,5 +1440,196 @@ import XCTest
         XCTAssertEqual(((steer["input"] as? [[String: Any]])?.first?["text"]) as? String, "result")
         XCTAssertEqual(((steer["input"] as? [[String: Any]])?.last?["type"]) as? String, "localImage")
         XCTAssertEqual(((steer["input"] as? [[String: Any]])?.last?["path"]) as? String, image.path)
+    }
+}
+
+// MARK: Outside MCP clients
+
+extension DelegationTests {
+    private func outsideCall(_ server: DelegationServer, token: String, _ method: String, _ params: [String: Any] = [:]) async throws -> [String: Any] {
+        let response = await server.respond(method: "POST", path: "/mcp", headers: ["Authorization": "Bearer " + token, "Host": "localhost:\(server.url?.port ?? 0)"],
+                                            body: try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 1, "method": method, "params": params]))
+        return try XCTUnwrap((try JSONSerialization.jsonObject(with: response.body) as? [String: Any])?["result"] as? [String: Any])
+    }
+
+    private func outsideTool(_ server: DelegationServer, token: String, _ name: String, _ arguments: [String: Any]) async throws -> (Bool, String) {
+        let result = try await outsideCall(server, token: token, "tools/call", ["name": name, "arguments": arguments])
+        return (result["isError"] as? Bool == true, ((result["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "")
+    }
+
+    func testOutsideTokensKeepOnlyAHashSurviveRestartAndStopWhenRevokedOrOff() async throws {
+        let (model, _, storage, defaults) = makeModel()
+        XCTAssertFalse(model.outsideClientsEnabled, "Off by default")
+        XCTAssertNil(model.createOutsideClient(name: "Claude Desktop"), "No token while off")
+        model.outsideClientsEnabled = true
+        let token = try XCTUnwrap(model.createOutsideClient(name: "Claude Desktop"))
+        XCTAssertEqual(model.revealedOutsideToken?.token, token, "Shown once")
+        let saved = try XCTUnwrap(defaults.data(forKey: OutsideClients.clientsKey))
+        XCTAssertNil(String(data: saved, encoding: .utf8)?.range(of: token), "No plaintext on disk")
+        XCTAssertFalse(saved.contains(Data(token.utf8).base64EncodedData()))
+        XCTAssertEqual(model.outsideCaller(token: token)?.client, "Claude Desktop")
+        XCTAssertNotNil(model.outsideClients.first?.lastUsedAt)
+        XCTAssertNil(model.outsideCaller(token: token + "x"))
+        XCTAssertNil(model.delegationServer.caller(token: "guess"))
+        XCTAssertEqual(model.delegationServer.caller(token: token)?.client, "Claude Desktop", "The server accepts it beside session tokens")
+        model.shutdown()
+
+        let restarted = AppModel(storageURL: storage, playsSounds: false, client: DelegationFixture(), preferences: defaults)
+        models.append(restarted)
+        XCTAssertTrue(restarted.outsideClientsEnabled)
+        XCTAssertNil(restarted.revealedOutsideToken, "The token is never saved")
+        XCTAssertEqual(restarted.outsideCaller(token: token)?.client, "Claude Desktop", "Tokens survive restart")
+        restarted.outsideClientsEnabled = false
+        XCTAssertNil(restarted.delegationServer.caller(token: token), "Off accepts no outside token")
+        restarted.outsideClientsEnabled = true
+        restarted.revokeOutsideClient(try XCTUnwrap(restarted.outsideClients.first?.id))
+        XCTAssertNil(restarted.outsideCaller(token: token))
+        XCTAssertTrue(restarted.outsideClients.isEmpty)
+        XCTAssertTrue(OutsideClients.matches(Data([1, 2]), Data([1, 2])))
+        XCTAssertFalse(OutsideClients.matches(Data([1, 2]), Data([1, 3])))
+        XCTAssertFalse(OutsideClients.matches(Data([1]), Data([1, 2])))
+    }
+
+    func testOutsideClientsGetOnlyReadAndSendTools() async throws {
+        let (model, _, _, _) = makeModel()
+        let (parentID, caller) = try await activeParent(model)
+        let task = try await model.handleDelegationTool(caller, name: "delegate_task", arguments: ["task": "Look"])
+        let childID = try XCTUnwrap(child(model, task: task["taskId"])?.id)
+        model.outsideClientsEnabled = true
+        let token = try XCTUnwrap(model.createOutsideClient(name: "Cursor"))
+        let server = model.delegationServer
+        let initialized = try await outsideCall(server, token: token, "initialize", ["protocolVersion": "2025-06-18"])
+        XCTAssertEqual(initialized["instructions"] as? String, OutsideClients.instructions)
+        let listed = try await outsideCall(server, token: token, "tools/list")
+        XCTAssertEqual(Set((listed["tools"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }), OutsideClients.toolNames)
+        for (name, arguments) in [("delegate_task", ["task": "x"]), ("task_status", ["taskId": "x"]), ("task_cancel", ["taskId": "x"]),
+                                  ("orchestrator_capabilities", [:]), ("notch_session_interrupt", ["sessionId": parentID]),
+                                  ("notch_session_update", ["sessionId": parentID, "action": "rename", "title": "x"]),
+                                  ("pending_request_respond", ["sessionId": parentID, "requestId": "r", "answers": [:]]),
+                                  ("notch_session_send", ["sessionId": parentID, "message": "x", "mode": "restart"]),
+                                  ("notch_session_send", ["sessionId": childID, "message": "x"]),
+                                  ("create_sessions", ["sessions": [["prompt": "x", "runtimeMode": "full-access"]]]),
+                                  ("create_sessions", ["sessions": [["prompt": "x", "target": ["runtime": "pi"]]]]),
+                                  ("create_sessions", ["sessions": [["prompt": "x"]], "projectPath": "/somewhere/else"]),
+                                  ("notch_session_list", ["interactionMode": "plan"])] as [(String, [String: Any])] {
+            let (failed, text) = try await outsideTool(server, token: token, name, arguments)
+            XCTAssertTrue(failed && text.contains("capability_denied"), "\(name) \(arguments): \(text)")
+        }
+        XCTAssertEqual(model.sessions.first { $0.id == parentID }?.title, "Coordinate the work", "Nothing changed")
+        let (readFailed, _) = try await outsideTool(server, token: token, "notch_session_read", [:])
+        XCTAssertTrue(readFailed, "An outside client has no session of its own")
+        let (_, read) = try await outsideTool(server, token: token, "notch_session_read", ["sessionId": childID])
+        XCTAssertTrue(read.contains("\"items\""), "Children are readable")
+        let (_, pending) = try await outsideTool(server, token: token, "pending_request_list", ["sessionId": parentID])
+        XCTAssertTrue(pending.contains("requestIds"))
+    }
+
+    func testOutsideListSpansProjectsAndSendsKeepModesAndShowTheClient() async throws {
+        let (model, transport, _, _) = makeModel()
+        let (parentID, caller) = try await activeParent(model, mode: .ask)
+        _ = try await model.handleDelegationTool(caller, name: "delegate_task", arguments: ["task": "Look"])
+        await model.newSession(showPanel: false, runtime: .pi, workspace: "/tmp/notch-other-project")
+        let otherID = try XCTUnwrap(model.currentID)
+        model.outsideClientsEnabled = true
+        _ = try XCTUnwrap(model.createOutsideClient(name: "Claude Desktop"))
+        let outside = try XCTUnwrap(model.outsideCaller(token: try XCTUnwrap(model.revealedOutsideToken?.token)))
+        let all = try await model.handleDelegationTool(outside, name: "notch_session_list", arguments: [:])
+        let ids = Set((all["sessions"] as? [[String: Any]] ?? []).compactMap { $0["sessionId"] as? String })
+        XCTAssertTrue(ids.isSuperset(of: [parentID, otherID]), "Every project")
+        XCTAssertFalse(ids.contains { id in model.sessions.first { $0.id == id }?.parentSessionID != nil }, "Children only with includeSubagents")
+        let withChildren = try await model.handleDelegationTool(outside, name: "notch_session_list", arguments: ["includeSubagents": true])
+        XCTAssertEqual(withChildren["total"] as? Int, (all["total"] as? Int ?? 0) + 1)
+        let one = try await model.handleDelegationTool(outside, name: "notch_session_list", arguments: ["projectPath": "/tmp/notch-other-project"])
+        XCTAssertEqual((one["sessions"] as? [[String: Any]])?.map { $0["sessionId"] as? String }, [otherID])
+
+        // The busy parent queues it; it is sent after the turn, labelled, in the session's own mode.
+        let steered = try await model.handleDelegationTool(outside, name: "notch_session_send", arguments: ["sessionId": parentID, "message": "Mind the tests", "mode": "steer"])
+        XCTAssertEqual(steered["delivery"] as? String, "steered")
+        XCTAssertEqual(model.sessions.first { $0.id == parentID }?.messages.last?.agentLabel, "From Claude Desktop")
+        let queued = try await model.handleDelegationTool(outside, name: "notch_session_send", arguments: ["sessionId": parentID, "message": "Also check the docs", "mode": "queue", "clientRequestId": "k"])
+        XCTAssertEqual(queued["delivery"] as? String, "queued")
+        XCTAssertEqual(model.sessions.first { $0.id == parentID }?.queuedSends.first?.from, "Claude Desktop")
+        let retried = try await model.handleDelegationTool(outside, name: "notch_session_send", arguments: ["sessionId": parentID, "message": "Also check the docs", "mode": "queue", "clientRequestId": "k"])
+        XCTAssertEqual(retried["delivery"] as? String, "queued")
+        XCTAssertEqual(model.sessions.first { $0.id == parentID }?.queuedSends.count, 1, "A retry sends nothing new")
+        for agent in model.sessions where agent.parentSessionID == parentID { finish(model, agent.id, text: "Done") }
+        finish(model, parentID, text: "Finished")
+        await eventually { transport.prompts(parentID).contains("Also check the docs") }
+        await eventually { model.sessions.first { $0.id == parentID }?.messages.contains { $0.agentLabel == "From Claude Desktop" } == true }
+        XCTAssertEqual(model.sessions.first { $0.id == parentID }?.permissionMode, .ask, "Never widened")
+
+        let created = try await model.handleDelegationTool(outside, name: "create_sessions", arguments: ["sessions": [["prompt": "Start the audit"]], "projectPath": "/tmp/notch-other-project"])
+        let newID = try XCTUnwrap((created["sessions"] as? [[String: Any]])?.first?["sessionId"] as? String)
+        let session = try XCTUnwrap(model.sessions.first { $0.id == newID })
+        XCTAssertNil(session.parentSessionID)
+        XCTAssertNil(session.permissionMode, "The default permission settings")
+        XCTAssertEqual(model.projectPath(of: session), "/tmp/notch-other-project")
+        await eventually { transport.prompts(newID) == ["Start the audit"] }
+        XCTAssertEqual(model.sessions.first { $0.id == newID }?.messages.first?.agentLabel, "From Claude Desktop")
+    }
+
+    func testServerRejectsForeignHostsAndBrowserOrigins() async throws {
+        XCTAssertTrue(DelegationServer.admits(["Host": "127.0.0.1:4100"], port: 4100))
+        XCTAssertTrue(DelegationServer.admits(["host": "LOCALHOST:4100", "Origin": "null"], port: 4100))
+        XCTAssertFalse(DelegationServer.admits(["Host": "127.0.0.1:4101"], port: 4100))
+        XCTAssertFalse(DelegationServer.admits(["Host": "attacker.example:4100"], port: 4100), "DNS rebinding")
+        XCTAssertFalse(DelegationServer.admits([:], port: 4100))
+        XCTAssertFalse(DelegationServer.admits(["Host": "127.0.0.1:4100", "Origin": "https://attacker.example"], port: 4100))
+        XCTAssertFalse(DelegationServer.admits(["Origin": "http://127.0.0.1:4100"], port: nil))
+
+        // Over the socket, for session tokens too.
+        let server = DelegationServer()
+        server.tools = { _ in Delegation.tools }
+        server.call = { _, _, _ in [:] }
+        let url = try await server.start()
+        defer { server.stop() }
+        let token = server.issueToken(for: DelegationCaller(sessionID: "s", runtime: .codex, subagent: false))
+        func post(_ headers: [String: String]) async throws -> Int {
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.httpBody = Data(#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.utf8)
+            request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
+            for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
+            let (_, response) = try await URLSession(configuration: .ephemeral).data(for: request)
+            return (response as? HTTPURLResponse)?.statusCode ?? 0
+        }
+        let ok = try await post([:])
+        XCTAssertEqual(ok, 200)
+        let browser = try await post(["Origin": "https://attacker.example"])
+        XCTAssertEqual(browser, 403)
+    }
+
+    func testOutsideClientsKeepTheirPortAndRevokingDisconnects() async throws {
+        let (model, transport, _, defaults) = makeModel()
+        let (parentID, _) = try await activeParent(model)
+        // A port someone else holds falls back to a new one, which is saved and flagged.
+        let blocker = DelegationServer()
+        let blocked = try await blocker.start()
+        let taken = try XCTUnwrap(blocked.port)
+        defer { blocker.stop() }
+        defaults.set(taken, forKey: OutsideClients.portKey)
+        defaults.set(taken, forKey: OutsideClients.seenPortKey)
+        model.outsideClientsEnabled = true
+        await eventually { model.outsideURL != nil }
+        let url = try XCTUnwrap(model.outsideURL)
+        XCTAssertNotEqual(url.port, taken)
+        XCTAssertEqual(defaults.integer(forKey: OutsideClients.portKey), url.port)
+        XCTAssertTrue(model.outsidePortChanged, "Settings says clients need the new URL")
+        let token = try XCTUnwrap(model.createOutsideClient(name: "Codex"))
+        XCTAssertFalse(model.outsidePortChanged, "The new token's snippets use the current URL")
+
+        // A long wait over the socket ends when its token is revoked.
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": ["name": "notch_session_wait", "arguments": ["sessionId": parentID, "timeoutMs": 600_000]]])
+        request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
+        let waiting = Task { try await URLSession(configuration: .ephemeral).data(for: request) }
+        try await Task.sleep(for: .milliseconds(300))
+        model.revokeOutsideClient(try XCTUnwrap(model.outsideClients.first?.id))
+        let ended = await waiting.result
+        XCTAssertThrowsError(try ended.get(), "The connection closed without an answer")
+        XCTAssertNil(model.delegationServer.caller(token: token))
+        _ = transport
     }
 }

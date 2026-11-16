@@ -190,6 +190,16 @@ private development hasn't been re-run against this source snapshot. Known limit
   in an ad-hoc-signed build, and whether installed Codex and Claude Code report
   splits that pass the checks (a turn that does not shows its tokens as
   unpriced).
+- Outside MCP clients: hash-only token storage surviving restart, the
+  constant-time match, revocation closing an open `notch_session_wait` over the
+  socket, the outside tool set and every `capability_denied` refusal, listing
+  across projects, steer/queue sends labelled with the client and retried once,
+  `create_sessions` folder rules, the saved port with fallback and its notice,
+  and the Host/Origin guard (also for session tokens, over the socket) are
+  covered by unit and protocol tests (`DelegationTests`); the Settings block
+  and a “From <client>” message by offscreen fixtures in all three designs
+  (`--outside-clients-only`). No real outside client (Claude Desktop, Codex,
+  Cursor, Claude Code) has connected yet, and no snippet has been pasted into one.
 
 - Configurable shortcuts and dictation: which keys a recorder accepts, cancels,
   clears or refuses (including the other action's combination), persistence

@@ -253,7 +253,9 @@ enum Delegation {
 extension AppModel {
     func configureDelegation() {
         delegationServer.instructions = Delegation.instructions
-        delegationServer.tools = { _ in Delegation.tools } // Children get every tool, including delegate_task.
+        // Children get every tool, including delegate_task; outside clients only reading and sending.
+        delegationServer.tools = { caller in caller.client == nil ? Delegation.tools : OutsideClients.tools }
+        delegationServer.outsideCaller = { [weak self] token in self?.outsideCaller(token: token) }
         delegationServer.isActive = { [weak self] id in self?.sessions.first { $0.id == id }?.isBusy == true }
         delegationServer.ownsNative = { [weak self] caller, native in
             guard let session = self?.sessions.first(where: { $0.id == caller.sessionID }) else { return false }
@@ -282,7 +284,7 @@ extension AppModel {
     func delegationLaunch(for session: CompanionSession) async -> [String: Any]? {
         guard delegationEnabled, hostsDelegation(session.route), !session.isLegacyPrivate,
               !delegationServer.hasGrant(sessionID: session.id) else { return nil }
-        guard let url = try? await delegationServer.start() else { return nil }
+        guard let url = try? await startDelegationServer() else { return nil }
         let token = delegationServer.issueToken(for: DelegationCaller(sessionID: session.id, runtime: session.runtime,
                                                                        subagent: session.parentSessionID != nil))
         var launch: [String: Any] = ["url": url.absoluteString, "token": token, "instructions": Delegation.instructions,
@@ -293,8 +295,12 @@ extension AppModel {
     }
 
     func handleDelegationTool(_ caller: DelegationCaller, name: String, arguments: [String: Any]) async throws -> [String: Any] {
-        guard delegationEnabled else { throw DelegationFailure("capability_denied", "Delegation is turned off in Notch Companion's settings.") }
-        guard sessions.contains(where: { $0.id == caller.sessionID }) else { throw DelegationFailure("thread_not_found", "The calling session no longer exists.") }
+        if caller.client != nil {
+            try checkOutsideCall(name, arguments)
+        } else {
+            guard delegationEnabled else { throw DelegationFailure("capability_denied", "Delegation is turned off in Notch Companion's settings.") }
+            guard sessions.contains(where: { $0.id == caller.sessionID }) else { throw DelegationFailure("thread_not_found", "The calling session no longer exists.") }
+        }
         switch name {
         case "orchestrator_capabilities": return await delegationCapabilities(caller, search: arguments["search"] as? String)
         case "delegate_task": return try await delegateTask(caller, arguments)
@@ -307,7 +313,7 @@ extension AppModel {
             let settled = isDelegationSettled(child)
             await cancelDelegatedTree(child.id)
             return ["taskId": child.delegation?.taskID ?? "", "status": settled ? taskResult(child.id)["status"] ?? "cancelled" : "cancel_requested"]
-        case "create_sessions": return try await createSessions(caller, arguments)
+        case "create_sessions": return try await caller.client == nil ? createSessions(caller, arguments) : createOutsideSessions(caller, arguments)
         case "notch_session_list": return try listSessions(caller, arguments)
         case "notch_session_read": return try readSession(caller, arguments)
         case "notch_session_send": return try await sendToSession(caller, arguments)
@@ -367,7 +373,7 @@ extension AppModel {
                         cwd: parent.workspacePath ?? workspacePath)
     }
 
-    private func trustsProject(_ runtime: RuntimeKind, path: String?) -> Bool {
+    func trustsProject(_ runtime: RuntimeKind, path: String?) -> Bool {
         guard runtime.requiresProjectTrust else { return true }
         let canonical = URL(fileURLWithPath: path ?? workspacePath).standardizedFileURL.resolvingSymlinksInPath().path
         return sessions.contains { $0.runtime == runtime && $0.trustedProjectPath == canonical }
@@ -820,7 +826,7 @@ extension AppModel {
             return
         }
         if next.kind == ChatMessage.delegationNotice, let request = next.requestID { next.text = questionNoticeText(next.questionSessionID, request) ?? next.text }
-        let sent = await submit(reply: next.text, target: id, kind: next.kind, turnID: next.id, queuedAttachments: next.attachments)
+        let sent = await submit(reply: next.text, target: id, kind: next.kind, from: next.from, turnID: next.id, queuedAttachments: next.attachments)
         let after = sessions.first { $0.id == id }
         if sent || after?.messages.contains(where: { $0.id == next.id }) == true || after?.pendingSubmission?.id == next.id {
             update(id) { $0.queuedSends.removeAll { $0.id == next.id } }
@@ -902,6 +908,14 @@ extension AppModel {
     }
 
     private func targetSession(_ caller: DelegationCaller, _ arguments: [String: Any], control: Bool) throws -> CompanionSession {
+        if caller.client != nil {
+            guard let id = arguments["sessionId"] as? String, let target = sessions.first(where: { $0.id == id }) else {
+                throw DelegationFailure("thread_not_found", "Pass a sessionId from notch_session_list.")
+            }
+            // A delegated child belongs to its parent's task.
+            if control, target.parentSessionID != nil { throw DelegationFailure("capability_denied", "Outside clients send only to top-level sessions.") }
+            return target
+        }
         let id = arguments["sessionId"] as? String ?? caller.sessionID
         guard let target = sessions.first(where: { $0.id == id }), let own = sessions.first(where: { $0.id == caller.sessionID }) else {
             throw DelegationFailure("thread_not_found", "No Notch Companion session has this sessionId.")
@@ -940,20 +954,21 @@ extension AppModel {
     }
 
     func listSessions(_ caller: DelegationCaller, _ arguments: [String: Any]) throws -> [String: Any] {
-        let own = try targetSession(caller, [:], control: false)
-        let project = (arguments["projectPath"] as? String).map { URL(fileURLWithPath: $0).standardizedFileURL.path } ?? projectPath(of: own)
+        // An outside client owns no session, so it lists every project unless it names one.
+        let own = caller.client == nil ? try targetSession(caller, [:], control: false) : nil
+        let project = (arguments["projectPath"] as? String).map { URL(fileURLWithPath: $0).standardizedFileURL.path } ?? own.map(projectPath(of:))
         let statuses = arguments["statuses"] as? [String]
         let title = (arguments["titleContains"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let subagents = arguments["includeSubagents"] as? Bool ?? false
         let rows = sessions.filter { session in
-            projectPath(of: session) == project && (subagents || session.parentSessionID == nil)
+            (project == nil || projectPath(of: session) == project) && (subagents || session.parentSessionID == nil)
                 && (title.isEmpty || session.title.localizedCaseInsensitiveContains(title))
                 && (statuses.map { $0.contains(sessionStatus(session)) } ?? true)
         }.sorted { $0.updatedAt > $1.updatedAt }
         let cursor = max(0, (arguments["cursor"] as? NSNumber)?.intValue ?? 0)
         let limit = min(100, max(1, (arguments["limit"] as? NSNumber)?.intValue ?? 20))
         let page = Array(rows.dropFirst(cursor).prefix(limit))
-        return ["projectPath": project, "currentSessionId": own.id, "sessions": page.map(sessionSummary),
+        return ["projectPath": project as Any? ?? NSNull(), "currentSessionId": own?.id as Any? ?? NSNull(), "sessions": page.map(sessionSummary),
                 "nextCursor": cursor + page.count < rows.count ? cursor + page.count : NSNull() as Any, "total": rows.count]
     }
 
@@ -1036,7 +1051,8 @@ extension AppModel {
             }
             do {
                 _ = try await client.request("prompt.steer", params: ["session_id": sid, "text": message, "turn_id": messageID])
-                update(target.id) { $0.messages.append(ChatMessage(id: messageID, role: "user", text: message, turnID: $0.latestUserTurnID ?? messageID, kind: ChatMessage.agentMessage)) }
+                update(target.id) { $0.messages.append(ChatMessage(id: messageID, role: "user", text: message, turnID: $0.latestUserTurnID ?? messageID,
+                                                                   kind: ChatMessage.agentMessage, from: caller.client)) }
                 save()
                 return result("steered")
             } catch where mode == "steer" {
@@ -1052,12 +1068,12 @@ extension AppModel {
             }
         }
         guard let current = sessions.first(where: { $0.id == target.id }), acceptsDelegationSend(current), current.queuedSends.isEmpty else {
-            update(target.id) { $0.queuedSends.append(QueuedSend(id: messageID, text: message, kind: ChatMessage.agentMessage)) }
+            update(target.id) { $0.queuedSends.append(QueuedSend(id: messageID, text: message, kind: ChatMessage.agentMessage, from: caller.client)) }
             save()
             syncDelegatedChildren()
             return result("queued")
         }
-        let sent = await submit(reply: message, target: target.id, kind: ChatMessage.agentMessage, turnID: messageID)
+        let sent = await submit(reply: message, target: target.id, kind: ChatMessage.agentMessage, from: caller.client, turnID: messageID)
         guard sent || sessions.first(where: { $0.id == target.id })?.pendingSubmission?.id == messageID else {
             throw fail(DelegationFailure("thread_not_sendable", backgroundSendErrors[target.id] ?? "The message could not be sent."))
         }
@@ -1075,10 +1091,14 @@ extension AppModel {
             return row
         }
         let deadline = Date().addingTimeInterval(Self.waitTimeout(arguments, runtime: caller.runtime))
-        delegationWaits[caller.sessionID, default: 0] += 1
+        // An outside client has no session to show as waiting.
+        let counted = caller.client == nil
+        if counted { delegationWaits[caller.sessionID, default: 0] += 1 }
         defer {
-            delegationWaits[caller.sessionID, default: 1] -= 1
-            if delegationWaits[caller.sessionID] == 0 { delegationWaits.removeValue(forKey: caller.sessionID) }
+            if counted {
+                delegationWaits[caller.sessionID, default: 1] -= 1
+                if delegationWaits[caller.sessionID] == 0 { delegationWaits.removeValue(forKey: caller.sessionID) }
+            }
         }
         while let session = sessions.first(where: { $0.id == target.id }), session.isBusy || isSubmitting(session.id) || !session.queuedSends.isEmpty {
             guard Date() < deadline, !Task.isCancelled else { return ["sessionId": target.id, "status": sessionStatus(session), "timedOut": true] }

@@ -1587,6 +1587,22 @@ session inside its parent; notch silhouette and bounds are unchanged.
   **Waiting on a child** (tooltip and spoken title).
 - **Settings.** **Cross-agent delegation** (default on) lets sessions of every
   harness (OpenCode from 2.0) opened afterwards delegate.
+- **Outside MCP clients** (Settings, below Cross-agent delegation; default off)
+  lets MCP clients on this Mac read sessions and send to them
+  ([runtime contract](backend-runtime.md#outside-mcp-clients)). While on, a
+  caption block under the switch shows the endpoint URL with **Copy URL**; when
+  the port differs from the one the user last saw, an amber line says clients
+  set up earlier need the new URL, with **OK**. **New client token** asks for a
+  name, then shows the token once (“Copy it now: it is not shown again.”) with
+  **Copy token**, its snippets and **Done**. Each client row shows its name,
+  creation date and last use, **Setup** (the snippets with `<token>` in place
+  of the token) and **Revoke**. Snippets: a generic MCP Streamable HTTP JSON
+  entry, a `claude mcp add --transport http` command, a Codex `config.toml`
+  entry (`codex mcp add` takes no header) and a stdio entry that runs the
+  app's own bridge for clients that start only stdio servers (Claude Desktop).
+  Below the panel's width, row controls move under their text. Nothing is
+  written to another app's configuration. A message such a client sent reads
+  **From <client name>**. Fixture: `--outside-clients-only`.
 - **Delete.** Deleting a parent removes its children from the companion; native
   histories stay.
 - **Changes.** The delegating parent turn folds each child's changed files into
