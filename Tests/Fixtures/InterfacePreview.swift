@@ -804,6 +804,75 @@ import ImageIO
         try render(UnifiedNotchView(model: model), size: compact, name: "delegation-waiting", output: output)
     }
 
+    /// Fork from here beside Quote in reply, a fork's “Forked from” header, the composer's
+    /// side chat control, a side chat with Bring back and Close, and its row in the parent's team.
+    @MainActor static func renderFork(output: URL, temporary: URL, preferences: UserDefaults) throws {
+        let model = AppModel(storageURL: temporary.appendingPathComponent("fork.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
+        defer { model.shutdown() }
+        let ask = ChatMessage(id: "ask", role: "user", text: "Why does the parser reject trailing commas?", turnID: "ask")
+        let answer = ChatMessage(id: "why", role: "assistant", text: "The tokenizer ends a list at the first comma that has no value after it, so `[1, 2,]` reads as an error.", turnID: "ask")
+        let fix = ChatMessage(id: "fix", role: "user", text: "Accept them, and add a test.", turnID: "fix")
+        let done = ChatMessage(id: "done", role: "assistant", text: "Done: the tokenizer now skips one trailing comma, and `ParserTests` covers lists and objects.", turnID: "fix")
+        var parent = CompanionSession(id: "parent", runtimeID: "live", storedID: "thread", title: "Parser fix", state: .finished,
+                                      messages: [ask, answer, fix, done], workspacePath: "/tmp/Parser")
+        parent.runtime = .codex
+        parent.turnEndedAt = ["ask": Date(), "fix": Date()]
+        parent.completionID = "seen"
+        parent.acknowledgedCompletionID = "seen"
+        model.sessions = [parent]
+        model.currentID = "parent"
+        model.connection = true
+        model.reducedMotion = true
+        model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1920, height: 1080), topInset: 0,
+                                       leftArea: nil, rightArea: nil, indicatorCount: model.sessionIndicators.count)
+        model.notchPresentation = .expanded(model.geometry!)
+        model.expanded = true
+        model.page = .session
+        let compact = model.geometry!.expandedFrame.size
+        let full = NSSize(width: 900, height: 660)
+        ConversationHistoryView.revealsHoverControls = true
+        try render(UnifiedNotchView(model: model), size: compact, name: "fork-answer", output: output)
+        try render(FullSessionView(model: model), size: full, name: "fork-answer-full", output: output)
+        ConversationHistoryView.revealsHoverControls = false
+
+        var fork = CompanionSession(id: "fork", runtimeID: "live-fork", storedID: "thread-fork", title: "Parser fix",
+                                    messages: [ask, answer], workspacePath: "/tmp/Parser")
+        fork.runtime = .codex
+        fork.turnEndedAt = ["ask": Date()]
+        fork.forkedFrom = ForkRecord(sourceSessionID: "parent", sourceTitle: "Parser fix", sourceStoredID: "thread", userMessageIDs: ["ask"], latest: false)
+        model.sessions.insert(fork, at: 0)
+        model.currentID = "fork"
+        try render(UnifiedNotchView(model: model), size: compact, name: "fork-session", output: output)
+        try render(FullSessionView(model: model), size: full, name: "fork-session-full", output: output)
+
+        var chat = CompanionSession(id: "chat", runtimeID: "live-chat", storedID: "thread-chat", title: "Side chat", state: .finished,
+                                    messages: [ask, answer, fix, done,
+                                               ChatMessage(id: "side-ask", role: "user", text: "Could the skip hide a real typo?", turnID: "side-ask"),
+                                               ChatMessage(id: "side-answer", role: "assistant", text: "Only a doubled comma, `[1,,]`, which still fails: the skip takes one comma before a closing bracket.", turnID: "side-ask")],
+                                    workspacePath: "/tmp/Parser")
+        chat.runtime = .codex
+        chat.parentSessionID = "parent"
+        chat.turnEndedAt = ["ask": Date(), "fix": Date(), "side-ask": Date()]
+        chat.forkedFrom = ForkRecord(sourceSessionID: "parent", sourceTitle: "Parser fix", sourceStoredID: "thread", userMessageIDs: ["fix"], latest: true)
+        model.sessions.append(chat)
+        model.sessions[model.sessions.firstIndex { $0.id == "parent" }!].agents = [
+            ChildAgent(id: "side-chat:chat", title: "Side chat", state: .finished, turnID: "side-chat:chat", sessionID: "chat", runtime: .codex, role: "side chat")]
+        model.currentID = "chat"
+        try render(UnifiedNotchView(model: model), size: compact, name: "side-chat", output: output)
+        try render(FullSessionView(model: model), size: full, name: "side-chat-full", output: output)
+        model.sessions[model.sessions.firstIndex { $0.id == "parent" }!].queuedSends = [
+            QueuedSend(id: model.bringBackAnswer(chat)!.id, text: "From side chat:\n\n…", kind: ChatMessage.sideChatMessage)]
+        try render(UnifiedNotchView(model: model), size: compact, name: "side-chat-brought-back", output: output)
+        model.sessions[model.sessions.firstIndex { $0.id == "parent" }!].queuedSends = []
+        model.sessions[model.sessions.firstIndex { $0.id == "parent" }!].messages.append(
+            ChatMessage(id: "relayed", role: "user", text: "From side chat:\n\n" + chat.messages.last!.text, turnID: "relayed", kind: ChatMessage.sideChatMessage))
+        model.selectSession("parent")
+        try render(UnifiedNotchView(model: model), size: compact, name: "side-chat-relayed", output: output)
+        try render(FullSessionView(model: model), size: full, name: "side-chat-relayed-full", output: output)
+        model.page = .team
+        try render(UnifiedNotchView(model: model), size: compact, name: "side-chat-team", output: output)
+    }
+
     /// A Git draft's Local / New worktree choice, its base-branch picker, a failed
     /// creation, and a started worktree session's branch chip, from a temporary repository.
     @MainActor static func renderWorktree(output: URL, temporary: URL, preferences: UserDefaults) throws {
@@ -1018,6 +1087,10 @@ import ImageIO
         }
         if CommandLine.arguments.contains("--delegation-only") {
             try renderDelegation(output: output, temporary: temporary, preferences: preferences)
+            return
+        }
+        if CommandLine.arguments.contains("--fork-only") {
+            try renderFork(output: output, temporary: temporary, preferences: preferences)
             return
         }
         if CommandLine.arguments.contains("--worktree-only") {
@@ -1904,6 +1977,7 @@ import ImageIO
             size: NSSize(width: 560, height: 420), name: "markdown-blocks", output: output)
         try renderIsland(output: output, temporary: temporary, preferences: preferences)
         try renderDelegation(output: output, temporary: temporary, preferences: preferences)
+        try renderFork(output: output, temporary: temporary, preferences: preferences)
     }
 
     @MainActor static func image<V: View>(_ content: V, size: NSSize) throws -> NSImage {

@@ -346,6 +346,13 @@ struct NotchHeaderView: View {
             }
         }
         .buttonStyle(NotchTextButtonStyle())
+        // The header's menu: a side chat, where the harness forks natively.
+        .contextMenu {
+            if model.page == .session, let session = model.current, model.sideChatPoint(session) != nil {
+                Button("Open a side chat", systemImage: "bubble.left.and.text.bubble.right") { Task { await model.openSideChat(session.id) } }
+                    .disabled(model.forkBlocker(session) != nil)
+            }
+        }
         // The word the status dot stands for is spoken with the title.
         .accessibilityValue(sessionStatus?.text ?? "")
     }

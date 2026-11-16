@@ -598,7 +598,9 @@ drop opens its session).
   quote (`> ` on each line) and a blank line at the caret of this session's
   composer in the same surface, on a line of its own, keeping the draft and
   focusing the composer. SwiftUI offers no way to read a text selection, so
-  selected text cannot be quoted on its own. The
+  selected text cannot be quoted on its own. Beside them, **Fork from here**
+  (also in the context menu and as an accessibility action) appears where the
+  harness can fork at that answer (see [forks](#forks-and-side-chats)). The
   fold holds the commentary and runs in order, indented on a thin leading rule;
   unfolding it stops transcript following. With nothing to fold, the duration
   is a quiet line; a turn saved without its end reads “Worked · N steps”.
@@ -1613,3 +1615,45 @@ session inside its parent; notch silhouette and bounds are unchanged.
   file a shared child made is listed once, under the child. Without a parent
   snapshot the turn shows a card for its children alone. The footer adds “Files
   under a delegated child are its own edits.” Fixture: `changes-delegated`.
+
+## Forks and side chats
+
+Both use the harness's own native fork, never a transcript pasted into a new
+session; harnesses without one offer neither, and the controls are hidden
+([runtime matrix](backend-runtime.md#forks-and-side-chats)). Both are disabled,
+with the reason as help, while the source session or any of its children is
+busy or a send is unconfirmed. The source session and its native history are
+never changed.
+
+- **Fork from here.** A finished answer's hover controls, context menu and
+  accessibility actions offer it where the harness can fork there: every
+  finished answer in Codex that ends its native turn (not one a later steer
+  continued), and in Claude Code every answer this app recorded
+  the native message for, else only the latest. It creates a new top-level
+  session with the same harness, profile, folder, title, model and permission
+  mode, forked through that answer, and opens it with the composer focused. It
+  is an ordinary session in lists, search and its project group. Its transcript
+  is the source's saved history up to that answer, under a quiet **Forked from
+  <title>** line that opens the source.
+- **Side chat.** A quiet bubble icon in a top-level session's composer bar, or
+  **Open a side chat** in the title's context menu, forks the session through
+  its latest finished answer into a session named **Side chat** that lives
+  under the parent like an app-owned child: in its team as “Codex · side chat”,
+  never in Your sessions, its search, the glance or dots. Its conversation shows
+  like a delegated child's, with **Side chat of <title>** over the copied
+  history. It keeps the parent's harness, folder, model and permission mode.
+  The parent keeps working; while the side chat works, the parent's busy
+  state, queue, Quit/Reconnect and read receipts count it like any child, and
+  an unread result there makes the parent's result unread again, but it never
+  wakes the parent or joins its turn, and its questions stay in the side chat
+  instead of being relayed to the parent.
+- **Bring back and Close.** A side chat's composer field opens with a row like
+  Plan ready: **Side chat**, then **Close** and **Bring back**. Bring back sends
+  the side chat's own latest answer to the parent as one message, “From side
+  chat:” and the answer, labelled **From side chat** like other relayed
+  messages, through the parent's queue and normal send path (it waits while the
+  parent's own turn runs) and opens the parent. One answer is brought back once
+  (the button then reads **Brought back**). Close archives the side chat with
+  its history and opens the parent; it stays reachable from the team.
+  Fixtures: `fork-answer`, `fork-session`, `side-chat`, `side-chat-relayed`,
+  `side-chat-team`.

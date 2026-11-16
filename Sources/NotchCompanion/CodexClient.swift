@@ -153,7 +153,20 @@ final class CodexClient: RuntimeTransport {
             // overrides: app-server loads the established effective profile.
             let delegation = params["delegation"] as? [String: Any]
             if let delegation { arguments["config"] = Self.delegationConfig(delegation) }
-            let response = try await rpc("thread/start", arguments)
+            let response: [String: Any]
+            if let fork = params["fork"] as? [String: Any] {
+                // A native fork through the turn that wrote the answer; the source thread is only read.
+                guard let source = fork["session_id"] as? String, !source.isEmpty else { throw CodexClientError.unavailable("Missing the Codex thread to fork.") }
+                let read = try await rpc("thread/read", ["threadId": source, "includeTurns": true])
+                guard let turn = CodexProtocolState.forkTurn(read["thread"] as? [String: Any] ?? [:], userMessageIDs: fork["message_ids"] as? [String] ?? []) else {
+                    throw CodexClientError.unavailable("Codex has no finished turn for this answer in its saved thread, so nothing was forked.")
+                }
+                var forking: [String: Any] = ["threadId": source, "lastTurnId": turn, "ephemeral": false, "threadSource": "notch_companion"]
+                for key in ["cwd", "config"] { forking[key] = arguments[key] }
+                response = try await rpc("thread/fork", forking)
+            } else {
+                response = try await rpc("thread/start", arguments)
+            }
             let thread = response["thread"] as? [String: Any] ?? [:]
             let id = try state.register(thread)
             delegationInstructions[id] = delegation?["instructions"] as? String

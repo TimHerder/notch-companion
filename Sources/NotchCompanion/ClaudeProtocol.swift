@@ -26,6 +26,8 @@ struct ClaudeProtocolState {
     /// The companion's `/compact` is the running turn: it ends in `session.compacted`, not an answer.
     var compacting = false
     private var compacted = false
+    /// The turn's last top-level assistant message, where `--resume-session-at` forks through its answer.
+    var lastAssistantUUID: String?
     var pendingSteering = Set<String>()
     private var contextModel: String?
     private var contextUsed: Int?
@@ -56,7 +58,7 @@ struct ClaudeProtocolState {
 
     mutating func begin(_ id: String) throws {
         guard !active, children.isEmpty, requests.isEmpty else { throw AppError("Claude Code still has active work or a pending interaction.") }
-        active = true; turnID = id; result = nil; text = ""; failedChild = false; interrupted = false; errorCategory = nil
+        active = true; turnID = id; result = nil; text = ""; failedChild = false; interrupted = false; errorCategory = nil; lastAssistantUUID = nil
         partialMessages.removeAll(); tools.removeAll(); taskAliases.removeAll(); agentTools.removeAll(); messageUsage.removeAll()
         turnStartTokens = processTokens; turnStartModelTokens = processModelTokens
         contextUsed = nil
@@ -345,6 +347,7 @@ struct ClaudeProtocolState {
         }
         if ["assistant", "user"].contains(type) {
             if child == nil, let category = frame["error"] as? String { errorCategory = category }
+            if type == "assistant", child == nil, active, let uuid = frame["uuid"] as? String { lastAssistantUUID = uuid }
             let message = frame["message"] as? [String: Any] ?? [:]
             let content = message["content"] as? [[String: Any]] ?? []
             var events: [Event] = []
@@ -462,6 +465,7 @@ struct ClaudeProtocolState {
         var payload: [String: Any] = ["text": result["result"] as? String ?? text, "status": interrupted ? "interrupted" : failed ? "error" : "complete", "completion_id": result["uuid"] as? String ?? turnID]
         // Its reset comes from the turn's `rate_limit_event`.
         if failed && !interrupted && errorCategory == "rate_limit" { payload["limit_reached"] = true }
+        if let lastAssistantUUID { payload["native_message_id"] = lastAssistantUUID }
         events.append(event("message.complete", payload))
         return events
     }
