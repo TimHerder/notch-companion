@@ -321,6 +321,11 @@ final class ClaudeClient: RuntimeTransport {
         case "approval.respond", "clarify.respond":
             if let reply = try session.state.answer(params, approval: method == "approval.respond") { try session.process.send(reply) }
             return ["resolved": true]
+        case "session.draft_title":
+            // Claude's title generator is a side request: no turn joins the conversation, and persist false keeps its name.
+            guard !session.state.active else { throw AppError("Wait for Claude Code to finish.") }
+            let result = try await control(session, ["subtype": "generate_session_title", "description": params["description"] as? String ?? "", "persist": false], optional: true)
+            return ["title": result["title"] as? String ?? ""]
         case "session.rename": return ["renamed": false, "local_only": true]
         default: throw AppError("Claude Code does not support this operation through the companion.")
         }

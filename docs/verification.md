@@ -145,6 +145,17 @@ private development hasn't been re-run against this source snapshot. Known limit
   prompt has run in a worktree session, and the picker has not been used
   physically. Children isolated before this change have no worktree record,
   so their worktrees are never removed.
+- Git actions (Commit, Push, Open pull request on the latest change card):
+  status parsing, committing exactly the included paths (literal pathspecs,
+  renames, an excluded staged file left staged), a failing hook's output with
+  nothing committed, `git push -u` to a local bare remote, push confirmation
+  for a default branch, GitHub remote detection, the compare URL, `gh pr
+  create` arguments and an existing pull request (a fake `gh` script), the
+  recorded worktree base and the idle gate are covered by unit tests against
+  temporary repositories; Claude Code's `session.draft_title` (persist false,
+  no turn) by its protocol fixture; every state by offscreen fixtures in all
+  three designs (`--git-actions-only`). No live push, pull request, signed
+  commit, real hook or live Claude title draft has run.
 
 - Configurable shortcuts and dictation: which keys a recorder accepts, cancels,
   clears or refuses (including the other action's combination), persistence

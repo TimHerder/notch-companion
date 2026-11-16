@@ -492,6 +492,34 @@ preview per file (counts cover the full diff). Git commands time out after 5
 seconds; untracked scans have a 15-second overall deadline. Errors and limits
 produce a visible notice and editor action, never fabricated counts.
 
+**Git actions** (`GitActions.swift`) are the only writes. They run in the
+session's folder's repository with argument arrays (no shell), the user's own
+environment (so their identity, hooks, signing and credential helpers apply;
+`GIT_TERMINAL_PROMPT=0`, `GH_PROMPT_DISABLED=1`) and Git's stderr as the error.
+Status is `git status --porcelain=v1 -z --untracked-files=all`. Commit runs
+`git --literal-pathspecs add -A -- <included>` then `git --literal-pathspecs
+commit -m <message> -- <included and rename sources>`, so only those paths are
+committed and anything else already staged stays staged; no `--no-verify`,
+author or config override. Push is `git push -u -- <remote> <branch>` (the
+branch's upstream remote, else `origin`), never forced. A pull request needs a
+github.com remote (HTTPS, SSH or scp form) and `<remote>/<branch>`: with `gh`
+installed and `gh auth status --hostname github.com` passing, `gh pr create
+--repo --base --head --title --body` uses the user's own login (no token is
+stored; an already open pull request for the branch is adopted), else the
+compare URL with `title` and `body` opens in the browser. The link is saved as
+the session's optional `pullRequest`. Every action waits for the session tree
+to be idle (as worktree cleanup does, plus an unconfirmed staged send) and
+first recreates a removed worktree through the send path's `recreateWorktree`.
+Snapshots are unchanged: a commit never rewrites a saved summary.
+
+Drafting a message never uses another API or SDK. Claude Code's
+`session.draft_title` sends `generate_session_title` with `persist: false` to
+the session's live process, a side request that adds no turn and keeps the
+native name; its title is the subject. No other adapter offers a one-off
+request outside the conversation, so they get a deterministic draft (subject
+from the session title, body listing the files), as Claude does when the
+request fails. Pull request bodies are drafted from `git log` since the base.
+
 ## Models and context usage
 
 `notch.showModelPicker` and `notch.showContextUsage` default on and persist an
@@ -713,7 +741,8 @@ first send, before the native session opens, from its chosen base branch
 (`worktreeBase`; local or remote-tracking, never set as upstream), named from
 its title and the first 8 characters of its ID; a refusal restores the draft
 and sends nothing. Both save a `worktree` record (main checkout, project
-folder, branch, path).
+folder, branch, path, and the optional `base` a pull request targets: HEAD's
+branch, the local base, or a remote-tracking base without its remote).
 
 The app removes only worktrees it recorded, and only under its own Worktrees
 folder, never the user's. Settings → **Remove worktrees** (`archived` default,
@@ -846,7 +875,9 @@ or restart that input alone does not block Quit/Reconnect, but its receipt
 protection persists. Resume reconciles the intent against recorded user turns
 before another send; a missing submitted record is never guessed away. A worktree session's
 worktree is created or recreated after the staging record and before the send
-intent, so a Git failure restores the draft like any setup failure. Busy
+intent, so a Git failure restores the draft like any setup failure. Git
+actions on a change card wait for the same idle state as worktree cleanup and
+never run while a send is staged or unconfirmed. Busy
 native conversations are observed without appending competing turns.
 Quit/Reconnect offer wait, explicit stop or cancel, and wait for tracked
 parent/child terminal events, not just interrupt acknowledgements.

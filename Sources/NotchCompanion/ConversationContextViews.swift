@@ -137,8 +137,9 @@ private struct WorkspaceButton: View {
         // A long folder name stops at 150 points in the bar, so Send keeps its room.
         .modifier(WidthCap(limit: inDraft ? 220 : 150))
         .destinationButtonStyle(inDraft: inDraft)
-        .help(worktree.map { "Worktree on \($0.branch) of \(URL(fileURLWithPath: $0.project).lastPathComponent) · \(path)" + Self.status($0) }
+        .help((worktree.map { "Worktree on \($0.branch) of \(URL(fileURLWithPath: $0.project).lastPathComponent) · \(path)" + Self.status($0) }
               ?? (choosing ? "Choose this session’s working folder · \(path)" : "Show this session’s working folder in Finder · \(path)"))
+              + (model.current?.pullRequest.map { "\nPull request: \($0)" } ?? ""))
         .accessibilityLabel(worktree.map { "Show this session’s worktree in Finder, branch \($0.branch)." + Self.status($0) }
                             ?? (choosing ? "Working folder, \(path)" : "Show this session’s working folder in Finder, \(path)"))
         .accessibilityHint(choosing ? "Choose another folder for this new session" : "")

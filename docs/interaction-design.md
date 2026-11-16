@@ -649,6 +649,34 @@ Empty results and non-Git folders without a native diff add no card. A
 errors and oversized diffs show an explanation and the editor action, never a
 partial total. See the [runtime limits](backend-runtime.md#change-summaries).
 
+**Git actions.** The latest finished turn's open card (Changes or Workspace
+changes, in the notch and full window) ends with a quiet row of text buttons
+for the session's folder: **Commit…**, **Push** and, once the branch has a
+github.com remote and has been pushed, **Open pull request**. The row is
+hidden outside Git (a worktree session keeps it while its worktree is removed,
+which the first action recreates) and disabled with a caption while the
+session, a delegated child or an unconfirmed send is busy. Every form opens
+inline in the card, never as a menu or window:
+
+- **Commit…** lists every staged, unstaged and untracked non-ignored file with
+  an include checkbox (all on), a message field, **Cancel**, **Commit & push**
+  and **Commit N files**; with no files it says “Nothing to commit.” A blank
+  message offers **Write message**: Claude Code drafts the subject without a
+  turn, other harnesses fill a draft from the session title; either way the
+  changed files follow and the user edits it. A hook or Git failure shows
+  Git's output in red and keeps the form.
+- **Push** pushes the current branch. The session's own `notch/…` worktree
+  branch pushes at once; the default branch, `main`/`master` or any other
+  branch first asks inline (“Push main to origin? It is the repository's
+  default branch.”). Errors show Git's message.
+- **Open pull request** shows the head branch, an editable base (the
+  worktree's recorded base, else the remote's default branch), the title (the
+  last commit's subject) and a description drafted from the branch's commits.
+  Creating it records the link, which then replaces the action as **Pull
+  request #N** (opens in the browser) and joins the folder chip's tooltip.
+  Without a signed-in GitHub CLI, GitHub's compare page opens in the browser
+  instead. Other hosts offer Push only.
+
 ## File drops
 
 1. A dragged file enters the band; the eyes widen and the panel opens before
@@ -1100,7 +1128,9 @@ folder whose sessions are all archived leaves the default list.
   branch name, and its tooltip names the branch, project and checkout path,
   plus cleanup's outcome: **Removed** (sending or Restore recreates it from
   its branch) or **Kept** and why (uncommitted changes, retried later). A
-  started worktree session's folder cannot change. Cleanup:
+  started worktree session's folder cannot change. A session with a pull
+  request (see [Git actions](#change-summaries)) adds its link to the folder
+  chip's tooltip. Cleanup:
   [runtime contract](backend-runtime.md#delegation).
 
 ## Agent questions and delivered files

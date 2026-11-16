@@ -177,6 +177,8 @@ final class AppModel: ObservableObject {
     /// Draft folders' branches for New worktree; absent outside Git.
     @Published var gitBranches: [String: GitBranches] = [:]
     var worktreeTimer: Task<Void, Never>?
+    /// Each session's Commit, Push and Open pull request state, shared by the notch and full window.
+    var gitActionControllers: [String: GitActionsController] = [:]
     var worktreeCleanupTask: Task<Void, Never>?
     /// When each session's worktree removal was last tried, so a kept one waits an hour.
     var worktreeAttempts: [String: Date] = [:]
