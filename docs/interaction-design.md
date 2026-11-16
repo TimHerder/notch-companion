@@ -978,9 +978,9 @@ identify selection.
     failure; Instrument uses its lamps), title (dimmed once read), the runtime
     (notch only; a quiet **Plan ready** instead while a plan waits unread) and
     a compact age, or the ticking turn timer while working.
-    The notch keeps each row to one line; the full-session sidebar wraps a
-    title to two lines, with the glyph, age and ellipsis on its first line.
-    The latest message is the tooltip and part of the accessibility label.
+    Every row keeps one line, in the notch and the full-session sidebar, so
+    rows share a height; a long title truncates at its end.
+    The title and latest message are the tooltip and part of the accessibility label.
     Hover, focus or open swaps the age for the ellipsis, which expands Rename,
     Snooze or Wake now, Archive or Restore, and Continue in Hermes… (legacy
     only) inline, wrapping onto further rows in the sidebar rather than

@@ -315,8 +315,8 @@ struct SessionBrowserView: View {
     /// Where Instrument titles start: past the lamp.
     private let instrumentTitleX: CGFloat = 27
 
-    /// Status, title, then runtime and age (a live timer while working). The
-    /// notch keeps one line; the sidebar wraps titles to two, the rest on the first.
+    /// Status, title, then runtime and age (a live timer while working). Every
+    /// row keeps one line so rows share a height; the tooltip has the full title.
     private func rowLine(_ session: CompanionSession, entry: GlanceEntry, selected: Bool, hidesTrailing: Bool) -> some View {
         // Read rows recede; what is new or needs you keeps full contrast.
         let quiet = !entry.unread && !selected
@@ -327,7 +327,7 @@ struct SessionBrowserView: View {
             Text(session.title)
                 .font(.system(size: 13, weight: PanelTheme.pick(.medium, .regular, .medium)))
                 .foregroundStyle(quiet ? CompanionStyle.secondary : CompanionStyle.text)
-                .lineLimit(compact ? 1 : 2)
+                .lineLimit(1)
             // Search results mark sessions that live under Archived.
             if archived {
                 Image(systemName: "archivebox").font(.system(size: PanelTheme.pick(10.5, 11, 10)))

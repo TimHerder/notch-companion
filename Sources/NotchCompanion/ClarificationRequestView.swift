@@ -146,7 +146,7 @@ private struct RequestAnswerForm: View {
         switch PanelTheme.current {
         case .refined:
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: request.kind == .approval ? "hand.raised.fill" : "bubble.left.fill")
+                Image(systemName: request.kind == .approval ? "hand.raised" : "bubble.left")
                     .font(.system(size: 12)).foregroundStyle(CompanionStyle.amber)
                     .accessibilityHidden(true)
                 Text(request.title)

@@ -108,7 +108,7 @@ struct ChangeSummaryView: View {
                             .font(footnoteFont).foregroundStyle(footnoteColor)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
-                        Text("Agent-reported changes for this turn.")
+                        Text("Agent-reported changes for this turn")
                             .font(footnoteFont).foregroundStyle(footnoteColor)
                     }
                 }
