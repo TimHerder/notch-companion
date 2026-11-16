@@ -32,17 +32,18 @@ bundled SVG may not use filters, `foreignObject`, scripts or remote references
 | DeepSeek Harness | `deepseek.svg` | DeepSeek (deepseek-ai) | `apps/web/public/favicon-dark.svg`, [github.com/deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) |
 | Antigravity CLI | `antigravity.png` | Google | `antigravity-icon__full-color.svg`, [antigravity.google/press](https://antigravity.google/press), rasterized unmodified |
 | Cursor CLI | `cursor.svg` | Anysphere | `marketing-static/favicon.svg`, [cursor.com](https://cursor.com) |
+| GitHub Copilot CLI | `copilot.svg` | GitHub | `SVG/Copilot_Icon_White.svg` from https://brand.github.com/GitHub_Logos.zip ([brand.github.com](https://brand.github.com/foundations/logo)) |
 | Hermes Agent | `hermes.svg` | Nous Research | `assets/nous-girl-white.svg`, [github.com/NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) |
 
 Claude Code, Codex, OpenCode, Pi, OpenClaw, DeepSeek Harness, Antigravity,
-Cursor and Hermes Agent and their logos are trademarks of their respective
-owners. Notch Companion is not affiliated with or endorsed by them. The app
+Cursor, GitHub Copilot and Hermes Agent and their logos are trademarks of their
+respective owners. Notch Companion is not affiliated with or endorsed by them. The app
 shows the same line at the bottom of Settings.
 
 The marks haven't had a formal rights review. On 2026-11-08 the maintainer chose
 to ship them, as the public MIT project [t3code](https://github.com/pingdotgg/t3code)
 does with the Claude, OpenAI, Cursor, Antigravity and OpenCode marks. That
-comparison doesn't cover DeepSeek, Hermes, OpenClaw or Pi, and each vendor
+comparison doesn't cover DeepSeek, GitHub Copilot, Hermes, OpenClaw or Pi, and each vendor
 publishes its own rules (see [verification](verification.md)). To add an agent's
 mark, record it here with its source, add the unmodified file under its runtime
 identifier (a PNG rasterized from the official SVG only when AppKit cannot draw

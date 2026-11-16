@@ -130,6 +130,60 @@ final class ACPIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testCopilotMapsItsURLModesConfigModelsApprovalsAndReplay() async throws {
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else { throw XCTSkip("Offline Copilot peer needs system Python 3.") }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("notch-copilot-fixture-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Fixtures/copilot_acp.py")
+        let executable = root.appendingPathComponent("copilot")
+        try FileManager.default.copyItem(at: source, to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let client = ACPRuntimeClient(runtime: .copilot, profileID: root.path, executableOverride: executable)
+        defer { client.disconnect() }
+        var events: [(String, [String: Any])] = []
+        client.onEvent = { events.append(($0, $1)) }
+        try await client.connect()
+
+        let signedOut = root.appendingPathComponent("signed-out")
+        try FileManager.default.createDirectory(at: signedOut.appendingPathComponent(".signed-out"), withIntermediateDirectories: true)
+        do {
+            _ = try await client.request("session.create", params: ["cwd": signedOut.path])
+            XCTFail("Copilot refuses a session before sign-in")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("copilot login"), error.localizedDescription) }
+
+        let session = try await client.request("session.create", params: ["cwd": root.path])
+        let sid = try XCTUnwrap(session["session_id"] as? String)
+        let capabilities = try XCTUnwrap((session["info"] as? [String: Any])?["capabilities"] as? [String: Any])
+        XCTAssertEqual(capabilities["permissionModes"] as? [String], ["plan"], "agent follows native settings and autopilot is not Full access")
+        XCTAssertEqual(capabilities["images"] as? Bool, true)
+        XCTAssertEqual(capabilities["questions"] as? Bool, false)
+        XCTAssertEqual((session["catalog"] as? RuntimeModelCatalog)?.models.map(\.choice.model), ["auto", "gpt-5.4"])
+        _ = try await client.request("session.model.set", params: ["session_id": sid, "model": "gpt-5.4"])
+        _ = try await client.request("session.permission.set", params: ["session_id": sid, "mode": PermissionMode.plan.rawValue])
+        _ = try await client.request("session.permission.set", params: ["session_id": sid])
+
+        _ = try await client.request("prompt.submit", params: ["session_id": sid, "text": "write notes"])
+        try await eventually { events.contains { $0.0 == "approval.request" } }
+        XCTAssertEqual(events.first { $0.0 == "approval.request" }?.1["choices"] as? [String], ["once", "deny"])
+        _ = try await client.request("approval.respond", params: ["session_id": sid, "request_id": "s:perm-1", "choice": "deny"])
+        try await eventually { events.contains { $0.0 == "message.complete" } }
+        XCTAssertEqual(events.last { $0.0 == "message.complete" }?.1["text"] as? String, "reject_once:gpt-5.4")
+        client.disconnect()
+
+        let resumed = ACPRuntimeClient(runtime: .copilot, profileID: root.path, executableOverride: executable)
+        defer { resumed.disconnect() }
+        try await resumed.connect()
+        let loaded = try await resumed.request("session.resume", params: ["cwd": root.path, "session_id": sid])
+        let rows = try XCTUnwrap(loaded["messages"] as? [[String: Any]])
+        XCTAssertEqual(rows.map { $0["text"] as? String }, ["earlier", "answer"])
+
+        let modes = try wireLog(root).filter { $0["method"] as? String == "session/set_mode" }.compactMap { ($0["params"] as? [String: Any])?["modeId"] as? String }
+        XCTAssertEqual(modes, ["https://agentclientprotocol.com/protocol/session-modes#plan", "https://agentclientprotocol.com/protocol/session-modes#agent"],
+                       "Plan uses Copilot's own mode ID; Inherit restores the opening mode")
+    }
+
+    @MainActor
     func testAnsweredCursorPlanLeavesNoPlanReadyBanner() async throws {
         guard FileManager.default.isExecutableFile(atPath: "/usr/bin/python3") else { throw XCTSkip("Offline Cursor peer needs system Python 3.") }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("notch-cursor-plan-" + UUID().uuidString)

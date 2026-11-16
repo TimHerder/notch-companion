@@ -87,6 +87,7 @@ extension RuntimeKind {
         case .openclaw: return "OPENCLAW_STATE_DIR"
         case .deepseek: return "NOTCH_DEEPSEEK_PROFILE"
         case .cursor: return "CURSOR_CONFIG_DIR"
+        case .copilot: return "COPILOT_HOME"
         default: return "NOTCH_\(rawValue.uppercased())_PROFILE"
         }
     }
@@ -101,10 +102,11 @@ extension RuntimeKind {
         case .antigravity: return ".gemini/antigravity-cli"
         case .deepseek: return ".dsh"
         case .cursor: return ".cursor"
+        case .copilot: return ".copilot"
         default: return ".notch-unavailable/\(rawValue)"
         }
     }
-    var requiresProjectTrust: Bool { self == .claude || self == .antigravity || self == .cursor }
+    var requiresProjectTrust: Bool { [.claude, .antigravity, .cursor, .copilot].contains(self) }
     /// Names a session created without a title; the others take the prompt's opening words as their native title.
     var namesOwnSessions: Bool { ![.codex, .pi, .openclaw].contains(self) }
     /// Runs only its native default profile; the companion never sets a profile override.
@@ -134,6 +136,9 @@ extension RuntimeKind {
         case .cursor:
             return .init(resume: true, attachments: true, approvals: true, questions: true, modelSelection: true, contextUsage: true,
                          permissionModes: [PermissionMode.plan.rawValue])
+        case .copilot:
+            return .init(resume: true, attachments: true, images: true, approvals: true, modelSelection: true, contextUsage: true,
+                         permissionModes: [PermissionMode.plan.rawValue])
         default: return .init()
         }
     }
@@ -148,6 +153,7 @@ extension RuntimeKind {
         case .deepseek: return "Choose your existing ACP-enabled launch profile. Its plugin composition must match your usual setup; the companion never substitutes a minimal profile."
         case .antigravity: return AntigravityClient.protocolNote
         case .cursor: return "Uses your installed Cursor CLI over its native ACP server, with your sign-in, rules, MCP servers and saved chats. Sign in with cursor-agent login first. Trust this working folder before starting its project hooks and MCP servers. Dashboard team MCP servers are unavailable over ACP."
+        case .copilot: return "Uses your installed GitHub Copilot CLI over its native ACP server, with your sign-in, instructions, MCP servers and saved sessions. Sign in with copilot login first. Trust this working folder before starting its project hooks and MCP servers. Its own permission settings decide which actions ask."
         default: return "This app does not include this adapter. Saved history and drafts remain available."
         }
     }
@@ -163,6 +169,7 @@ extension RuntimeKind {
         case .deepseek: address = "https://github.com/deepseek-ai/deepseek-harness/tree/master/apps/cli"
         case .antigravity: address = "https://antigravity.google/docs/ide/extensions/acp/"
         case .cursor: address = "https://cursor.com/docs/cli/acp"
+        case .copilot: address = "https://docs.github.com/en/copilot/reference/acp-server"
         default: return nil
         }
         return URL(string: address)
@@ -210,10 +217,11 @@ enum RuntimeEnvironment {
         let home = FileManager.default.homeDirectoryForCurrentUser
         if !runtime.usesNativeProfileOnly && runtime != .deepseek {
             let directory = RuntimeProfileIdentity.directory(profileID, runtime: runtime)
-            if runtime == .claude {
+            if runtime == .claude || runtime == .copilot {
                 // Setting even the default directory changes Claude's native
                 // login namespace. Keep a matching explicit native override
                 // exactly; otherwise leave its ordinary default implicit.
+                // Copilot's home also holds its saved sessions, so it is pinned the same way.
                 let native = environment[runtime.profileEnvironmentKey]
                 let defaultDirectory = home.appendingPathComponent(runtime.defaultProfileDirectory)
                     .standardizedFileURL.resolvingSymlinksInPath().path

@@ -14,7 +14,8 @@ struct RuntimeKind: RawRepresentable, Codable, CaseIterable, Hashable, Identifia
     static let openclaw = Self(rawValue: "openclaw")!
     static let claude = Self(rawValue: "claude")!
     static let cursor = Self(rawValue: "cursor")!
-    static let allCases: [Self] = [.hermes, .codex, .opencode, .pi, .openclaw, .claude, .deepseek, .antigravity, .cursor]
+    static let copilot = Self(rawValue: "copilot")!
+    static let allCases: [Self] = [.hermes, .codex, .opencode, .pi, .openclaw, .claude, .deepseek, .antigravity, .cursor, .copilot]
     var id: Self { self }
     var isSupported: Bool { Self.allCases.contains(self) }
     var title: String {
@@ -28,6 +29,7 @@ struct RuntimeKind: RawRepresentable, Codable, CaseIterable, Hashable, Identifia
         case .openclaw: return "OpenClaw"
         case .claude: return "Claude Code"
         case .cursor: return "Cursor CLI"
+        case .copilot: return "GitHub Copilot CLI"
         default: return "Unavailable agent (\(rawValue))"
         }
     }
@@ -113,7 +115,7 @@ final class RuntimeRouter: RuntimeTransport {
             case .hermes: return SharedHermesClient(profileID: route.profileID)
             case .codex: return CodexClient(profileID: route.profileID)
             case .opencode: return OpenCodeClient(profileID: route.profileID, supervisorURL: opencodeSupervisorURL)
-            case .deepseek, .cursor, .antigravity: return ACPRuntimeClient(runtime: route.runtime, profileID: route.profileID)
+            case .deepseek, .cursor, .antigravity, .copilot: return ACPRuntimeClient(runtime: route.runtime, profileID: route.profileID)
             case .pi: return PiClient(profileID: route.profileID)
             case .openclaw: return OpenClawClient(profileID: route.profileID)
             case .claude: return ClaudeClient(profileID: route.profileID)

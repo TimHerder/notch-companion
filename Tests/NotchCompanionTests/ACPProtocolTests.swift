@@ -112,6 +112,12 @@ final class ACPProtocolTests: XCTestCase {
         XCTAssertTrue(state.cancelRequests("one").isEmpty)
     }
 
+    func testOnlyTheACPModeURLIsReadByItsFragment() {
+        let url = "https://agentclientprotocol.com/protocol/session-modes#"
+        let modes = ACPProtocolState.permissionModes(["availableModes": ["custom#plan", "custom#default", url + "agent", url + "plan"].map { ["id": $0] }])
+        XCTAssertEqual(modes, [.plan: url + "plan"], "Another runtime's custom IDs keep exact matching")
+    }
+
     func testCursorRequestsWithoutAnAttributableSessionAreDeclined() throws {
         var state = ACPProtocolState(); state.owned = ["one", "two"]; try state.begin("one"); try state.begin("two")
         let result = state.serverRequest(id: 9, method: "cursor/create_plan", params: ["toolCallId": "unknown", "plan": "Edit"])

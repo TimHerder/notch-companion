@@ -51,6 +51,14 @@ private development hasn't been re-run against this source snapshot. Known limit
 - Cursor CLI: not installed here, so prompts and delegation hosting are covered
   by protocol fixtures only. ACP has no pre-approval, so it may ask before every
   companion tool call, and its tool rows may miss the delegation labels.
+- GitHub Copilot CLI: not installed or signed in here. `initialize`, `session/list`
+  and the signed-out `session/new` error were checked against the published
+  1.0.112 binary with an isolated `COPILOT_HOME` and no prompt (2026-11-16).
+  Prompts, URL-named modes, the `model` config option, approvals, `session/load`
+  replay and delegation hosting are covered by protocol fixtures only; the mode
+  and model shapes come from upstream issue reports, not a signed-in session.
+  Unverified: `usage_update`, `session_info_update` titles, and whether it asks
+  before companion tool calls.
 - DeepSeek Harness: profile and extension parity, and delegation hosting through
   the stdio bridge, are covered by protocol fixtures only.
 - Antigravity CLI: now runs over `agy acp`. Checked live against agy 1.5.2 with no
