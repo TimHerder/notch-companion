@@ -572,7 +572,13 @@ drop opens its session).
   by default), the answer, then its changes (open for the latest finished turn,
   see [Change summaries](#change-summaries)). The answer is the last text the
   turn wrote; it keeps the full body style and Copy on hover, and ordinary
-  replies carry no harness-name header (relayed messages keep their label). The
+  replies carry no harness-name header (relayed messages keep their label).
+  Beside Copy (always shown in Instrument's log header), and in the answer's
+  context menu, **Quote in reply** puts the whole answer as a Markdown block
+  quote (`> ` on each line) and a blank line at the caret of this session's
+  composer in the same surface, on a line of its own, keeping the draft and
+  focusing the composer. SwiftUI offers no way to read a text selection, so
+  selected text cannot be quoted on its own. The
   fold holds the commentary and runs in order, indented on a thin leading rule;
   unfolding it stops transcript following. With nothing to fold, the duration
   is a quiet line; a turn saved without its end reads “Worked · N steps”.
@@ -905,6 +911,26 @@ identify selection.
   Stop; a typed draft turns it into the key for what Return does, by the same
   rule as the hint: **Steer message** (↩) or **Queue message** (⌘↩ only) in its
   symbol, help and VoiceOver label, with a quiet Stop beside it.
+- **Paste.** ⌘V in either surface's composer stages what text can't hold as an
+  ordinary attachment, its chip springing in like a dropped file's; nothing is
+  sent. Files copied in Finder attach as a [drop](#file-drops) does, originals
+  untouched. A picture on the pasteboard (a ⌃⇧⌘4 screenshot, an image copied
+  from a browser or Preview) goes into [SnapShot's](#snapshot) private folder as
+  `Pasted image.png`, only for harnesses that accept images; elsewhere nothing
+  is staged and the error line says the harness doesn't accept images. Text of
+  32 KiB or more becomes `Pasted text.txt` in the same folder. Removing a staged
+  paste before sending deletes its file; a sent one stays. Shorter text types as
+  before, and text wins when the pasteboard also holds a picture (rich text from
+  a document). ⌘⇧V (**Paste as Plain Text**) always types the pasteboard's
+  text, however long.
+- **Prompt recall.** In an empty composer without marked input-method text, ↑
+  replaces the draft with this session's previous prompt (your own messages,
+  text only); again goes further back and stops at the oldest. ↓ goes forward and
+  finally back to empty. In an unedited prompt of several lines (wrapped ones
+  included) the arrows move between its lines first. Once the recalled text is
+  edited, the arrows move the caret
+  again. Recall never touches attachments, the queue or other sessions' drafts;
+  Option–↑ still edits the newest queued message.
 - **Queue.** Queued messages appear above the field in order, three visible
   rows then scrolling; hover shows the full text and file names. Each row
   offers **Steer now** while the running turn can be steered (the steering path
@@ -1268,7 +1294,8 @@ by itself, like a [file drop](#file-drops).
 - **Staging.** The PNG, named after app and window title, goes in the private
   `SnapShots` folder beside the session registry and is staged as an ordinary
   attachment, its chip springing in like a dropped file's. Removing it before sending deletes the
-  file; a sent picture stays for the agent.
+  file; a sent picture stays for the agent. [Pasted](#conversation-usability-and-session-management)
+  pictures and long text use the same folder and rules.
 
 ## Dictation
 

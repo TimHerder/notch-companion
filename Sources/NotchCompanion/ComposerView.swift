@@ -286,7 +286,15 @@ struct ComposerView: View {
                                      Task { await model.steerQueuedSend(first.id) }
                                      return true
                                  },
-                                 onComposingChanged: { [id = model.currentID] in if let id { model.setComposing($0, in: id) } })
+                                 onComposingChanged: { [id = model.currentID] in if let id { model.setComposing($0, in: id) } },
+                                 onPaste: { model.attachPasted(from: $0) },
+                                 recallPrompts: { [id = model.currentID] in
+                                     model.sessions.first { $0.id == id }?.messages.filter { $0.role == "user" && $0.kind == nil }.map(\.text) ?? []
+                                 },
+                                 insertion: model.composerInsertion.flatMap { $0.sessionID == model.currentID && $0.inNotch == isCompact ? $0 : nil },
+                                 onInserted: { [id = model.composerInsertion?.id] in
+                                     if model.composerInsertion?.id == id { model.composerInsertion = nil }
+                                 })
                 .id(model.currentID)
                 .frame(height: editorHeight)
           }
@@ -440,6 +448,13 @@ struct NativeComposerEditor: NSViewRepresentable {
     var onSteerQueued: (() -> Bool)? = nil
     /// An input method's composition began or ended; dictation waits for it.
     var onComposingChanged: ((Bool) -> Void)? = nil
+    /// ⌘V: whether the paste was staged (or refused) instead of typed.
+    var onPaste: ((NSPasteboard) -> Bool)? = nil
+    /// This session's earlier prompts, oldest first, for ↑ and ↓ in an empty composer.
+    var recallPrompts: (() -> [String])? = nil
+    /// A quote to put at the caret once, then report done.
+    var insertion: ComposerInsertion? = nil
+    var onInserted: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -495,6 +510,8 @@ struct NativeComposerEditor: NSViewRepresentable {
         }
         editor.onLayoutChanged = { [weak coordinator = context.coordinator] in coordinator?.updateHeight() }
         editor.onMarkedTextChanged = { [weak coordinator = context.coordinator] in coordinator?.reportComposing() }
+        editor.onPaste = { [weak coordinator = context.coordinator] in coordinator?.parent.onPaste?($0) ?? false }
+        editor.recallPrompts = { [weak coordinator = context.coordinator] in coordinator?.parent.recallPrompts?() ?? [] }
         context.coordinator.editor = editor
         context.coordinator.synced = text
         scroll.documentView = editor
@@ -509,6 +526,16 @@ struct NativeComposerEditor: NSViewRepresentable {
         editor.setAccessibilityHelp(accessibilityHint)
         context.coordinator.sync(to: text)
         context.coordinator.updateHeight()
+        if let insertion, insertion.id != context.coordinator.inserted {
+            context.coordinator.inserted = insertion.id
+            // Outside the view update: inserting publishes the new draft.
+            DispatchQueue.main.async { [weak editor, weak coordinator = context.coordinator] in
+                guard let editor else { return }
+                editor.insertAtCaret(insertion.text)
+                editor.window?.makeFirstResponder(editor)
+                coordinator?.parent.onInserted?()
+            }
+        }
         if focused.wrappedValue, editor.window?.firstResponder !== editor {
             DispatchQueue.main.async { [weak editor, weak coordinator = context.coordinator] in
                 guard let editor, coordinator?.parent.focused.wrappedValue == true else { return }
@@ -525,6 +552,7 @@ struct NativeComposerEditor: NSViewRepresentable {
         /// from it was changed on purpose elsewhere (Send, a queued Edit).
         var synced = ""
         private(set) var composing = false
+        var inserted: UUID?
         /// Applying the draft; the editor's own change notifications are echoes.
         private var applying = false
         init(_ parent: NativeComposerEditor) { self.parent = parent }
@@ -593,6 +621,80 @@ final class ComposerTextView: NSTextView {
     var onLayoutChanged: (() -> Void)?
     /// Marked text changes post no text-change notification of their own.
     var onMarkedTextChanged: (() -> Void)?
+    var onPaste: ((NSPasteboard) -> Bool)?
+    var recallPrompts: (() -> [String])?
+    /// Where ⌘V and ⌘⇧V read from; tests use a private pasteboard.
+    var pasteboard = NSPasteboard.general
+    /// The prompt ↑ brought back and its place; editing it ends recall.
+    private var recalled: (index: Int, text: String)?
+
+    /// A Markdown block quote, `> ` on each line, then a blank line to write after.
+    static func blockQuote(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: .newlines)
+            .map { $0.isEmpty ? ">" : "> " + $0 }.joined(separator: "\n") + "\n\n"
+    }
+
+    /// At the caret (after a selection, which stays), on a line of its own.
+    func insertAtCaret(_ text: String) {
+        let caret = NSMaxRange(selectedRange())
+        let before = (string as NSString).substring(to: caret)
+        insertText((before.isEmpty || before.hasSuffix("\n") ? "" : "\n") + text, replacementRange: NSRange(location: caret, length: 0))
+    }
+
+    /// Whether the caret is on the first (or last) displayed line, wrapped lines included.
+    private func caretOnEdgeLine(first: Bool) -> Bool {
+        let text = string as NSString
+        let caret = selectedRange().location
+        guard let layoutManager, let textContainer, text.length > 0 else { return true }
+        // After a final newline the caret sits on the empty line below the text.
+        if caret == text.length, text.hasSuffix("\n") { return !first }
+        layoutManager.ensureLayout(for: textContainer)
+        func line(_ character: Int) -> CGFloat {
+            layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: character), effectiveRange: nil).minY
+        }
+        // At a soft wrap, an upstream caret (⌘→) belongs to the line before it.
+        let upstream = selectionAffinity == .upstream && caret > 0 && text.character(at: caret - 1) != 10
+        return line(min(upstream ? caret - 1 : caret, text.length - 1)) == line(first ? 0 : text.length - 1)
+    }
+
+    /// A plain-text view disables Paste for a picture alone; ⌘V must still reach `paste`.
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), isEditable, onPaste != nil,
+           NSImage.canInit(with: pasteboard) || pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) {
+            return true
+        }
+        return super.validateUserInterfaceItem(item)
+    }
+
+    override func paste(_ sender: Any?) {
+        if onPaste?(pasteboard) == true { return }
+        super.paste(sender)
+    }
+
+    /// ⌘⇧V always types the pasteboard's text, however long.
+    override func pasteAsPlainText(_ sender: Any?) {
+        guard let text = pasteboard.string(forType: .string) else { return }
+        insertText(text, replacementRange: selectedRange())
+    }
+
+    /// ↑ in an empty composer brings back this session's previous prompt, again for
+    /// older ones; ↓ goes forward and finally back to empty. While a recalled
+    /// prompt is unedited, its own lines take the caret first.
+    func recall(older: Bool) -> Bool {
+        if let recalled, string != recalled.text { self.recalled = nil }
+        let text = string as NSString
+        if recalled != nil {
+            guard selectedRange().length == 0, caretOnEdgeLine(first: older) else { return false }
+        } else if !older || text.length > 0 { return false }
+        let prompts = recallPrompts?() ?? []
+        let index = (recalled?.index ?? prompts.count) + (older ? -1 : 1)
+        // At the oldest prompt ↑ stays put; with none, it does what it always did.
+        guard index >= 0 else { return recalled != nil }
+        let next = index < prompts.count ? prompts[index] : ""
+        insertText(next, replacementRange: NSRange(location: 0, length: text.length))
+        recalled = index < prompts.count ? (index, string) : nil
+        return true
+    }
 
     var boundedHeight: CGFloat {
         guard let layoutManager, let textContainer else { return Self.minimumHeight }
@@ -631,6 +733,7 @@ final class ComposerTextView: NSTextView {
         if string.isEmpty, !hasMarkedText(),
            (event.keyCode == 126 && modifiers == .option && onEditQueued?() == true)
             || ([UInt16(36), UInt16(76)].contains(event.keyCode) && modifiers == [.command, .shift] && onSteerQueued?() == true) { return }
+        if modifiers.isEmpty, !hasMarkedText(), [UInt16(125), UInt16(126)].contains(event.keyCode), recall(older: event.keyCode == 126) { return }
         if [UInt16(36), UInt16(76)].contains(event.keyCode), !hasMarkedText() {
             if event.modifierFlags.contains(.shift), !event.modifierFlags.contains(.command) {
                 insertNewline(nil)
@@ -644,4 +747,13 @@ final class ComposerTextView: NSTextView {
         // Escape stays in the responder chain for the host's existing dismissal.
         super.keyDown(with: event)
     }
+}
+
+/// Text an answer's Quote in reply sends to the caret of its session's composer.
+struct ComposerInsertion: Equatable {
+    var id = UUID()
+    var sessionID: String
+    var text: String
+    /// The notch's composer or the full-session window's.
+    var inNotch: Bool
 }

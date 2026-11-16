@@ -294,6 +294,12 @@ windows when done; it does not restart the user's running app.
 running composer's empty steering hint, typed draft with a queued message,
 full-window composer and queue-only harness hint in all three designs.
 
+`scripts/render-ui-fixtures.sh --theme all --composer-only` renders a pasted
+picture and long text staged as chips (`composer-paste-staged`, `-full`), a
+picture refused for a harness without image input (`composer-paste-refused`),
+and an answer's revealed hover controls with **Quote in reply** above a quoted
+draft (`composer-quote`, `-full`).
+
 The `island-*` fixtures place the glance, announcements, and aura over a
 simulated desktop and menu bar for both an external display and a MacBook
 camera, including fixed-time aura and morph contact sheets sampled from the

@@ -15,6 +15,8 @@ final class AppModel: ObservableObject {
     @Published var expanded = false
     @Published var notchPresentation = NotchPresentation.restingPlaceholder
     @Published var composerFocusRequest = 0
+    /// Waiting for its composer to put it at the caret.
+    @Published var composerInsertion: ComposerInsertion?
     @Published var hovering = false
     @Published var openOnHover = UserDefaults.standard.object(forKey: "notch.openOnHover") as? Bool ?? true {
         didSet { UserDefaults.standard.set(openOnHover, forKey: "notch.openOnHover") }
@@ -1445,6 +1447,45 @@ final class AppModel: ObservableObject {
 
     /// Kept beside the registry so pictures survive until they are sent.
     var snapShotDirectory: URL { storageURL.deletingLastPathComponent().appendingPathComponent("SnapShots", isDirectory: true) }
+
+    /// Text this long or longer is staged as a file rather than typed.
+    static let largePasteBytes = 32 * 1024
+
+    /// ⌘V in a composer: Finder files attach like a drop, a picture or a long text is
+    /// staged beside the SnapShots. Returns false for an ordinary text paste; text
+    /// wins over a picture, so rich text that also carries an image still types.
+    func attachPasted(from pasteboard: NSPasteboard) -> Bool {
+        guard let session = current else { return false }
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
+            addAttachments(urls, showPanel: false)
+            return true
+        }
+        do {
+            if let text = pasteboard.string(forType: .string) {
+                guard text.utf8.count >= Self.largePasteBytes else { return false }
+                addAttachments([try SnapShot.write(Data(text.utf8), name: "Pasted text", pathExtension: "txt", into: snapShotDirectory)], showPanel: false)
+                return true
+            }
+            guard NSImage.canInit(with: pasteboard) else { return false }
+            guard session.capabilities.images else {
+                errorMessage = "\(session.runtime.title) doesn't accept images, so the pasted picture wasn't attached."
+                return true
+            }
+            guard let image = NSImage(pasteboard: pasteboard)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                throw AppError("The picture couldn't be read.")
+            }
+            addAttachments([try SnapShot.write(image, name: "Pasted image", into: snapShotDirectory)], showPanel: false)
+        } catch { errorMessage = "Could not attach the paste. \(error.localizedDescription)" }
+        return true
+    }
+
+    /// An answer's Quote in reply: a Markdown block quote at the caret of this
+    /// session's composer in the surface it came from, which takes focus.
+    func quoteInReply(_ text: String, inNotch: Bool) {
+        guard let id = currentID else { return }
+        composerInsertion = ComposerInsertion(sessionID: id, text: ComposerTextView.blockQuote(text), inNotch: inNotch)
+        if inNotch { composerFocusRequest += 1 }
+    }
 
     /// Called as the panel opens, before it can take focus.
     func recordSnapShotSource() { snapShotSource = showSnapShot ? SnapShot.frontmost() : nil }
