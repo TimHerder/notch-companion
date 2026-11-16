@@ -641,7 +641,6 @@ final class ComposerTextView: NSTextView {
         insertText((before.isEmpty || before.hasSuffix("\n") ? "" : "\n") + text, replacementRange: NSRange(location: caret, length: 0))
     }
 
-    /// A plain-text view disables Paste for a picture alone; ⌘V must still reach `paste`.
     /// Whether the caret is on the first (or last) displayed line, wrapped lines included.
     private func caretOnEdgeLine(first: Bool) -> Bool {
         let text = string as NSString
@@ -653,9 +652,12 @@ final class ComposerTextView: NSTextView {
         func line(_ character: Int) -> CGFloat {
             layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: character), effectiveRange: nil).minY
         }
-        return line(min(caret, text.length - 1)) == line(first ? 0 : text.length - 1)
+        // At a soft wrap, an upstream caret (⌘→) belongs to the line before it.
+        let upstream = selectionAffinity == .upstream && caret > 0 && text.character(at: caret - 1) != 10
+        return line(min(upstream ? caret - 1 : caret, text.length - 1)) == line(first ? 0 : text.length - 1)
     }
 
+    /// A plain-text view disables Paste for a picture alone; ⌘V must still reach `paste`.
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         if item.action == #selector(paste(_:)), isEditable, onPaste != nil,
            NSImage.canInit(with: pasteboard) || pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) {

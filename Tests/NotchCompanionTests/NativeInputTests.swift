@@ -95,6 +95,14 @@ final class NativeInputTests: XCTestCase {
         view.setSelectedRange(NSRange(location: 3, length: 0))
         view.keyDown(with: arrow(up: true))
         XCTAssertEqual(view.string, "Older prompt", "From the first displayed line, ↑ goes back")
+        view.keyDown(with: arrow(up: false))
+        // ⌘→ on the line above the last leaves the caret at the wrap with upstream affinity, still on that line.
+        var lastLine = NSRange()
+        view.layoutManager!.ensureLayout(for: view.textContainer!)
+        view.layoutManager!.lineFragmentRect(forGlyphAt: view.layoutManager!.numberOfGlyphs - 1, effectiveRange: &lastLine)
+        view.setSelectedRange(NSRange(location: lastLine.location, length: 0), affinity: .upstream, stillSelecting: false)
+        view.keyDown(with: arrow(up: false))
+        XCTAssertEqual(view.string, paragraph, "At the end of a wrapped line above the last, ↓ moves the caret down")
     }
 
     @MainActor func testPasteStaysEnabledForAPictureAlone() {
