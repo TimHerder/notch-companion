@@ -14,8 +14,12 @@ struct MarkdownBlock: Identifiable, Equatable {
         case list(ordered: Bool, items: [MarkdownListItem])
         case quote([MarkdownBlock])
         case rule
+        /// A GitHub-style pipe table; every row has one cell per column.
+        case table(alignments: [MarkdownTableAlignment], header: [String], rows: [[String]])
     }
 }
+
+enum MarkdownTableAlignment: Equatable { case leading, center, trailing }
 
 struct MarkdownListItem: Identifiable, Equatable {
     let id: String
@@ -134,12 +138,25 @@ enum MarkdownDocument {
                 continue
             }
 
+            // After lists: a list item parses its own table.
+            if let table = tableStart(lines, at: index) {
+                index += 2
+                var rows: [[String]] = []
+                while index < lines.count, !lines[index].isBlank, !startsBlock(lines[index]) {
+                    // Short rows are padded and long ones cut to the header's columns, as on GitHub.
+                    let cells = tableCells(lines[index].trimmed)
+                    rows.append((0..<table.header.count).map { $0 < cells.count ? cells[$0] : "" })
+                    index += 1
+                }
+                append(.table(alignments: table.alignments, header: table.header, rows: rows), kind: "table", source: line.source)
+                continue
+            }
             var paragraph = [line.text]
             index += 1
             var setextLevel: Int?
             while index < lines.count, !lines[index].isBlank {
                 if let level = setextHeading(lines[index]) { setextLevel = level; index += 1; break }
-                if startsBlock(lines[index]) { break }
+                if startsBlock(lines[index]) || tableStart(lines, at: index) != nil { break }
                 paragraph.append(lines[index].text)
                 index += 1
             }
@@ -152,6 +169,47 @@ enum MarkdownDocument {
 
     private static func startsBlock(_ line: Line) -> Bool {
         fence(line) != nil || heading(line) != nil || isRule(line) || quoteText(line) != nil || (listMarker(line).map { $0.indent <= 3 } ?? false)
+    }
+
+    /// A header row and a delimiter row with the same number of cells, both with a pipe.
+    /// Anything else stays a paragraph (or a setext heading).
+    private static func tableStart(_ lines: [Line], at index: Int) -> (header: [String], alignments: [MarkdownTableAlignment])? {
+        guard index + 1 < lines.count else { return nil }
+        let head = lines[index], delimiter = lines[index + 1]
+        guard head.indent <= 3, delimiter.indent <= 3, head.trimmed.contains("|"), delimiter.trimmed.contains("|") else { return nil }
+        let header = tableCells(head.trimmed), marks = tableCells(delimiter.trimmed)
+        guard !header.isEmpty, header.count == marks.count else { return nil }
+        var alignments: [MarkdownTableAlignment] = []
+        for mark in marks {
+            // At most one colon at each end.
+            let dashes = mark.dropFirst(mark.hasPrefix(":") ? 1 : 0).dropLast(mark.hasSuffix(":") ? 1 : 0)
+            guard !dashes.isEmpty, dashes.allSatisfy({ $0 == "-" }) else { return nil }
+            switch (mark.hasPrefix(":"), mark.hasSuffix(":")) {
+            case (true, true): alignments.append(.center)
+            case (false, true): alignments.append(.trailing)
+            default: alignments.append(.leading)
+            }
+        }
+        return (header, alignments)
+    }
+
+    /// Splits a row at unescaped pipes, dropping one outer pipe at each end; `\|` is a literal pipe.
+    private static func tableCells(_ row: String) -> [String] {
+        var text = Substring(row)
+        if text.hasPrefix("|") { text.removeFirst() }
+        if text.hasSuffix("|") && !text.hasSuffix("\\|") { text.removeLast() }
+        var cells: [String] = [], cell = "", escaped = false
+        for character in text {
+            if escaped {
+                if character != "|" { cell.append("\\") }
+                cell.append(character); escaped = false
+            } else if character == "\\" { escaped = true }
+            else if character == "|" { cells.append(cell); cell = "" }
+            else { cell.append(character) }
+        }
+        if escaped { cell.append("\\") }
+        cells.append(cell)
+        return cells.map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     private static func fence(_ line: Line) -> Fence? {

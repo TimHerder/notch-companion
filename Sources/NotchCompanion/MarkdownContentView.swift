@@ -106,7 +106,41 @@ private struct MarkdownBlockView: View {
             Rectangle().fill(PanelTheme.pick(CompanionStyle.hairline, CompanionStyle.separator, CompanionStyle.rule))
                 .frame(height: PanelTheme.pick(1, 0.5, 0.5))
                 .padding(.vertical, PanelTheme.pick(4, 5, 5)).accessibilityHidden(true)
+        case .table(let alignments, let header, let rows):
+            // Like code, a table wider than the column scrolls inside it and never widens the panel.
+            ScrollView(.horizontal) {
+                Grid(alignment: .leading, horizontalSpacing: PanelTheme.pick(16, 16, 14), verticalSpacing: 0) {
+                    GridRow {
+                        ForEach(header.indices, id: \.self) { column in
+                            tableCell(header[column], weight: .semibold)
+                                .gridColumnAlignment(alignments[column].horizontal)
+                        }
+                    }
+                    tableRule(PanelTheme.pick(CompanionStyle.hairline, CompanionStyle.separator, CompanionStyle.ruleStrong))
+                    ForEach(rows.indices, id: \.self) { row in
+                        if row > 0 { tableRule(PanelTheme.pick(CompanionStyle.hairline.opacity(0.6), CompanionStyle.separator.opacity(0.6), CompanionStyle.rule)) }
+                        GridRow {
+                            ForEach(rows[row].indices, id: \.self) { column in tableCell(rows[row][column], weight: .regular) }
+                        }
+                    }
+                }
+                .fixedSize()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// One cell at the body size; a long cell wraps at a readable width instead of stretching the table.
+    private func tableCell(_ text: String, weight: Font.Weight) -> some View {
+        MarkdownCellWidth(cap: 260) {
+            inline(text).font(.system(size: bodySize, weight: weight)).lineSpacing(bodySize < 13 ? 2 : 3)
+        }
+        .padding(.vertical, PanelTheme.pick(6, 6, 5))
+    }
+
+    private func tableRule(_ color: Color) -> some View {
+        Rectangle().fill(color).frame(height: 0.5).accessibilityHidden(true)
     }
 
     private func inline(_ source: String) -> Text {
@@ -126,6 +160,29 @@ private struct MarkdownBlockView: View {
         case 2: return PanelTheme.pick(15, 17, 16)
         default: return PanelTheme.pick(13, 14.5, 14)
         }
+    }
+}
+
+private extension MarkdownTableAlignment {
+    var horizontal: HorizontalAlignment {
+        switch self {
+        case .leading: return .leading
+        case .center: return .center
+        case .trailing: return .trailing
+        }
+    }
+}
+
+/// Sizes text to its natural width up to a cap, wrapping past it. The table's
+/// horizontal scroll view proposes no width, which would never wrap a long cell.
+private struct MarkdownCellWidth: Layout {
+    var cap: CGFloat
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let text = subviews.first else { return .zero }
+        return text.sizeThatFits(ProposedViewSize(width: min(cap, text.sizeThatFits(.unspecified).width), height: nil))
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
     }
 }
 

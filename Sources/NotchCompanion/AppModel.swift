@@ -1844,7 +1844,7 @@ final class AppModel: ObservableObject {
         } catch { errorMessage = error.localizedDescription }
     }
 
-    func answer(_ request: PendingRequest, choice: String, answers: [String]? = nil) async {
+    func answer(_ request: PendingRequest, choice: String, answers: [String]? = nil, reason: String? = nil) async {
         guard !answeringRequestIDs.contains(request.id),
               requests.contains(where: { $0.id == request.id && $0.sessionID == request.sessionID }) else { return }
         answeringRequestIDs.insert(request.id)
@@ -1855,6 +1855,9 @@ final class AppModel: ObservableObject {
             if let questionID = request.questionID { params["question_id"] = questionID }
             params[request.kind == .approval ? "choice" : "answer"] = choice
             if request.kind == .clarification, request.multiSelect, let answers { params["answers"] = answers }
+            // A deny reason travels in the native reply, never as a chat message.
+            if request.acceptsDenyReason, choice == ApprovalAction.deny.rawValue,
+               let reason = reason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty { params["reason"] = reason }
             _ = try await client.request(method, params: params)
             play(.send)
             requests.removeAll { $0.id == request.id }
@@ -2285,7 +2288,8 @@ final class AppModel: ObservableObject {
             } else {
                 let detail = EventValue.string(payload[isApproval ? "command" : "question"])
                 let choices = payload["choices"] as? [String] ?? (isApproval ? ["once", "deny"] : [])
-                requests.append(PendingRequest(id: id, kind: isApproval ? .approval : .clarification, title: isApproval ? "\(sessions[index].runtime.title) needs permission" : "\(sessions[index].runtime.title) has a question", detail: detail, choices: choices, sessionID: sid, multiSelect: payload["multi_select"] as? Bool ?? false, allowsFreeText: payload["allows_free_text"] as? Bool ?? true, isPlan: payload["plan"] as? Bool == true))
+                requests.append(PendingRequest(id: id, kind: isApproval ? .approval : .clarification, title: isApproval ? "\(sessions[index].runtime.title) needs permission" : "\(sessions[index].runtime.title) has a question", detail: detail, choices: choices, sessionID: sid, multiSelect: payload["multi_select"] as? Bool ?? false, allowsFreeText: payload["allows_free_text"] as? Bool ?? true, isPlan: payload["plan"] as? Bool == true,
+                    acceptsDenyReason: isApproval && payload["deny_reason"] as? Bool == true))
             }
             sessions[index].state = .waiting
             play(.attention)

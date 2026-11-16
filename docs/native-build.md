@@ -250,6 +250,11 @@ card with the child's group, open while the child's result is handled.
 its answer and changes (`compact-`/`full-worked-collapsed`, `-expanded`) and the
 same turn live with its interleaved text and ticking footer (`-worked-live`);
 the full render includes them.
+`--transcript-only` renders an answer with a narrow and a wide Markdown table
+(`compact-table`, `full-table`, `markdown-table-narrow`), the full-session
+window's Find selecting a call inside a folded turn (`full-find-folded`) and
+with no matches (`full-find-none`), and a Claude approval with its deny reason
+field (`compact-`/`full-approval-reason`).
 
 Run `scripts/render-ui-fixtures.sh` to render the actual SwiftUI/AppKit views
 with a mock transport and temporary session storage. It writes PNGs under

@@ -90,6 +90,8 @@ private struct RequestAnswerForm: View {
     var detailsCap: CGFloat
     @State private var draft = ClarificationAnswerState()
     @State private var submitting = false
+    /// Sent with Deny where the native reply carries a message; empty keeps the plain deny.
+    @State private var denyReason = ""
     /// Refined and Tahoe measure the details so the card hugs short ones.
     @State private var detailsHeight = CGFloat.infinity
     /// Instrument: the fixed question area has more below its edge, and More scrolls to it.
@@ -113,6 +115,15 @@ private struct RequestAnswerForm: View {
         card {
             header
             details.disabled(isSubmitting)
+            if request.kind == .approval, request.acceptsDenyReason, request.choices.contains(ApprovalAction.deny.rawValue) {
+                // Return denies with the reason, as the field's only purpose is to go with Deny.
+                TextField("Reason (optional)", text: $denyReason)
+                    .answerField(vertical: PanelTheme.pick(6, 6, 5))
+                    .onSubmit { if !denyReason.trimmingCharacters(in: .whitespaces).isEmpty { respond(ApprovalAction.deny.rawValue) } }
+                    .disabled(isSubmitting)
+                    .help("Sent to the agent with Deny")
+                    .accessibilityLabel("Reason for denying, optional")
+            }
             actions.controlSize(.small).disabled(isSubmitting)
         }
         .accessibilityElement(children: .contain)
@@ -362,7 +373,8 @@ private struct RequestAnswerForm: View {
         guard !isSubmitting else { return }
         submitting = true
         Task {
-            await model.answer(request, choice: value, answers: request.multiSelect ? answers : nil)
+            await model.answer(request, choice: value, answers: request.multiSelect ? answers : nil,
+                               reason: value == ApprovalAction.deny.rawValue ? denyReason : nil)
             // Failed requests retain this form and every local answer field.
             submitting = false
         }

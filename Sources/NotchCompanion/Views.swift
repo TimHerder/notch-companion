@@ -1434,11 +1434,18 @@ struct FullSessionView: View {
     @State private var selectedTab: String
     /// Settings or Usage, shown in the main pane over the selected session.
     @State private var utility: PanelPage?
+    /// Find in conversation: nil while closed.
+    @State private var findQuery: String?
+    @State private var findIndex = 0
     /// Fixtures open another tab or page directly.
-    init(model: AppModel, tab: String = "Conversation", utility: PanelPage? = nil) {
+    init(model: AppModel, tab: String = "Conversation", utility: PanelPage? = nil, findQuery: String? = nil) {
         self.model = model
         _selectedTab = State(initialValue: tab)
         _utility = State(initialValue: utility ?? Self.utility(for: model.page))
+        _findQuery = State(initialValue: findQuery)
+        _findIndex = State(initialValue: findQuery.map { query in
+            max(0, (model.current.map { TranscriptFind.matches(query, in: ConversationTimeline.build(session: $0)) }?.count ?? 0) - 1)
+        } ?? 0)
     }
     var body: some View {
         HStack(spacing: 0) {
@@ -1497,8 +1504,31 @@ struct FullSessionView: View {
         .onChange(of: selectedTab) { _, tab in
             model.setSessionVisibility(fullConversationVisible: tab == "Conversation")
         }
-        .onChange(of: model.currentID) { _, _ in utility = nil; focused = true }
+        .onChange(of: model.currentID) { _, _ in utility = nil; findQuery = nil; focused = true }
+        .onReceive(NotificationCenter.default.publisher(for: TranscriptFind.command)) { note in
+            guard let command = note.object as? TranscriptFind.Command else { return }
+            if command == .show {
+                guard utility == nil, !model.page.isRuntimeSetup else { return }
+                selectedTab = "Conversation"
+                if findQuery == nil { findQuery = "" }
+            } else if findQuery != nil { moveFind(forward: command == .next) }
+        }
+        .onChange(of: findQuery) { old, new in
+            // A new search starts at the newest match, nearest where the conversation is read.
+            if old != new { findIndex = max(0, findMatches.count - 1) }
+        }
         .onChange(of: model.page) { _, page in if let page = Self.utility(for: page) { utility = page } }
+    }
+
+    private var findMatches: [TranscriptFindMatch] {
+        guard let findQuery, let session = model.current else { return [] }
+        return TranscriptFind.matches(findQuery, in: ConversationTimeline.build(session: session))
+    }
+
+    private func moveFind(forward: Bool) {
+        let count = findMatches.count
+        guard count > 0 else { return }
+        findIndex = (min(findIndex, count - 1) + (forward ? 1 : count - 1)) % count
     }
 
     private static func utility(for page: PanelPage) -> PanelPage? {
@@ -1597,6 +1627,13 @@ struct FullSessionView: View {
                 NotchSegmentedControl(label: "View", options: ["Conversation", "Activity", "Team"], title: { $0 }, selection: $selectedTab)
             })
         }
+        let matches = findMatches
+        let findCurrent = matches.isEmpty ? nil : min(findIndex, matches.count - 1)
+        if let query = findQuery, selectedTab == "Conversation" {
+            TranscriptFindBar(query: Binding(get: { query }, set: { findQuery = $0 }), current: findCurrent, count: matches.count,
+                              move: { moveFind(forward: $0) }, close: { findQuery = nil; focused = true })
+                .readable().padding(.horizontal, 22).padding(.top, -6).padding(.bottom, 10)
+        }
         VStack(spacing: 0) {
             if let error = model.errorMessage {
                 HStack(alignment: .top) { Image(systemName: "exclamationmark.circle"); Text(error).font(.system(size: 12)).textSelection(.enabled); Spacer(); QuietIconButton(symbol: "xmark", label: "Dismiss error") { model.errorMessage = nil } }.foregroundStyle(CompanionStyle.amber).padding(.bottom, 10)
@@ -1605,7 +1642,7 @@ struct FullSessionView: View {
             FailedAgentBanner(model: model) { selectedTab = "Team" }
         }.readable().padding(.horizontal, 22)
         Group {
-            if selectedTab == "Conversation" { ConversationHistoryView(model: model, inNotch: false) }
+            if selectedTab == "Conversation" { ConversationHistoryView(model: model, inNotch: false, findOpen: findQuery != nil, find: findCurrent.map { matches[$0] }) }
             else if selectedTab == "Activity" { fullActivity }
             else { fullTeam }
         }.readable().padding(.horizontal, 22).frame(maxHeight: .infinity)

@@ -201,6 +201,35 @@ final class NotchCompanionTests: XCTestCase {
         XCTAssertTrue(model.requests.isEmpty)
         XCTAssertEqual(model.current?.state, .working)
     }
+
+    @MainActor func testDenyReasonGoesInTheNativeReplyOnlyWhereTheHarnessCarriesIt() async {
+        let transport = DeferredTransport()
+        let storage = FileManager.default.temporaryDirectory.appendingPathComponent("notch-deny-\(UUID().uuidString)/sessions.json")
+        let model = AppModel(storageURL: storage, playsSounds: false, client: transport)
+        defer { model.shutdown() }
+        model.sessions[0].runtimeID = "parent"
+        let messages = model.sessions[0].messages.count
+        func ask(_ id: String, carriesReason: Bool) -> PendingRequest {
+            var payload: [String: Any] = ["session_id": "parent", "request_id": id, "command": "rm -rf build", "choices": ["once", "deny"]]
+            if carriesReason { payload["deny_reason"] = true }
+            model.receive("approval.request", payload: payload)
+            return model.requests.last!
+        }
+        let claude = ask("claude", carriesReason: true)
+        XCTAssertTrue(claude.acceptsDenyReason)
+        await model.answer(claude, choice: "deny", reason: "  Keep the build folder \n")
+        XCTAssertEqual(transport.lastParams["choice"] as? String, "deny")
+        XCTAssertEqual(transport.lastParams["reason"] as? String, "Keep the build folder")
+        await model.answer(ask("blank", carriesReason: true), choice: "deny", reason: "   ")
+        XCTAssertNil(transport.lastParams["reason"], "An empty reason keeps today's reply")
+        await model.answer(ask("allowed", carriesReason: true), choice: "once", reason: "Ignored")
+        XCTAssertNil(transport.lastParams["reason"], "The reason goes only with Deny")
+        let codex = ask("codex", carriesReason: false)
+        XCTAssertFalse(codex.acceptsDenyReason)
+        await model.answer(codex, choice: "deny", reason: "No channel")
+        XCTAssertNil(transport.lastParams["reason"], "A harness without a native message gets no reason")
+        XCTAssertEqual(model.sessions[0].messages.count, messages, "The reason is never sent as a chat message")
+    }
 }
 
 @MainActor

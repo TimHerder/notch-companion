@@ -760,6 +760,19 @@ position are remembered (`FullSessionWindow`).
   to Settings. Opening the window from the notch's Settings footer opens
   Settings.
 - Empty Activity and Team say so instead of showing a blank pane.
+- **Find.** ⌘F (Edit → Find → Find…) opens a find field under the header while
+  a session is shown, switching to Conversation; it uses the session search
+  capsule's look in each design. It searches the session's whole transcript,
+  case- and diacritic-insensitively: your messages, answers, commentary,
+  delegation results and tool calls (name and detail), inside folded “Worked
+  for” turns and collapsed tool runs too. A match is a row; the field reads
+  “N of M” (“No matches”). A new search selects the newest match; Return or ⌘G
+  goes to the next, ⇧Return or ⇧⌘G to the previous, wrapping. The current row
+  is outlined (find yellow in Refined and Tahoe, the signal in Instrument) and
+  centred, unfolding its turn or tool run and stopping transcript following.
+  Escape or Done closes it and following resumes, as Jump to latest does.
+  Changing session closes it. The notch panel has no Find: it is nonactivating,
+  so the menu commands are enabled only while this window is key.
 
 ### Panel designs
 
@@ -921,8 +934,16 @@ identify selection.
   delivery keeps the message and **Check last send** instead of a duplicate
   retry.
 - **Rendering.** Assistant and delegated results render headings, lists,
-  quotes, rules and fenced code; code scrolls horizontally with its own Copy.
-  User messages stay literal.
+  quotes, rules, fenced code and GitHub-style pipe tables; code scrolls
+  horizontally with its own Copy. A table needs a header row and a delimiter
+  row with the same number of cells, both with a pipe (`:` sets a column's
+  alignment, `\|` is a literal pipe); short rows are padded and extra cells
+  dropped, and anything else stays a paragraph. Cells take inline formatting at
+  the body size; the header is semibold over the design's hairline (Refined's
+  hairline, Tahoe's separator, Instrument's strong rule), with fainter rules
+  between rows. A cell wraps past 260 points, and a table wider than the column
+  scrolls horizontally inside it, like code, never widening the panel. User
+  messages stay literal.
 - **Destination.** On secondary pages with a composer (not Settings, Your
   sessions, runtime setup/chooser or Welcome), it names the selected parent
   session. A draft chooses its folder in its empty conversation until its
@@ -1044,6 +1065,14 @@ folder whose sessions are all archived leaves the default list.
   their card.
 - **Approvals** describe a Claude Code tool in its own terms (command and
   description, file, URL, search, or plan); other tools show readable JSON.
+  Where the harness's native deny reply carries a message to the agent (Claude
+  Code tool permissions, OpenCode permissions; the adapter marks the request
+  `deny_reason`), the card adds a one-line **Reason (optional)** field above its
+  buttons. Deny sends the trimmed reason inside that native reply, never as a
+  chat message; Return in the field denies once it has text. An empty reason
+  sends exactly the plain deny. Other approvals (Codex, ACP, Hermes, OpenClaw,
+  Claude computer use) have no such channel and keep the card unchanged, and the
+  glance's quick Deny never carries a reason.
 - **Delivered files.** `MEDIA:/absolute/path` (also quoted, emphasized,
   home-relative or with spaces, resolved against disk) and Markdown images of
   local files leave the text and appear below it: images as off-main-thread

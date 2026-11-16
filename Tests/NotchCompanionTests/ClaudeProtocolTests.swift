@@ -51,6 +51,26 @@ final class ClaudeProtocolTests: XCTestCase {
         XCTAssertThrowsError(try state.answer(["session_id": id, "request_id": "approval", "choice": "once"], approval: true))
     }
 
+    func testDenyCarriesTheUsersReasonOnlyWhenGiven() throws {
+        var state = ClaudeProtocolState(sessionID: id)
+        try state.begin("turn")
+        func deny(_ request: String, reason: String?) throws -> [String: Any]? {
+            let asked = state.interaction(["request_id": request, "request": ["subtype": "can_use_tool", "tool_name": "Bash", "input": ["command": "rm -rf build"]]])
+            XCTAssertEqual(asked.events.first?.payload["deny_reason"] as? Bool, true)
+            var params: [String: Any] = ["session_id": id, "request_id": request, "choice": "deny"]
+            if let reason { params["reason"] = reason }
+            let reply = try XCTUnwrap(state.answer(params, approval: true))
+            return (reply["response"] as? [String: Any])?["response"] as? [String: Any]
+        }
+        let plain = try deny("plain", reason: nil)
+        XCTAssertEqual(plain?["behavior"] as? String, "deny")
+        XCTAssertEqual(plain?["message"] as? String, "The user denied this action.", "No reason keeps today's reply exactly")
+        XCTAssertEqual(try deny("empty", reason: "")?["message"] as? String, "The user denied this action.")
+        XCTAssertEqual(try deny("reason", reason: "Keep the build folder")?["message"] as? String, "The user denied this action: Keep the build folder")
+        let computerUse = state.interaction(["request_id": "cu", "request": ["subtype": "request_user_dialog", "dialog_kind": "computer_use_approval", "payload": ["apps": []]]])
+        XCTAssertNil(computerUse.events.first?.payload["deny_reason"], "A computer-use grant has no message to carry")
+    }
+
     func testComputerUseDialogGrantsListedAppsAndDenyGrantsNothing() throws {
         var state = ClaudeProtocolState(sessionID: id); try state.begin("turn")
         let payload: [String: Any] = ["reason": "Check the build in Finder" + String(repeating: " and more", count: 2_000), "requestedFlags": ["clipboardRead": true],

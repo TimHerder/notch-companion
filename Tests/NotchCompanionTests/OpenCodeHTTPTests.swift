@@ -64,7 +64,8 @@ final class OpenCodeHTTPTests: XCTestCase {
                 _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "must-not-submit"])
                 XCTFail("The newly discovered child must block another prompt")
             } catch { XCTAssertTrue(error is RuntimeDefinitiveRejection) }
-            _ = try await client.request("approval.respond", params: ["session_id": id, "request_id": "perm_child", "choice": "deny"])
+            XCTAssertEqual(events.first { $0.0 == "approval.request" }?.1["deny_reason"] as? Bool, true, "A rejection can carry the user's feedback")
+        _ = try await client.request("approval.respond", params: ["session_id": id, "request_id": "perm_child", "choice": "deny", "reason": "Use the staging copy instead"])
             try await eventually {
                 events.contains { $0.0 == "subagent.complete" && $0.1["subagent_id"] as? String == "ses_child" }
                     && events.contains { $0.0 == "message.complete" }
@@ -119,7 +120,8 @@ final class OpenCodeHTTPTests: XCTestCase {
         XCTAssertTrue(events.contains { $0.0 == "subagent.start" && $0.1["subagent_id"] as? String == "ses_child" })
         do { _ = try await client.request("prompt.submit", params: ["session_id": id, "text": "duplicate"]); XCTFail("Child must block another native prompt") }
         catch { XCTAssertTrue(error is RuntimeDefinitiveRejection) }
-        _ = try await client.request("approval.respond", params: ["session_id": id, "request_id": "perm_child", "choice": "deny"])
+        XCTAssertEqual(events.first { $0.0 == "approval.request" }?.1["deny_reason"] as? Bool, true, "A rejection can carry the user's feedback")
+        _ = try await client.request("approval.respond", params: ["session_id": id, "request_id": "perm_child", "choice": "deny", "reason": "Use the staging copy instead"])
         try await eventually { events.contains { $0.0 == "message.complete" } }
         let childDone = try XCTUnwrap(events.firstIndex { $0.0 == "subagent.complete" })
         let parentDone = try XCTUnwrap(events.firstIndex { $0.0 == "message.complete" })

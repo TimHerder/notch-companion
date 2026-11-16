@@ -893,6 +893,20 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         menu.items.first?.title = "Open Notch Companion" + (shortcut.map { "   \($0.display)" } ?? "")
     }
 
+    // Edit → Find reaches the full-session window's delegate through the responder chain.
+    @objc func showTranscriptFind(_ sender: Any?) { postTranscriptFind(.show) }
+    @objc func findNextInTranscript(_ sender: Any?) { postTranscriptFind(.next) }
+    @objc func findPreviousInTranscript(_ sender: Any?) { postTranscriptFind(.previous) }
+    private func postTranscriptFind(_ command: TranscriptFind.Command) {
+        guard let fullWindow, fullWindow.isKeyWindow else { return }
+        NotificationCenter.default.post(name: TranscriptFind.command, object: command)
+    }
+    @objc func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        let find = [#selector(showTranscriptFind(_:)), #selector(findNextInTranscript(_:)), #selector(findPreviousInTranscript(_:))]
+        guard let action = item.action, find.contains(action) else { return true }
+        return fullWindow?.isKeyWindow == true
+    }
+
     @objc private func openFromMenu() { show() }
     @objc private func fullSessionFromMenu() { showFullSession() }
     @objc private func newSessionFromMenu() { Task { @MainActor in await model.newSession(showPanel: false); show() } }

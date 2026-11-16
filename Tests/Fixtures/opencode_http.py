@@ -308,6 +308,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(200, True)
             if path == '/permission/perm_child/reply':
                 assert body['reply'] == 'reject'
+                # The card's deny reason travels as OpenCode's native rejection feedback.
+                assert body.get('message') == 'Use the staging copy instead'
                 permissions.pop('perm_child')
                 event('permission.replied', sessionID='ses_child', requestID='perm_child')
                 done('ses_child', 'Child stopped after denial')

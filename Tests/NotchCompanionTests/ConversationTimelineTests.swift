@@ -451,4 +451,34 @@ final class ConversationTimelineTests: XCTestCase {
         let timeline = ConversationTimeline.build(session: session)
         XCTAssertEqual(timeline.last?.id, "message:\(restored[2].id)", "The answer stays last, below its folded work")
     }
+
+    func testFindReachesFoldedWorkCollapsedCallsAndEveryMessageInOrder() {
+        var session = CompanionSession()
+        session.id = "session"
+        session.state = .working
+        session.parentTurnComplete = false
+        session.messages = [message("u1", "user", 10, text: "Fix the Flaky test", turn: "u1"),
+                            message("c1", "assistant", 11, text: "Reading the flaky test.", turn: "u1"),
+                            message("a1", "assistant", 14, text: "Fixed the FLAKY one.", turn: "u1"),
+                            message("u2", "user", 20, text: "Now run everything", turn: "u2")]
+        session.turnEndedAt["u1"] = Date(timeIntervalSince1970: 15)
+        session.tools = [ToolActivity(id: "t1", name: "read_file", detail: "FlakyTests.swift", state: .finished, startedAt: Date(timeIntervalSince1970: 12), turnID: "u1")]
+        for index in 2...6 {
+            let detail = index == 2 ? "swift test --filter Flaky" : "step \(index)"
+            session.tools.append(ToolActivity(id: "t\(index)", name: "terminal", detail: detail, state: index == 6 ? .working : .finished,
+                                              startedAt: Date(timeIntervalSince1970: 20 + Double(index)), turnID: "u2"))
+        }
+        let timeline = ConversationTimeline.build(session: session)
+        let matches = TranscriptFind.matches("  flaky ", in: timeline)
+        XCTAssertEqual(matches.map(\.id), ["message:u1", "message:c1", "tool:t1", "message:a1", "tool:t2"], "Case-insensitive, in transcript order")
+        XCTAssertEqual(matches[1].work, "work:session:u1", "Commentary in a folded turn unfolds it")
+        XCTAssertEqual(matches[1].item, "work:session:u1")
+        XCTAssertEqual(matches[2].work, "work:session:u1")
+        XCTAssertNil(matches[2].group, "Inside unfolded work every call shows")
+        XCTAssertNil(matches[3].work, "The answer sits outside the fold")
+        XCTAssertEqual(matches[4].group, "tools:session:run:t2", "An older live call opens its collapsed line")
+        XCTAssertNil(TranscriptFind.matches("step 6", in: timeline).first?.group, "The newest live calls already show")
+        XCTAssertTrue(TranscriptFind.matches("   ", in: timeline).isEmpty)
+        XCTAssertTrue(TranscriptFind.matches("absent", in: timeline).isEmpty)
+    }
 }
