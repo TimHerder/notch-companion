@@ -32,6 +32,14 @@ struct ConversationHistoryView: View {
                 LazyVStack(alignment: .leading, spacing: PanelTheme.pick(16, 18, 19)) {
                     ForEach(items) { item in
                         switch item {
+                        case .message(let message) where message.isSessionMarker:
+                            SessionMarkerRow(message: message, expanded: model.expandedWork.contains("marker:\(message.id)")) {
+                                if model.expandedWork.remove("marker:\(message.id)") == nil {
+                                    model.expandedWork.insert("marker:\(message.id)")
+                                    scrolling.stopFollowing()
+                                }
+                            }
+                            .transcriptFindRow("message:\(message.id)")
                         case .message(let message) where message.delegationSummary != nil:
                             let childID = message.delegationChildID.flatMap { id in model.sessions.contains { $0.id == id } ? id : nil }
                             DelegationResultRow(summary: message.delegationSummary ?? "", failed: message.delegationSummary?.hasSuffix(" failed") == true,
@@ -53,7 +61,8 @@ struct ConversationHistoryView: View {
                                     model.expandedWork.insert(work.id)
                                     scrolling.stopFollowing()
                                 }
-                            }) {
+                            }, resume: session.flatMap { session in model.canResumeAtReset(session.id, turn: work.turnRowID)
+                                ? { model.resumeAtReset(session.id, turn: work.turnRowID) } : nil }) {
                                 ForEach(work.entries) { entry in
                                     switch entry {
                                     case .commentary(let message), .message(let message):
@@ -653,23 +662,20 @@ private struct TurnWorkView<Content: View>: View {
     var work: TurnWork
     var expanded: Bool
     var toggle: () -> Void
+    /// Resume at reset, offered on a limit-stopped turn's line.
+    var resume: (() -> Void)? = nil
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: PanelTheme.pick(10, 10, 8)) {
-            if work.folds {
-                Button(action: toggle) { DisclosureLine(title: work.label, expanded: expanded, rule: true) }
-                    .buttonStyle(.plain).pressableCursor()
-                    .help(expanded ? "Hide the work" : "Show the commentary and tool calls")
-                    .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-            } else {
-                let symbol: (name: String, color: Color)? = switch work.outcome {
-                case .failed: ("exclamationmark.circle", CompanionStyle.color(.failed))
-                case .interrupted: ("stop.circle", CompanionStyle.secondary)
-                default: nil
+            HStack(spacing: 8) {
+                header
+                if let resume {
+                    Button("Resume at reset", action: resume)
+                        .buttonStyle(NotchToolbarButtonStyle(height: PanelTheme.current == .instrument ? 20 : 22))
+                        .fixedSize()
+                        .help("Send “\(QueuedSend.resumeText)” when the limit resets")
                 }
-                DisclosureLine(title: work.label, expanded: nil, symbol: symbol, rule: true)
-                    .accessibilityElement(children: .combine)
             }
             if expanded && !work.entries.isEmpty {
                 VStack(alignment: .leading, spacing: PanelTheme.pick(10, 10, 9)) { content }
@@ -678,6 +684,60 @@ private struct TurnWorkView<Content: View>: View {
                         Rectangle().fill(PanelTheme.pick(CompanionStyle.hairline, CompanionStyle.separator, CompanionStyle.ruleStrong)).frame(width: 1)
                     }
                     .padding(.leading, 4.5)
+            }
+        }
+    }
+
+    @ViewBuilder private var header: some View {
+        if work.folds {
+            Button(action: toggle) { DisclosureLine(title: work.label, expanded: expanded, rule: true) }
+                .buttonStyle(.plain).pressableCursor()
+                .help(expanded ? "Hide the work" : "Show the commentary and tool calls")
+                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+        } else {
+            let symbol: (name: String, color: Color)? = switch work.outcome {
+            case .failed: ("exclamationmark.circle", CompanionStyle.color(.failed))
+            case .interrupted: ("stop.circle", CompanionStyle.secondary)
+            default: nil
+            }
+            DisclosureLine(title: work.label, expanded: nil, symbol: symbol, rule: true)
+                .accessibilityElement(children: .combine)
+        }
+    }
+}
+
+/// “Context compacted”, unfolding the native summary when there is one, or the
+/// “New session” rule where Start fresh opened a new native session.
+private struct SessionMarkerRow: View {
+    var message: ChatMessage
+    var expanded: Bool
+    var toggle: () -> Void
+
+    var body: some View {
+        let summary = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if message.kind == ChatMessage.newSession {
+            DisclosureLine(title: "New session", expanded: nil, symbol: ("plus.bubble", CompanionStyle.secondary), rule: true)
+                .accessibilityElement(children: .combine)
+                .help("A new native session started here, with an empty context")
+        } else if summary.isEmpty {
+            DisclosureLine(title: "Context compacted", expanded: nil, symbol: ("arrow.down.right.and.arrow.up.left", CompanionStyle.secondary), rule: true)
+                .accessibilityElement(children: .combine)
+        } else {
+            VStack(alignment: .leading, spacing: PanelTheme.pick(10, 10, 8)) {
+                Button(action: toggle) { DisclosureLine(title: "Context compacted", expanded: expanded, rule: true) }
+                    .buttonStyle(.plain).pressableCursor()
+                    .help(expanded ? "Hide the summary" : "Show the summary the harness kept")
+                    .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                if expanded {
+                    Text(summary).font(PanelTheme.pick(CompanionStyle.caption, .system(size: 12), .system(size: 11.5)))
+                        .foregroundStyle(CompanionStyle.secondary).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 14)
+                        .overlay(alignment: .leading) {
+                            Rectangle().fill(PanelTheme.pick(CompanionStyle.hairline, CompanionStyle.separator, CompanionStyle.ruleStrong)).frame(width: 1)
+                        }
+                        .padding(.leading, 4.5)
+                }
             }
         }
     }

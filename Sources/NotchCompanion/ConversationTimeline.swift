@@ -54,6 +54,9 @@ struct TurnWork: Identifiable, Equatable {
     /// The block has an answer below: the work folds away above it. Otherwise it
     /// stays open under its header.
     let folds: Bool
+    /// The turn's visible user row, and when the account limit that stopped it resets.
+    var turnRowID = ""
+    var limitResetsAt: Date? = nil
 
     var duration: TimeInterval? { endedAt.map { max(0, $0.timeIntervalSince(startedAt)) } }
     var steps: Int {
@@ -64,6 +67,7 @@ struct TurnWork: Identifiable, Equatable {
     }
     /// "Worked for 2:14", "Failed after 8s", or "Worked · 5 steps" when an older turn's end is unknown.
     var label: String {
+        if outcome == .failed, let limitResetsAt { return "Limit reached · resets " + SnoozeChoice.time(limitResetsAt) }
         let verb = outcome == .failed ? "Failed" : outcome == .interrupted ? "Stopped" : "Worked"
         if let duration { return verb + (outcome == .finished ? " for " : " after ") + Self.format(duration) }
         if outcome != .finished || entries.isEmpty { return verb }
@@ -81,6 +85,8 @@ enum ConversationTimeline {
     private struct Block {
         /// The visible user row that starts the block; nil before the first one.
         let boundary: ChatMessage?
+        /// A Context compacted or New session row that starts this block instead.
+        var marker: ChatMessage? = nil
         var messages: [ChatMessage] = []
         var tools: [ToolActivity] = []
         var changes: [TurnChanges] = []
@@ -96,6 +102,7 @@ enum ConversationTimeline {
         // Steering rows and wakes share their turn's ID, so one ID can name several blocks.
         var owners: [String: [Int]] = [:]
         for original in session.messages {
+            if original.isSessionMarker { blocks.append(Block(boundary: nil, marker: original)); continue }
             guard SessionHistory.isVisibleConversation(original) else {
                 // Older saves may have mistaken a delegation envelope for a
                 // user turn. Preserve its identity as an alias to the preceding
@@ -116,7 +123,7 @@ enum ConversationTimeline {
             }
         }
 
-        let starts = blocks.map { $0.boundary?.createdAt ?? .distantPast }
+        let starts = blocks.map { $0.boundary?.createdAt ?? $0.marker?.createdAt ?? .distantPast }
         for tool in session.tools {
             // Explicit ownership survives restored/coarse timestamps; among the blocks
             // that share its turn, the call belongs to the latest one begun before it.
@@ -146,7 +153,7 @@ enum ConversationTimeline {
         var usedIDs = Set<String>()
         var result: [ConversationTimelineItem] = []
         for (index, block) in blocks.enumerated() {
-            if let boundary = block.boundary { result.append(.message(boundary)) }
+            if let boundary = block.boundary ?? block.marker { result.append(.message(boundary)) }
             let entries = interleave(block, live: index == liveBlock, session: session.id, usedIDs: &usedIDs)
             if index >= openFrom || block.boundary == nil {
                 result += entries
@@ -235,7 +242,8 @@ enum ConversationTimeline {
         var result: [ConversationTimelineItem] = []
         if !work.isEmpty || endedAt != nil {
             result.append(.work(TurnWork(id: "work:\(session.id):\(boundary.id)", entries: work, startedAt: boundary.createdAt,
-                                         endedAt: endedAt, outcome: outcome, folds: answer != nil && !work.isEmpty && !asking)))
+                                         endedAt: endedAt, outcome: outcome, folds: answer != nil && !work.isEmpty && !asking,
+                                         turnRowID: boundary.id, limitResetsAt: session.limitResets[boundary.id])))
         }
         if let answer { result.append(.message(answer)) }
         return result

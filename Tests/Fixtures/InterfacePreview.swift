@@ -624,6 +624,70 @@ import ImageIO
         try render(FullSessionView(model: model), size: full, name: "full-approval-reason", output: output)
     }
 
+    /// Compact and Start fresh in the context bubble, their transcript rows, a
+    /// limit-stopped turn with Resume at reset, and the scheduled resume above the composer.
+    @MainActor static func renderSessionOps(output: URL, temporary: URL, preferences: UserDefaults) throws {
+        let model = AppModel(storageURL: temporary.appendingPathComponent("session-ops.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
+        defer { model.shutdown() }
+        let start = Date().addingTimeInterval(-3_600)
+        func at(_ second: Double) -> Date { start.addingTimeInterval(second) }
+        model.sessions[0].runtime = .codex
+        model.sessions[0].profileID = RuntimeRoute.defaultProfile(.codex)
+        model.sessions[0].title = "Speed up the test suite"
+        model.sessions[0].workspacePath = "/tmp/Notch"
+        model.sessions[0].storedID = "thread"
+        model.sessions[0].state = .finished
+        model.sessions[0].runtimeInfo = RuntimeSessionInfo(model: "gpt-5", context: RuntimeContextUsage(used: 172_000, limit: 200_000))
+        model.sessions[0].messages = [
+            ChatMessage(id: "u1", role: "user", text: "Find the slowest tests and make them faster.", createdAt: at(0), turnID: "u1"),
+            ChatMessage(id: "a1", role: "assistant", text: "The three slowest tests waited on real timers. They now advance an injected clock; the suite runs in 41 s instead of 2:10.", createdAt: at(300), turnID: "u1"),
+            ChatMessage(id: "c1", role: "system", text: "The user wants a faster test suite. Timer-based tests in NotchControlsTests and IslandTierTests now use an injected clock. Next: parallelize the integration tests.", createdAt: at(320), kind: ChatMessage.contextCompacted),
+            ChatMessage(id: "u2", role: "user", text: "Now parallelize the integration tests.", createdAt: at(400), turnID: "u2"),
+            ChatMessage(id: "a2", role: "assistant", text: "Integration tests run in four parallel workers; each gets its own temporary storage.", createdAt: at(700), turnID: "u2"),
+            ChatMessage(id: "fresh", role: "system", text: "", createdAt: at(800), kind: ChatMessage.newSession),
+            ChatMessage(id: "u3", role: "user", text: "Write release notes for these changes.", createdAt: at(900), turnID: "u3")]
+        model.sessions[0].tools = [
+            ToolActivity(id: "t1", name: "terminal", detail: "swift test --parallel", state: .finished, startedAt: at(420), finishedAt: at(690), turnID: "u2")]
+        model.sessions[0].turnEndedAt = ["u1": at(310), "u2": at(710), "u3": at(905)]
+        model.sessions[0].turnOutcome = ["u1": .finished, "u2": .finished, "u3": .failed]
+        model.sessions[0].earlierStoredIDs = ["earlier-thread"]
+        // Reset at 3:40 PM on the fixture's day, so captures stay stable.
+        let reset = Calendar.app.date(bySettingHour: 15, minute: 40, second: 0, of: Date()) ?? Date()
+        model.sessions[0].limitResets = ["u3": reset]
+        model.connection = true
+        model.reducedMotion = true
+        model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1920, height: 1080), topInset: 0, leftArea: nil, rightArea: nil)
+        model.notchPresentation = .expanded(model.geometry!)
+        model.expanded = true
+        let compact = model.geometry!.expandedFrame.size, full = NSSize(width: 900, height: 660)
+        func bubble(_ name: String) throws {
+            try render(ModelControlsView(model: model, showingContext: true).padding(20)
+                .frame(width: 340, height: 230, alignment: .bottom).background(CompanionStyle.background)
+                .foregroundStyle(CompanionStyle.text).environment(\.colorScheme, .dark),
+                size: NSSize(width: 340, height: 230), name: name, output: output)
+        }
+        try bubble("session-ops-bubble")
+        model.compactingSessionIDs = [model.sessions[0].id]
+        try bubble("session-ops-bubble-compacting")
+        model.compactingSessionIDs = []
+        model.sessions[0].runtime = .opencode
+        try bubble("session-ops-bubble-start-fresh-only")
+        model.sessions[0].runtime = .codex
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-limit-reached", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-limit-reached", output: output)
+        model.expandedWork = ["marker:c1"]
+        model.sessions[0].messages.removeLast()
+        model.sessions[0].messages.removeLast()
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-context-compacted", output: output)
+        model.expandedWork = []
+        model.sessions[0].messages.append(contentsOf: [
+            ChatMessage(id: "fresh", role: "system", text: "", createdAt: at(800), kind: ChatMessage.newSession),
+            ChatMessage(id: "u3", role: "user", text: "Write release notes for these changes.", createdAt: at(900), turnID: "u3")])
+        model.sessions[0].queuedSends = [QueuedSend(id: "resume", text: QueuedSend.resumeText, notBefore: reset, resumesTurnID: "u3")]
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-resume-scheduled", output: output)
+        try render(FullSessionView(model: model), size: full, name: "full-resume-scheduled", output: output)
+    }
+
     /// A Claude parent with a native subagent and an app-owned Codex child, the
     /// child's own conversation, and the parent's Delegation result row.
     @MainActor static func renderDelegation(output: URL, temporary: URL, preferences: UserDefaults) throws {
@@ -914,6 +978,10 @@ import ImageIO
         }
         if CommandLine.arguments.contains("--work-only") {
             try renderWork(output: output, temporary: temporary, preferences: preferences)
+            return
+        }
+        if CommandLine.arguments.contains("--session-ops-only") {
+            try renderSessionOps(output: output, temporary: temporary, preferences: preferences)
             return
         }
         if CommandLine.arguments.contains("--transcript-only") {

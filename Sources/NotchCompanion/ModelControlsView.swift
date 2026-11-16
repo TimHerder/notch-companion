@@ -210,6 +210,7 @@ struct ModelControlsView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             .accessibilityElement(children: .combine)
+                            if model.offersCompact(session) || model.offersStartFresh(session) { sessionActions(session) }
                         }
                         if model.showUsage && session.runtime.capabilities.rateLimits == true {
                             accountLimits(session.runtime)
@@ -265,6 +266,38 @@ struct ModelControlsView: View {
             }
             .onDisappear { popupDismissal.stop() }
         }
+    }
+
+    /// Compact (harnesses whose native compaction the app drives) and Start fresh, both waiting for idle.
+    private func sessionActions(_ session: CompanionSession) -> some View {
+        let compacting = model.compactingSessionIDs.contains(session.id)
+        let waiting = "Waits until this session, its delegated work, any question and any unconfirmed send are settled."
+        return HStack(spacing: 6) {
+            if model.offersCompact(session) {
+                Button { Task { await model.compactContext(session.id) } } label: {
+                    HStack(spacing: 5) {
+                        if compacting { ProgressView().controlSize(.mini) }
+                        Text(compacting ? "Compacting…" : "Compact")
+                    }
+                }
+                .buttonStyle(NotchToolbarButtonStyle(height: 24)).fixedSize()
+                .disabled(!model.canCompact(session.id))
+                .help(session.storedID == nil ? "Nothing to compact before the first message."
+                      : model.canCompact(session.id) ? "Ask \(session.runtime.title) to summarize this conversation's context natively" : waiting)
+            }
+            if model.offersStartFresh(session) {
+                Button("Start fresh") {
+                    showingContext = false
+                    Task { await model.startFresh(session.id) }
+                }
+                .buttonStyle(NotchToolbarButtonStyle(height: 24)).fixedSize()
+                .disabled(!model.canStartFresh(session.id))
+                .help(session.storedID == nil ? "The next message already starts with an empty context."
+                      : model.canStartFresh(session.id) ? "Your next message opens a new \(session.runtime.title) session here, with an empty context" : waiting)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 2)
     }
 
     /// The Usage page's account limits for this session's harness, asked again on open.

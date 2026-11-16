@@ -81,6 +81,18 @@ private development hasn't been re-run against this source snapshot. Known limit
   doesn't host. The child-discovery race and the unstable pre-send snapshot are
   covered by offline fixtures only, not live OpenCode.
 - Pi: no terminal-rendered extension UI and no built-in tool approvals.
+- Compact, Start fresh and Resume at reset (2026-11-16): covered by unit tests,
+  protocol fixtures and offscreen renders only, no live native prompt. Codex's
+  `thread/compact/start`, its `contextCompaction` turn and the
+  `usageLimitExceeded` error shape come from the installed 0.162.1's own
+  generated protocol schema; Pi's `compact` RPC and events from its installed
+  RPC documentation; Claude Code's `/compact` and `compact_boundary` from the
+  Agent SDK's slash-command documentation, not a print-mode prompt; Hermes's
+  `session.compress` result and resume-to-tip from the installed 0.22.3 source. Not yet
+  checked live: whether Claude Code 2.x accepts `/compact` as stream-json input
+  and what its result frame holds, whether Codex reports the reached window
+  before or after the failed turn, and Claude's `rate_limit` category on a real
+  limit stop. Legacy Hermes, OpenCode, ACP agents and OpenClaw offer no Compact.
 - Deny reasons: Claude Code's deny `message` is covered by protocol fixtures,
   and OpenCode's reply `message` by the offline HTTP fixture and the installed
   OpenCode 2.0.30's own reply schema (read from the binary, no prompt). Not yet

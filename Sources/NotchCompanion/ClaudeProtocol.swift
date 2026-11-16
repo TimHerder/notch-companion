@@ -23,6 +23,9 @@ struct ClaudeProtocolState {
     var interrupted = false
     var errorCategory: String?
     var supportsSteering = false
+    /// The companion's `/compact` is the running turn: it ends in `session.compacted`, not an answer.
+    var compacting = false
+    private var compacted = false
     var pendingSteering = Set<String>()
     private var contextModel: String?
     private var contextUsed: Int?
@@ -58,6 +61,11 @@ struct ClaudeProtocolState {
         turnStartTokens = processTokens; turnStartModelTokens = processModelTokens
         contextUsed = nil
         if nativeState != nil { nativeState = "running" }
+    }
+
+    mutating func beginCompaction(_ id: String) throws {
+        try begin(id)
+        compacting = true; compacted = false
     }
 
     func event(_ name: String, _ fields: [String: Any] = [:]) -> Event {
@@ -286,6 +294,7 @@ struct ClaudeProtocolState {
                 return events
             }
             if child == nil, subtype == "compact_boundary" || (subtype == "status" && frame["status"] as? String == "compacting") {
+                if compacting, subtype == "compact_boundary" { compacted = true }
                 contextUsed = nil
                 return [contextInfo(reset: true)]
             }
@@ -435,6 +444,12 @@ struct ClaudeProtocolState {
               nativeState == nil || nativeState == "idle" else { return [] }
         active = false; self.result = nil
         let failed = result["is_error"] as? Bool == true || failedChild
+        if compacting {
+            compacting = false
+            // Only the native compact boundary proves the context was compacted.
+            return [event("session.compacted", !failed && !interrupted && compacted ? ["status": "complete"]
+                          : ["status": "error", "error": interrupted ? "Compaction was stopped." : "Claude Code did not compact this session."])]
+        }
         var events: [Event] = []
         if failed && !interrupted {
             let message = errorCategory == "authentication_failed"
@@ -444,7 +459,10 @@ struct ClaudeProtocolState {
                 : "Claude Code could not complete this turn. Check native permissions or provider availability."
             events.append(event("session.error", ["message": message]))
         }
-        events.append(event("message.complete", ["text": result["result"] as? String ?? text, "status": interrupted ? "interrupted" : failed ? "error" : "complete", "completion_id": result["uuid"] as? String ?? turnID]))
+        var payload: [String: Any] = ["text": result["result"] as? String ?? text, "status": interrupted ? "interrupted" : failed ? "error" : "complete", "completion_id": result["uuid"] as? String ?? turnID]
+        // Its reset comes from the turn's `rate_limit_event`.
+        if failed && !interrupted && errorCategory == "rate_limit" { payload["limit_reached"] = true }
+        events.append(event("message.complete", payload))
         return events
     }
 }

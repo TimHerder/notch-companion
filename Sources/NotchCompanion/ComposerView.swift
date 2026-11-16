@@ -31,6 +31,8 @@ struct ComposerView: View {
             && !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     private var queued: [QueuedSend] { model.current?.queuedSends.filter(\.isUserMessage) ?? [] }
+    /// Your own queued messages, which Option–↑ edits and Command–Shift–Return steers.
+    private var editable: [QueuedSend] { queued.filter { $0.resumesTurnID == nil } }
     private var draftBinding: Binding<String> {
         let sessionID = model.currentID
         return Binding(get: { model.sessions.first { $0.id == sessionID }?.draft ?? "" },
@@ -50,12 +52,14 @@ struct ComposerView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 5) {
                         ForEach(queued, id: \.id) { send in
+                            if send.resumesTurnID != nil { resumeRow(send, session: session) } else {
                             HStack(spacing: 6) {
                                 Image(systemName: "text.line.first.and.arrowtriangle.forward")
                                 Text("\(send.paused == true ? "Paused" : "Queued"): \(send.text)")
                                     .lineLimit(1).help(send.text + (send.attachments?.isEmpty == false ? "\nFiles: " + send.attachments!.map(\.name).joined(separator: ", ") : ""))
                                 Spacer(minLength: 0)
                                 queueActions(send, session: session)
+                            }
                             }
                         }
                     }
@@ -161,6 +165,25 @@ struct ComposerView: View {
         .lineLimit(1)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title.map { "Plan ready: \($0)" } ?? "Plan ready")
+    }
+
+    /// Resume at reset waits like a queued message: “Resumes at 3:40 PM”, Send now and Cancel.
+    private func resumeRow(_ send: QueuedSend, session: CompanionSession) -> some View {
+        let sending = model.isSubmitting(session.id)
+        let time = send.notBefore.map { SnoozeChoice.time($0) } ?? ""
+        return HStack(spacing: 6) {
+            Image(systemName: "clock.arrow.circlepath")
+            Text("Resumes at \(time)").lineLimit(1)
+                .help("Sends “\(send.text)” when the limit resets, unless you send something first")
+            Spacer(minLength: 0)
+            Button("Send now") { model.sendResumeNow(send.id) }
+                .buttonStyle(NotchToolbarButtonStyle(height: 22)).fixedSize()
+                .disabled(sending || model.submitting)
+            QuietIconButton(symbol: "xmark", label: "Cancel resume") { model.cancelQueuedSend(send.id) }
+                .disabled(sending)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Resumes at \(time)")
     }
 
     /// Steer now (when the running turn can take it), Edit (into an empty
@@ -292,9 +315,9 @@ struct ComposerView: View {
             NativeComposerEditor(text: draftBinding, focused: focused, height: $editorHeight,
                                  accessibilityLabel: "Message \(runtimeTitle)",
                                  accessibilityHint: busy ? busyHint : hint ?? "", onSubmit: { submit() }, onQueue: { submit(queue: true) },
-                                 onEditQueued: { queued.last.map { model.editQueuedSend($0.id) } ?? false },
+                                 onEditQueued: { editable.last.map { model.editQueuedSend($0.id) } ?? false },
                                  onSteerQueued: {
-                                     guard let first = queued.first, model.current?.canSteer(first.attachments ?? []) == true else { return false }
+                                     guard let first = editable.first, model.current?.canSteer(first.attachments ?? []) == true else { return false }
                                      Task { await model.steerQueuedSend(first.id) }
                                      return true
                                  },

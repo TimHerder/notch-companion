@@ -919,6 +919,10 @@ struct SettingsContent: View {
                     Toggle("Cross-agent delegation", isOn: $model.delegationEnabled).toggleStyle(NotchSwitchStyle())
                         .help("Let sessions of any harness (OpenCode from 2.0) hand a task to another harness you set up here. The child appears in the parent's team. Applies to sessions opened from now on.")
                 }
+                SettingsRow("Resume automatically after limit resets", symbol: "clock.arrow.circlepath", tint: .purple, divider: true) {
+                    Toggle("Resume automatically after limit resets", isOn: $model.resumeAutomatically).toggleStyle(NotchSwitchStyle())
+                        .help("When a turn stops at an account limit with a known reset, send “\(QueuedSend.resumeText)” at the reset, unless you send something first. Codex and Claude Code report limits.")
+                }
             }
             SettingsGroup(PanelTheme.pick(nil, "Notch", "Notch")) {
                 SettingsRow("Open on hover", symbol: "cursorarrow.rays", tint: .blue) {

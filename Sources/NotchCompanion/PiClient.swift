@@ -146,6 +146,13 @@ final class PiClient: RuntimeTransport {
             try session.answer(params); return ["resolved": true]
         case "session.rename":
             _ = try await session.rpc("set_session_name", ["name": params["title"] as? String ?? ""]); return ["renamed": true]
+        case "session.compact":
+            guard !session.state.busy else { throw AppError("Wait for Pi's run, retries and compaction to settle before compacting.") }
+            // Native `compact` answers once the summary is written; its own events add no turn.
+            session.state.compacting = true
+            defer { session.state.compacting = false }
+            let result = try await session.rpc("compact", timeout: .seconds(600))
+            return ["summary": result["summary"] as? String ?? ""]
         default: throw AppError("Pi does not support \(method) through this companion.")
         }
     }
@@ -225,12 +232,12 @@ private final class PiSession {
         try process.start(executable: executable, arguments: arguments, environment: environment, cwd: cwd)
     }
 
-    func rpc(_ command: String, _ params: [String: Any] = [:]) async throws -> [String: Any] {
+    func rpc(_ command: String, _ params: [String: Any] = [:], timeout: Duration = .seconds(30)) async throws -> [String: Any] {
         let key = UUID().uuidString
         return try await withCheckedThrowingContinuation { continuation in
             pending[key] = (command, continuation)
             timeouts[key] = Task { @MainActor [weak self] in
-                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                do { try await Task.sleep(for: timeout) } catch { return }
                 self?.timeouts.removeValue(forKey: key)
                 self?.pending.removeValue(forKey: key)?.1.resume(throwing: AppError("Pi did not acknowledge \(command). Reconnect to check the native session before retrying."))
             }
@@ -337,6 +344,8 @@ private final class PiSession {
 
 struct PiProtocolState {
     var busy = false
+    /// The companion's own `compact` request is running: its compaction events are not a run.
+    var compacting = false
     var observedWork = false
     private var text = ""
     private var completedText = ""
@@ -370,6 +379,7 @@ struct PiProtocolState {
             let result = frame["result"] as? [String: Any] ?? [:]
             return [(finished ? "tool.complete" : "tool.start", ["tool_id": frame["toolCallId"] ?? "", "name": frame["toolName"] ?? "Tool", "context": CodexProtocolState.describe(frame["args"]), "result": Self.text(result), "is_error": frame["isError"] as? Bool ?? false])]
         case "compaction_start", "auto_retry_start", "summarization_retry_scheduled":
+            if compacting, frame["type"] as? String == "compaction_start" { return [] }
             busy = true; observedWork = true
             return [("runtime.notice", ["message": frame["type"] as? String == "compaction_start" ? "Pi is compacting its context." : "Pi is retrying; this session is still working."])]
         case "queue_update":
