@@ -132,6 +132,19 @@ import XCTest
         XCTAssertEqual(GitActions.draftBody(base: "main", remote: "origin", at: state.root), "- Add a file")
     }
 
+    func testCommitsStagedAndUnstagedDeletions() throws {
+        let (repository, _) = try makeRepository()
+        try Data("b".utf8).write(to: repository.appendingPathComponent("b.txt"))
+        try git(["add", "b.txt"], at: repository); try git(["commit", "-q", "-m", "Add b"], at: repository)
+        try git(["rm", "-q", "README.md"], at: repository)
+        try FileManager.default.removeItem(at: repository.appendingPathComponent("b.txt"))
+        let state = try XCTUnwrap(GitActions.read(repository.path))
+        XCTAssertEqual(state.files.map(\.kind), ["Deleted", "Deleted"])
+        _ = try GitActions.commit(state.files, message: "Remove both", at: state.root)
+        XCTAssertEqual(try git(["show", "--name-status", "--format=", "HEAD"], at: repository), "D\tREADME.md\nD\tb.txt\n")
+        XCTAssertEqual(try git(["status", "--porcelain"], at: repository), "")
+    }
+
     func testFailedHookShowsItsOutputAndCommitsNothing() throws {
         let (repository, _) = try makeRepository()
         let hooks = URL(fileURLWithPath: try git(["config", "core.hooksPath"], at: repository).trimmingCharacters(in: .newlines))
@@ -280,6 +293,45 @@ import XCTest
         XCTAssertNotEqual(try git(["rev-parse", "HEAD"], at: repository), try git(["rev-parse", "main"], at: remote))
         await controller.push(confirmed: true)
         XCTAssertEqual(try git(["rev-parse", "HEAD"], at: repository), try git(["rev-parse", "main"], at: remote))
+    }
+
+    func testConfirmationCoversOnlyTheBranchItNamedAndAFailedPushRetries() async throws {
+        let (repository, remote) = try makeRepository(branch: "feature/a")
+        let model = makeModel(session: CompanionSession(id: "s", title: "T", state: .finished, workspacePath: repository.path))
+        let controller = model.gitActions(for: "s")
+        await controller.push()
+        XCTAssertEqual(controller.form, .confirmPush)
+        // The checkout moved to main before the user confirmed: ask again, push nothing.
+        try git(["checkout", "-q", "main"], at: repository)
+        await controller.push(confirmed: true)
+        XCTAssertEqual(controller.form, .confirmPush)
+        XCTAssertThrowsError(try git(["rev-parse", "--verify", "--quiet", "refs/heads/feature/a"], at: remote))
+        try git(["checkout", "-q", "feature/a"], at: repository)
+        await controller.push(confirmed: true)
+        XCTAssertEqual(controller.form, .confirmPush, "The confirmation now names main")
+
+        // A failed push shows Git's error; once the remote is back, Push works again.
+        let url = try git(["remote", "get-url", "origin"], at: repository).trimmingCharacters(in: .newlines)
+        try git(["remote", "set-url", "origin", url + "-missing"], at: repository)
+        await controller.push()
+        await controller.push(confirmed: true)
+        XCTAssertNotNil(controller.error)
+        try git(["remote", "set-url", "origin", url], at: repository)
+        await controller.push()
+        XCTAssertNil(controller.error)
+        await controller.push(confirmed: true)
+        XCTAssertNil(controller.error)
+        XCTAssertEqual(try git(["rev-parse", "HEAD"], at: repository), try git(["rev-parse", "feature/a"], at: remote))
+    }
+
+    func testASendWaitsForAGitActionInProgress() async throws {
+        let model = makeModel(session: CompanionSession(id: "s", title: "T", state: .finished))
+        model.gitActions(for: "s").working = "Committing…"
+        model.sessions[0].draft = "Next"
+        let sent = await model.submit(reply: nil)
+        XCTAssertFalse(sent)
+        XCTAssertEqual(model.errorMessage, "Wait for the Git action to finish, then send.")
+        XCTAssertEqual(model.sessions[0].draft, "Next")
     }
 
     func testWorktreeRecordsItsBaseAndOldRecordsDecode() throws {

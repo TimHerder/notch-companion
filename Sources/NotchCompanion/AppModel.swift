@@ -1687,6 +1687,8 @@ final class AppModel: ObservableObject {
             set { if background { backgroundSendErrors[localID] = newValue } else { self.errorMessage = newValue } }
         }
         backgroundSendErrors.removeValue(forKey: localID)
+        // A commit or push in progress must not race a new turn's edits.
+        guard gitActionControllers[localID]?.working == nil else { errorMessage = "Wait for the Git action to finish, then send."; return false }
         guard !persistenceBlocked else { errorMessage = "Restore the saved session registry before sending."; return false }
         guard session.runtime.isSupported else { errorMessage = session.runtime.capabilityNote; return false }
         guard isProjectTrusted(session) else {

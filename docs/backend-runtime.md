@@ -497,8 +497,9 @@ session's folder's repository with argument arrays (no shell), the user's own
 environment (so their identity, hooks, signing and credential helpers apply;
 `GIT_TERMINAL_PROMPT=0`, `GH_PROMPT_DISABLED=1`) and Git's stderr as the error.
 Status is `git status --porcelain=v1 -z --untracked-files=all`. Commit runs
-`git --literal-pathspecs add -A -- <included>` then `git --literal-pathspecs
-commit -m <message> -- <included and rename sources>`, so only those paths are
+`git --literal-pathspecs add -A -- <included files on disk>` then `git
+--literal-pathspecs commit -m <message> -- <included and rename sources>`
+(deletions, staged or not, are committed by pathspec alone), so only those paths are
 committed and anything else already staged stays staged; no `--no-verify`,
 author or config override. Push is `git push -u -- <remote> <branch>` (the
 branch's upstream remote, else `origin`), never forced. A pull request needs a
@@ -509,7 +510,11 @@ stored; an already open pull request for the branch is adopted), else the
 compare URL with `title` and `body` opens in the browser. The link is saved as
 the session's optional `pullRequest`. Every action waits for the session tree
 to be idle (as worktree cleanup does, plus an unconfirmed staged send) and
-first recreates a removed worktree through the send path's `recreateWorktree`.
+first recreates a removed worktree through the send path's `recreateWorktree`;
+a push re-checks idle after that wait. While a commit or push runs, a send to
+that session is refused (“Wait for the Git action to finish, then send.”), so a
+new turn's edits cannot join it. A push confirmation covers only the branch and
+remote it named; if the checkout changed meanwhile, it asks again.
 Snapshots are unchanged: a commit never rewrites a saved summary.
 
 Drafting a message never uses another API or SDK. Claude Code's

@@ -96,9 +96,10 @@ enum GitActions {
     nonisolated static func commit(_ files: [GitStatusFile], message: String, at root: String) throws -> String {
         guard !files.isEmpty else { throw AppError("Nothing to commit.") }
         guard !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw AppError("Write a commit message first.") }
-        // Literal pathspecs: a file named `*` or `:x` is that file, never a pattern.
-        _ = try user(["--literal-pathspecs", "add", "-A", "--"] + files.map(\.path), at: root)
-        // A staged rename's source is already gone from the index; the commit takes both sides.
+        // Literal pathspecs: a file named `*` or `:x` is that file, never a pattern. Only files on disk
+        // are added: a deletion (staged or not) and a rename's source are committed by their pathspec alone.
+        let present = files.map(\.path).filter { (try? FileManager.default.attributesOfItem(atPath: URL(fileURLWithPath: root).appendingPathComponent($0).path)) != nil }
+        if !present.isEmpty { _ = try user(["--literal-pathspecs", "add", "-A", "--"] + present, at: root) }
         let paths = files.flatMap { [$0.path] + ($0.oldPath.map { [$0] } ?? []) }
         // A pathspec commits only these paths, leaving anything else already staged as it is.
         _ = try user(["--literal-pathspecs", "commit", "-m", message, "--"] + paths, at: root, timeout: 300)
@@ -193,6 +194,8 @@ enum GitActions {
 /// One session's Git actions: the commit form, push confirmation and pull request form.
 @MainActor final class GitActionsController: ObservableObject {
     enum Form: Equatable { case commit, confirmPush, pullRequest }
+    /// What the open push confirmation names; a changed branch or remote asks again.
+    private var confirming: (branch: String, remote: String)?
     let sessionID: String
     weak var model: AppModel?
     @Published var repository: GitRepository?
@@ -265,7 +268,7 @@ enum GitActions {
     }
 
     func commit(thenPush: Bool) async {
-        guard let repository, model?.treeIsIdle(sessionID) == true else { return }
+        guard working == nil, let repository, model?.treeIsIdle(sessionID) == true else { return }
         let files = included
         guard !files.isEmpty else { error = "Nothing to commit."; return }
         let (message, root) = (message, repository.root)
@@ -281,29 +284,34 @@ enum GitActions {
         if thenPush, self.error == nil { await push() }
     }
 
-    /// The first call asks first when the branch needs it; `confirmed` pushes.
+    /// The first call asks first when the branch needs it; `confirmed` pushes what that confirmation named.
     func push(confirmed: Bool = false) async {
-        guard model?.treeIsIdle(sessionID) == true else { return }
+        guard working == nil, model?.treeIsIdle(sessionID) == true else { return }
+        // Marked working before any wait, so a send cannot start meanwhile.
+        working = "Pushing…"; error = nil; notice = nil
+        defer { working = nil }
         await refresh(recreating: true)
-        guard error == nil, let repository else { return }
+        guard error == nil, let repository, model?.treeIsIdle(sessionID) == true else { return }
         guard let branch = repository.branch else { error = "This checkout is not on a branch, so there is nothing to push."; return }
         let remote = repository.remote ?? "origin"
-        if !confirmed, GitActions.needsPushConfirmation(branch: branch, defaultBranch: repository.defaultBranch, worktreeBranch: session?.worktree?.branch) {
+        let approved = confirmed && confirming.map { $0.branch == branch && $0.remote == remote } == true
+        if !approved, GitActions.needsPushConfirmation(branch: branch, defaultBranch: repository.defaultBranch, worktreeBranch: session?.worktree?.branch) {
+            confirming = (branch, remote)
             form = .confirmPush
             return
         }
+        confirming = nil
         let root = repository.root
-        form = nil; working = "Pushing…"; error = nil
+        form = nil
         do {
             try await Task.detached(priority: .userInitiated) { try GitActions.push(remote: remote, branch: branch, at: root) }.value
             notice = "Pushed \(branch) to \(remote)."
         } catch { self.error = error.localizedDescription }
-        working = nil
         await refresh()
     }
 
     func createPullRequest() async {
-        guard let repository, let github = repository.github, let branch = repository.branch, model?.treeIsIdle(sessionID) == true else { return }
+        guard working == nil, let repository, let github = repository.github, let branch = repository.branch, model?.treeIsIdle(sessionID) == true else { return }
         let (title, body, base, root, gh) = (title.trimmingCharacters(in: .whitespacesAndNewlines), body, base.trimmingCharacters(in: .whitespaces), repository.root, gh())
         guard !title.isEmpty, !base.isEmpty else { error = "Give the pull request a title and a base branch."; return }
         working = "Opening pull request…"; error = nil; notice = nil
