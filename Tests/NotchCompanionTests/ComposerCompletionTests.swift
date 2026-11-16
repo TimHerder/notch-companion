@@ -80,8 +80,8 @@ final class ComposerCompletionTests: XCTestCase {
         view.keyDown(with: key(126, "\u{F700}", [.function, .numericPad]))
         XCTAssertEqual(completion.selection, 0)
         XCTAssertEqual(view.string, "/co", "↑ moves the selection, never recalls a prompt")
-        view.keyDown(with: key(36, "\r", .command))
-        XCTAssertEqual(sent, 0, "Return never sends while the list is open")
+        view.keyDown(with: key(36, "\r", [.command, .shift]))
+        XCTAssertEqual(sent, 0, "Return never sends while the list is open, ⌘⇧↩ included")
         XCTAssertEqual(view.string, "/compact <instructions>")
         XCTAssertEqual(view.selectedRange(), NSRange(location: 9, length: 14), "The hint is selected, so typing replaces it")
         view.reportCompletion()
@@ -133,8 +133,16 @@ final class ComposerCompletionTests: XCTestCase {
         let trigger = ComposerCompletionTrigger.find(in: draft, caret: 8)
         XCTAssertEqual(trigger?.query, "My")
         XCTAssertEqual(trigger?.range, NSRange(location: 4, length: 18))
-        XCTAssertEqual(ComposerCompletionTrigger.find(in: "@\"open quote", caret: 3)?.range, NSRange(location: 0, length: 6),
+        let inner = ComposerCompletionTrigger.find(in: draft, caret: 16)
+        XCTAssertEqual(inner?.query, "My Notes/o", "After a space inside the quotes too")
+        XCTAssertEqual(inner?.range, NSRange(location: 4, length: 18))
+        XCTAssertNil(ComposerCompletionTrigger.find(in: draft, caret: 24), "After the closing quote it is written")
+        XCTAssertEqual(ComposerCompletionTrigger.find(in: "@\"open quote", caret: 8)?.range, NSRange(location: 0, length: 12),
                        "An unclosed quote ends at the word")
+        let emoji = "@src/📁/file.swift"
+        XCTAssertEqual(ComposerCompletionTrigger.find(in: emoji, caret: (emoji as NSString).length)?.query, "src/📁/file.swift")
+        XCTAssertEqual(ComposerCompletionTrigger.find(in: emoji, caret: 5)?.range, NSRange(location: 0, length: (emoji as NSString).length),
+                       "An emoji is part of the word")
     }
 
     @MainActor func testMarkedTextNeverOpensOrChooses() {

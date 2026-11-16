@@ -733,7 +733,7 @@ final class ComposerTextView: NSTextView {
         guard let completion, completion.isOpen, !hasMarkedText() else { return false }
         switch event.keyCode {
         case 125 where modifiers.isEmpty, 126 where modifiers.isEmpty: completion.move(event.keyCode == 125 ? 1 : -1)
-        case 36 where !modifiers.contains(.shift), 76 where !modifiers.contains(.shift): completion.choose()
+        case 36 where modifiers != .shift, 76 where modifiers != .shift: completion.choose()
         case 48 where modifiers.isEmpty: completion.choose()
         case 53: completion.dismiss()
         default: return false

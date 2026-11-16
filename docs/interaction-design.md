@@ -990,7 +990,7 @@ identify selection.
   names); about six rows show, then it scrolls. Each row is a name and a
   one-line description, truncated. Typing filters it. While it is open it owns
   ↑ and ↓ (prompt recall applies only when it is closed); Return or Tab chooses
-  (Return never sends, ⌘↩ included; ⇧↩ still inserts a newline); Escape closes
+  (Return never sends, ⌘↩ and ⌘⇧↩ included; ⇧↩ alone still inserts a newline); Escape closes
   it and keeps the text, and it stays closed for that word. A click chooses a
   row. Marked input-method text never opens or chooses. VoiceOver hears the
   number of rows and the selected row when it opens, and each row ↑/↓ selects.

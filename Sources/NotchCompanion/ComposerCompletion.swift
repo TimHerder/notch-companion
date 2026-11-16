@@ -45,26 +45,34 @@ struct ComposerCompletionTrigger: Equatable {
     static func find(in text: String, caret: Int) -> ComposerCompletionTrigger? {
         let string = text as NSString
         guard caret > 0, caret <= string.length else { return nil }
+        // A surrogate half is part of an emoji, never a space.
         func isSpace(_ index: Int) -> Bool {
-            Character(UnicodeScalar(string.character(at: index)) ?? " ").isWhitespace
+            UnicodeScalar(string.character(at: index)).map { CharacterSet.whitespacesAndNewlines.contains($0) } ?? false
+        }
+        func isWordStart(_ index: Int) -> Bool { index == 0 || isSpace(index - 1) }
+        // Inside an open quoted mention, spaces included: `@"My Notes/pl|`.
+        let line = string.lineRange(for: NSRange(location: caret, length: 0))
+        let before = string.range(of: "@\"", options: .backwards, range: NSRange(location: line.location, length: caret - line.location))
+        if before.location != NSNotFound, isWordStart(before.location) {
+            let typed = string.substring(with: NSRange(location: before.location + 2, length: caret - before.location - 2))
+            if !typed.contains("\"") {
+                let rest = NSRange(location: caret, length: NSMaxRange(line) - caret)
+                let close = string.range(of: "\"", range: rest)
+                var end = close.location == NSNotFound ? caret : NSMaxRange(close)
+                if close.location == NSNotFound { while end < string.length, !isSpace(end) { end += 1 } }
+                return Self(kind: .file, query: typed, range: NSRange(location: before.location, length: end - before.location))
+            }
         }
         var start = caret
         while start > 0, !isSpace(start - 1) { start -= 1 }
         guard start < caret else { return nil }
         var end = caret
         while end < string.length, !isSpace(end) { end += 1 }
-        // A quoted mention runs to its closing quote, spaces included.
-        if string.length > start + 1, string.substring(with: NSRange(location: start, length: 2)) == "@\"",
-           let close = string.substring(from: start + 2).firstIndex(where: { $0 == "\"" || $0.isNewline }),
-           string.substring(from: start + 2)[close] == "\"" {
-            let length = string.substring(from: start + 2)[..<close].utf16.count
-            end = max(end, start + 2 + length + 1)
-        }
         let typed = string.substring(with: NSRange(location: start + 1, length: caret - start - 1))
         let range = NSRange(location: start, length: end - start)
         switch string.character(at: start) {
         case 0x2F where start == 0: return Self(kind: .command, query: typed, range: range)
-        case 0x40: return Self(kind: .file, query: typed.hasPrefix("\"") ? String(typed.dropFirst()) : typed, range: range)
+        case 0x40: return Self(kind: .file, query: typed, range: range)
         default: return nil
         }
     }
