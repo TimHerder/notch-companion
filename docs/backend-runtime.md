@@ -204,16 +204,20 @@ cannot restart work.
 
 [Scheduled tasks](interaction-design.md#scheduled-tasks) and PR watch
 messages ([Git actions](interaction-design.md#change-summaries)) are agent-kind
-queue entries (`scheduled:<name>`, `scheduledLate:<name>`, `prWatch`): they
-wait for the session and its children like other agent messages, are not
+queue entries (`scheduled:<name>`, `scheduledLate:<name>`, `prWatch`): unlike
+other agent messages they wait, as user messages do, for the session's own
+turn and its app-owned children, are not
 paused by Stop, keep Quit/Reconnect waiting until sent (unless their delivery
 failed), and are delivered on launch. Their IDs derive from the task and
 occurrence, or from the watch and its message count (`Delegation.derivedID`),
-so a restart finds one already queued or sent instead of adding another. A
+so a restart finds one already queued or sent and adopts it as the task's last
+run instead of adding another. A failed delivery releases a deferred
+Quit/Reconnect. A
 scheduled run starts its own turn for change cards, like the user's prompt.
 Scheduled tasks live in `scheduled-tasks.json` beside the registry (mode 0600;
-an unreadable file is left untouched and not overwritten); a task stores its
-next occurrence and the last one it ran or skipped.
+a file that exists but cannot be read or decoded is left untouched and not
+overwritten); a task stores its next occurrence and the calendar day it last
+ran or skipped.
 
 Queue entries' attachment and pause fields are optional for older registries.
 Stop, failure, disconnect and restart pause the queue (with resume/cancel

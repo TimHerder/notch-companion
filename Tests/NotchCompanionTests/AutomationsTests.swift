@@ -56,15 +56,15 @@ import XCTest
         var task = ScheduledTask(repeats: .daily, time: DateComponents(hour: 2, minute: 30))
         let spring = task.occurrence(after: date("2026-03-08 00:00", zone), calendar: calendar)!
         XCTAssertEqual(spring, date("2026-03-08 03:00", zone))
-        task.lastOccurrence = spring
+        task.lastRunDay = calendar.dateComponents([.year, .month, .day], from: spring)
         XCTAssertEqual(task.occurrence(after: spring, calendar: calendar), date("2026-03-09 02:30", zone))
 
         // Fall back: 1:30 happens twice on November 1; it runs at the first, never the repeat.
         task.time = DateComponents(hour: 1, minute: 30)
-        task.lastOccurrence = nil
+        task.lastRunDay = nil
         let first = task.occurrence(after: date("2026-11-01 00:00", zone), calendar: calendar)!
         XCTAssertEqual(calendar.component(.hour, from: first), 1)
-        task.lastOccurrence = first
+        task.lastRunDay = calendar.dateComponents([.year, .month, .day], from: first)
         let next = task.occurrence(after: first.addingTimeInterval(60), calendar: calendar)!
         XCTAssertEqual(next, date("2026-11-02 01:30", zone), "The repeated hour never runs it a second time")
     }
@@ -72,16 +72,18 @@ import XCTest
     func testTimeZoneChangeAndClockSetBackNeverRunADayTwice() {
         var task = ScheduledTask(repeats: .daily, time: DateComponents(hour: 9, minute: 0))
         // Ran at 9:00 in Berlin, which is 3:00 in New York; then the Mac moves to New York.
-        task.lastOccurrence = date("2026-11-16 09:00", "Europe/Berlin")
+        task.lastRunDay = DateComponents(year: 2026, month: 11, day: 16)
         let newYork = calendar("America/New_York")
         XCTAssertEqual(task.occurrence(after: date("2026-11-16 04:00", "America/New_York"), calendar: newYork),
                        date("2026-11-17 09:00", "America/New_York"), "9:00 in New York the same day would run that day twice")
         // The clock set back to 7:00 after today's 9:00 run waits for tomorrow.
         let berlin = calendar("Europe/Berlin")
         XCTAssertEqual(task.occurrence(after: date("2026-11-16 07:00", "Europe/Berlin"), calendar: berlin), date("2026-11-17 09:00", "Europe/Berlin"))
-        // A run time later today in the new zone still waits when it ran today.
-        task.lastOccurrence = date("2026-11-16 09:00", "America/New_York")
-        XCTAssertEqual(task.occurrence(after: date("2026-11-16 10:00", "Europe/Berlin"), calendar: berlin), date("2026-11-17 09:00", "Europe/Berlin"))
+        // Westward across the date line: 9:00 on the 16th in Tokyo is the 15th in Honolulu, whose
+        // next 9:00 is the 16th again by the calendar: that day already ran.
+        let honolulu = calendar("Pacific/Honolulu")
+        XCTAssertEqual(task.occurrence(after: date("2026-11-15 14:00", "Pacific/Honolulu"), calendar: honolulu),
+                       date("2026-11-17 09:00", "Pacific/Honolulu"))
     }
 
     func testWeeklyHourlyAndOnceOccurrences() {
@@ -224,7 +226,58 @@ import XCTest
         XCTAssertEqual(reopened.scheduledTasks.first?.nextRun, due)
         reopened.runDueScheduledTasks(now: now)
         XCTAssertEqual(runs(reopened).count, 1, "The occurrence's derived ID finds the run already queued")
+        XCTAssertEqual(reopened.scheduledTasks[0].lastRunID, runs(reopened)[0].id, "The task adopts the run, so the next waits for it")
+        XCTAssertNotNil(reopened.scheduledTasks[0].sessionID)
+        XCTAssertTrue(reopened.scheduledRunActive(reopened.scheduledTasks[0]))
         XCTAssertGreaterThan(reopened.scheduledTasks[0].nextRun!, now)
+    }
+
+    func testAStaleFormKeepsTheRunAndAFailedSaveKeepsTheOccurrence() throws {
+        let (model, _) = makeModel()
+        let now = Date()
+        _ = task(model, due: now.addingTimeInterval(-10), continues: true)
+        let form = model.scheduledTasks[0]
+        model.runDueScheduledTasks(now: now)
+        let run = model.scheduledTasks[0].lastRunID
+        XCTAssertNotNil(run)
+        var edited = form
+        edited.prompt = "Review yesterday's commits and open issues."
+        XCTAssertNil(model.saveScheduledTask(edited, now: now))
+        XCTAssertEqual(model.scheduledTasks[0].lastRunID, run, "Saving a form opened before the run keeps it")
+        XCTAssertEqual(model.scheduledTasks[0].sessionID, model.sessions.first { $0.queuedSends.contains { $0.id == run } }?.id)
+        XCTAssertNotNil(model.runScheduledTaskNow(form.id), "Its run still blocks another")
+
+        let (blocked, store) = makeModel()
+        let due = now.addingTimeInterval(-10)
+        _ = task(blocked, due: due)
+        // A folder where the registry belongs makes its save fail.
+        try FileManager.default.createDirectory(at: store.appendingPathComponent("sessions.json"), withIntermediateDirectories: true)
+        blocked.runDueScheduledTasks(now: now)
+        XCTAssertTrue(runs(blocked).isEmpty)
+        XCTAssertEqual(blocked.scheduledTasks[0].nextRun, due, "Not queued, so not used up")
+        XCTAssertNil(blocked.scheduledTasks[0].lastRunID)
+    }
+
+    func testAutomationWaitsForDelegatedChildren() async throws {
+        let (model, _) = makeModel()
+        var parent = CompanionSession(id: "p", runtimeID: "live", title: "Parent", state: .working,
+                                      messages: [ChatMessage(role: "user", text: "Go")], parentTurnComplete: true)
+        parent.runtime = .codex
+        parent.agents = [ChildAgent(id: "c", title: "Child", state: .working, sessionID: "child")]
+        parent.queuedSends = [QueuedSend(id: "q", text: "Check failed", kind: ChatMessage.pullRequestWatch)]
+        model.sessions.append(parent)
+        XCTAssertFalse(parent.isBusyIgnoringDelegates)
+        model.processDelegationWakes()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(model.sessions.first { $0.id == "p" }?.queuedSends.map(\.id), ["q"], "It waits while a child works")
+    }
+
+    func testUnreadableTasksFileIsNeverOverwritten() throws {
+        let (model, _) = makeModel()
+        try FileManager.default.createDirectory(at: model.scheduledTasksURL, withIntermediateDirectories: true)
+        model.loadScheduledTasks()
+        XCTAssertTrue(model.scheduledTasksUnreadable)
+        XCTAssertFalse(model.saveScheduledTasks())
     }
 
     func testEditPauseAndDelete() {
@@ -296,6 +349,17 @@ import XCTest
         result = PullRequestEvents.evaluate(pr(mergeable: "CONFLICTING", checks: [check("build", "SUCCESS", run: 2)]), watch: &watch)
         XCTAssertEqual(result.message, "PR #12 has merge conflicts with its base branch: https://github.com/owner/repo/pull/12. Resolve them.")
         XCTAssertNil(PullRequestEvents.evaluate(pr(mergeable: "CONFLICTING"), watch: &watch).message)
+
+        // Inline review comments (an empty review summary) and thread replies, newest first from `gh api`.
+        let inline: [[String: Any]] = [
+            ["id": 903, "user": ["login": "reviewer"], "html_url": "https://github.com/owner/repo/pull/12#discussion_r903"],
+            ["id": 902, "user": ["login": "me"], "html_url": "u"],
+            ["id": 901, "user": ["login": "reviewer"], "html_url": "https://github.com/owner/repo/pull/12#discussion_r901"]]
+        let quiet = ["id": "PRR_2", "author": ["login": "reviewer"], "state": "COMMENTED", "body": ""] as [String: Any]
+        result = PullRequestEvents.evaluate(pr(mergeable: "CONFLICTING", reviews: [changes, quiet]), reviewComments: inline, watch: &watch)
+        XCTAssertEqual(result.message, "reviewer left 2 review comments on PR #12: https://github.com/owner/repo/pull/12#discussion_r901. Read them and respond if they need a change.")
+        XCTAssertNil(PullRequestEvents.evaluate(pr(mergeable: "CONFLICTING"), reviewComments: inline, watch: &watch).message)
+        XCTAssertEqual(PullRequestEvents.reviewCommentsArguments("https://github.com/owner/repo/pull/12")?[3], "repos/owner/repo/pulls/12/comments")
         result = PullRequestEvents.evaluate(pr(state: "MERGED"), watch: &watch)
         XCTAssertEqual(result.message, "PR #12 was merged: https://github.com/owner/repo/pull/12.")
         XCTAssertTrue(result.ended)
@@ -313,6 +377,7 @@ import XCTest
         model.pullRequestRunner = { arguments in
             calls.append(arguments)
             if arguments.first == "auth" { return "Logged in" }
+            if arguments.first == "api" { return "[]" }
             let next = answers.removeFirst()
             return String(decoding: try JSONSerialization.data(withJSONObject: try next.get()), as: UTF8.self)
         }
@@ -321,7 +386,7 @@ import XCTest
         XCTAssertNil(problem)
         XCTAssertNotNil(model.sessions.first { $0.id == "s" }?.pullRequestWatch)
         for _ in 0..<50 where model.sessions.first(where: { $0.id == "s" })?.queuedSends.isEmpty != false { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertEqual(calls.last?.prefix(3), ["pr", "view", "https://github.com/owner/repo/pull/12"])
+        XCTAssertTrue(calls.contains(["pr", "view", "https://github.com/owner/repo/pull/12", "--json", PullRequestEvents.fields]))
         let queued = model.sessions.first { $0.id == "s" }!.queuedSends
         XCTAssertEqual(queued.map(\.kind), [ChatMessage.pullRequestWatch], "Queued behind the busy turn")
         XCTAssertEqual(ChatMessage.automationLabel(queued[0].kind), "PR watch")
@@ -341,6 +406,17 @@ import XCTest
         XCTAssertNil(model.sessions.first { $0.id == "s" }?.pullRequestWatch, "Merged stops the watch")
         XCTAssertEqual(model.sessions.first { $0.id == "s" }!.queuedSends.count, 2)
         XCTAssertNil(model.pullRequestPolls["s"])
+
+        // Watching again starts a new generation, so its first message never reuses an old ID.
+        let first = queued[0].id
+        answers = [.success(pr(checks: [check("build", "FAILURE", run: 3)]))]
+        _ = await model.watchPullRequest("s")
+        for _ in 0..<50 where model.sessions.first(where: { $0.id == "s" })!.queuedSends.count < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        let ids = model.sessions.first { $0.id == "s" }!.queuedSends.map(\.id)
+        XCTAssertEqual(ids.count, 3)
+        XCTAssertEqual(Set(ids).count, 3)
+        XCTAssertEqual(ids.first, first)
+        model.stopWatchingPullRequest("s")
     }
 
     func testWatchNeedsASignedInGitHubCLIAndAGitHubLink() async {

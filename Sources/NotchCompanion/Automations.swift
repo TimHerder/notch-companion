@@ -24,8 +24,9 @@ struct ScheduledTask: Codable, Identifiable, Equatable {
     var paused = false
     /// The occurrence waiting to run; nil once a one-time task has run.
     var nextRun: Date? = nil
-    /// The occurrence the last scheduled run (or skip) was for, so a day never runs twice.
-    var lastOccurrence: Date? = nil
+    /// The calendar day (year, month, day) of the last scheduled run or skip, so a day never
+    /// runs twice even when a new time zone moves its absolute time.
+    var lastRunDay: DateComponents? = nil
     var lastRunAt: Date? = nil
     var lastRunLate = false
     var lastRunID: String? = nil
@@ -54,7 +55,8 @@ struct ScheduledTask: Codable, Identifiable, Equatable {
             }
             guard let candidate = next(after: date) else { return nil }
             // A time-zone change, a clock set back or DST's repeated hour never runs a day twice.
-            if let last = lastOccurrence, calendar.isDate(candidate, inSameDayAs: last) { return next(after: candidate) }
+            let day = calendar.dateComponents([.year, .month, .day], from: candidate)
+            if let last = lastRunDay, last.year == day.year, last.month == day.month, last.day == day.day { return next(after: candidate) }
             return candidate
         }
     }
@@ -118,8 +120,10 @@ struct PullRequestWatch: Codable, Equatable {
     var conflicting = false
     /// The first poll records existing reviews and comments without reporting them.
     var baselined = false
-    /// Messages sent so far: each message's ID derives from it.
+    /// Messages sent so far: each message's ID derives from it and this watch's generation,
+    /// so watching again never reuses an earlier watch's IDs.
     var sent = 0
+    var generation = UUID().uuidString
 }
 
 /// A watch's polling, in memory only: polls back off after errors, which show only in the link's tooltip.
@@ -138,12 +142,20 @@ struct PullRequestPoll: Equatable {
 
 enum PullRequestEvents {
     static let fields = "number,url,state,author,mergeable,statusCheckRollup,reviews,comments"
+
+    /// `gh api` for the newest inline review comments, which `gh pr view` leaves out.
+    static func reviewCommentsArguments(_ url: String) -> [String]? {
+        let parts = URL(string: url)?.pathComponents ?? []
+        guard parts.count >= 5, parts[3] == "pull", Int(parts[4]) != nil else { return nil }
+        return ["api", "-X", "GET", "repos/\(parts[1])/\(parts[2])/pulls/\(parts[4])/comments",
+                "-f", "per_page=100", "-f", "sort=created", "-f", "direction=desc"]
+    }
     private static let failedConclusions: Set<String> = ["FAILURE", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR"]
     private static let passedConclusions: Set<String> = ["SUCCESS", "NEUTRAL", "SKIPPED"]
 
     /// One short message for what changed since `watch`, and whether the watch ends (merged or closed).
     /// Comment and review bodies stay out: they are other people's text, and the agent can read them with `gh`.
-    static func evaluate(_ pr: [String: Any], watch: inout PullRequestWatch) -> (message: String?, ended: Bool) {
+    static func evaluate(_ pr: [String: Any], reviewComments: [[String: Any]] = [], watch: inout PullRequestWatch) -> (message: String?, ended: Bool) {
         let number = (pr["number"] as? Int).map { "PR #\($0)" } ?? "the pull request"
         let link = pr["url"] as? String ?? watch.url
         let author = (pr["author"] as? [String: Any])?["login"] as? String
@@ -176,6 +188,7 @@ enum PullRequestEvents {
             let who = (review["author"] as? [String: Any])?["login"] as? String ?? "A reviewer"
             switch review["state"] as? String {
             case "CHANGES_REQUESTED": lines.append("\(who) requested changes on \(number): \(link). Address the review.")
+            // A summary with text; inline comments are counted below.
             case "COMMENTED" where who != author && !(review["body"] as? String ?? "").isEmpty:
                 lines.append("\(who) left a review comment on \(number): \(link). Read it and respond if it needs a change.")
             default: break
@@ -187,6 +200,21 @@ enum PullRequestEvents {
             // The PR author's own comments are this session's (or the user's) automation.
             guard who != author else { continue }
             lines.append("\(who ?? "Someone") commented on \(number): \(comment["url"] as? String ?? link). Read it and respond if it needs a change.")
+        }
+
+        // Inline review comments and thread replies, one line per person.
+        var inline: [(who: String, url: String, count: Int)] = []
+        for comment in reviewComments.reversed() {
+            guard let id = comment["id"].map({ "review-comment:" + EventValue.string($0) }), watch.seen.insert(id).inserted, !first else { continue }
+            let who = (comment["user"] as? [String: Any])?["login"] as? String ?? "Someone"
+            guard who != author else { continue }
+            if let index = inline.firstIndex(where: { $0.who == who }) { inline[index].count += 1 }
+            else { inline.append((who, comment["html_url"] as? String ?? link, 1)) }
+        }
+        for row in inline {
+            let one = row.count == 1
+            lines.append("\(row.who) left \(one ? "a review comment" : "\(row.count) review comments") on \(number): \(row.url). "
+                         + "Read \(one ? "it" : "them") and respond if \(one ? "it needs" : "they need") a change.")
         }
 
         switch pr["mergeable"] as? String {
@@ -218,7 +246,8 @@ extension AppModel {
 
     /// An unreadable file is left untouched and never overwritten.
     func loadScheduledTasks() {
-        guard let data = try? Data(contentsOf: scheduledTasksURL) else { return }
+        guard FileManager.default.fileExists(atPath: scheduledTasksURL.path) else { return }
+        guard let data = try? Data(contentsOf: scheduledTasksURL) else { scheduledTasksUnreadable = true; return }
         if let tasks = try? JSONDecoder().decode([ScheduledTask].self, from: data) { scheduledTasks = tasks }
         else { scheduledTasksUnreadable = true }
     }
@@ -290,13 +319,15 @@ extension AppModel {
             }
             guard let due = task.nextRun, due <= now, !scheduledRunActive(task) else { continue }
             let late = now.timeIntervalSince(due) > ScheduledTask.grace
+            let pending = task
             // Every missed occurrence collapses into this one run.
-            task.lastOccurrence = due
+            task.lastRunDay = Calendar.app.dateComponents([.year, .month, .day], from: due)
             task.nextRun = task.repeats == .once ? nil : task.occurrence(after: max(now, due))
             scheduledTasks[index] = task
-            changed = true
-            if late && task.skipMissed { scheduledTasks[index].lastSkipped = due; continue }
-            startScheduledRun(index, key: "\(Int(due.timeIntervalSince1970))", late: late, now: now)
+            if late && task.skipMissed { scheduledTasks[index].lastSkipped = due; changed = true; continue }
+            // The occurrence is used up only once its run is durably queued.
+            if startScheduledRun(index, key: "\(Int(due.timeIntervalSince1970))", late: late, now: now) { changed = true }
+            else { scheduledTasks[index] = pending }
         }
         if changed { saveScheduledTasks() }
     }
@@ -326,7 +357,14 @@ extension AppModel {
     func startScheduledRun(_ index: Int, key: String, late: Bool, now: Date = Date()) -> Bool {
         var task = scheduledTasks[index]
         let runID = Delegation.derivedID(caller: task.id, operation: "scheduled.run", clientRequestID: key)
-        guard !sessions.contains(where: { $0.wasDelivered(runID) || $0.queuedSends.contains { $0.id == runID } || $0.stagedSubmission?.message.id == runID }) else { return false }
+        // Queued before a quit that lost the task's save: adopt that run instead of adding another.
+        if let existing = sessions.first(where: { $0.wasDelivered(runID) || $0.queuedSends.contains { $0.id == runID } || $0.stagedSubmission?.message.id == runID }) {
+            task.lastRunID = runID; task.lastRunLate = late; task.sessionID = existing.id
+            task.lastRunAt = task.lastRunAt.map { max($0, now) } ?? now
+            scheduledTasks[index] = task
+            saveScheduledTasks()
+            return true
+        }
         let before = sessions
         // A previous run that could not be sent gives way to this one.
         if let old = task.lastRunID, failedDeliveries.contains(old) {
@@ -370,13 +408,17 @@ extension AppModel {
         if task.repeats == .hours {
             task.anchor = Calendar.app.date(bySettingHour: task.time.hour ?? 9, minute: task.time.minute ?? 0, second: 0, of: now) ?? now
         }
-        // An edit starts the schedule over: a time already past today waits for the next one.
-        task.lastOccurrence = nil
-        task.nextRun = task.occurrence(after: now)
-        // The continued session belongs to the harness and folder it started in.
-        if let old = scheduledTasks.first(where: { $0.id == task.id }), old.runtime != task.runtime || old.folder != task.folder || !task.continuesSession {
-            task.sessionID = nil
+        // Runs since the form opened stay the task's: only its settings come from the form.
+        if let current = scheduledTasks.first(where: { $0.id == task.id }) {
+            task.paused = current.paused
+            task.lastRunID = current.lastRunID; task.lastRunAt = current.lastRunAt; task.lastRunLate = current.lastRunLate
+            task.lastSkipped = current.lastSkipped; task.lastRunDay = current.lastRunDay
+            // The continued session belongs to the harness and folder it started in.
+            let sameDestination = current.runtime == task.runtime && current.folder == task.folder && task.continuesSession
+            task.sessionID = sameDestination ? current.sessionID : nil
         }
+        // A time already past waits for the next one; a day that ran stays done.
+        task.nextRun = task.occurrence(after: now)
         let before = scheduledTasks
         if let index = scheduledTasks.firstIndex(where: { $0.id == task.id }) { scheduledTasks[index] = task } else { scheduledTasks.append(task) }
         guard saveScheduledTasks() else { scheduledTasks = before; return "Could not save scheduled tasks." }
@@ -446,12 +488,20 @@ extension AppModel {
             guard let pr = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any] else {
                 throw AppError("GitHub CLI's answer could not be read.")
             }
-            // Stopped, or watching another link, meanwhile.
-            guard var current = sessions.first(where: { $0.id == id })?.pullRequestWatch, current.url == watch.url else { return }
-            let (message, ended) = PullRequestEvents.evaluate(pr, watch: &current)
+            var inline: [[String: Any]] = []
+            if let arguments = PullRequestEvents.reviewCommentsArguments(watch.url) {
+                let answer = try await pullRequestRunner(arguments)
+                guard let rows = try JSONSerialization.jsonObject(with: Data(answer.utf8)) as? [[String: Any]] else {
+                    throw AppError("GitHub CLI's review comments could not be read.")
+                }
+                inline = rows
+            }
+            // Stopped, or watching again, meanwhile.
+            guard var current = sessions.first(where: { $0.id == id })?.pullRequestWatch, current.generation == watch.generation else { return }
+            let (message, ended) = PullRequestEvents.evaluate(pr, reviewComments: inline, watch: &current)
             let before = sessions
             if let message {
-                let messageID = Delegation.derivedID(caller: id, operation: "pr-watch", clientRequestID: "\(current.url)#\(current.sent)")
+                let messageID = Delegation.derivedID(caller: id, operation: "pr-watch", clientRequestID: "\(current.generation)#\(current.sent)")
                 current.sent += 1
                 update(id) { $0.queuedSends.append(QueuedSend(id: messageID, text: message, kind: ChatMessage.pullRequestWatch)) }
             }
@@ -463,7 +513,7 @@ extension AppModel {
             if ended { pullRequestPolls[id] = nil } else { pullRequestPolls[id] = poll }
             if message != nil { processDelegationWakes() }
         } catch {
-            guard sessions.first(where: { $0.id == id })?.pullRequestWatch != nil else { return }
+            guard sessions.first(where: { $0.id == id })?.pullRequestWatch?.generation == watch.generation else { return }
             poll.failed(error.localizedDescription, now: now)
             pullRequestPolls[id] = poll
         }

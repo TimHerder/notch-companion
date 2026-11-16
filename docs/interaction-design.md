@@ -716,18 +716,21 @@ inline in the card, never as a menu or window:
   watched. While watching, a filled eye replaces it (help: what is watched;
   click stops), and the session's `pullRequestWatch` survives restart. Every 2
   minutes while the app is open, `gh pr view <url> --json` reads state,
-  mergeability, checks, reviews and comments, and new events become **one**
+  mergeability, checks, reviews and comments, and `gh api` the newest 100
+  inline review comments (which `gh pr view` leaves out); new events become **one**
   short message per poll, one line each with names and links: a check that
   failed (“Check `build` failed on PR #12: <link>. Investigate and fix it.”),
   all checks passing after a reported failure, a review requesting changes, a
-  review comment or PR comment from anyone but the PR's author (the session's
+  review summary, inline review comments (counted per person) or a PR comment
+  from anyone but the PR's author (the session's
   own automation posts as the author), new merge conflicts, or merged/closed,
   which also ends the watch. Comment and review text stays out of the message:
   it is other people's text, and the agent can read it with `gh`. The first
   poll counts existing reviews and comments as seen; a check already failing
   is reported. Check runs (by name, link and start), reviews and comments are
   remembered by ID with the watch, and each message's ID derives from the
-  watch, so repeated polls and restarts never resend. Messages go through the
+  watch's generation (new each time Watch is chosen) and count, so repeated
+  polls and restarts never resend and watching again never collides. Messages go through the
   normal send path, waiting in the session's queue while it works, labelled
   **PR watch**. A failed poll never messages the session: it backs off (4, 8,
   16 … up to 30 minutes), turns the eye amber and puts the error in its help.
@@ -1481,7 +1484,10 @@ row. Tasks run only while the app is open; there are no webhooks.
 - **Runs.** A run is queued in its destination session and sent through the
   normal send path with its staging, duplicate and receipt protections,
   labelled **Scheduled · <name>** (“· ran late” for a catch-up). A busy
-  session keeps it in its queue; it never interrupts or steers. A run never
+  session, or one whose delegated children still work, keeps it in its queue;
+  it never interrupts or steers. An occurrence is used up only once its run is
+  saved in the queue; a failed save leaves it due. A form saved after a run
+  started keeps that run (and its session) as the task's last. A run never
   starts while the task's previous run is still queued, sending or working;
   the due occurrence waits for it. Run now does the same once, leaving the
   schedule alone, and is disabled while the previous run is active.
@@ -1490,7 +1496,9 @@ row. Tasks run only while the app is open; there are no webhooks.
   and weekly times follow the current time zone and DST (a time skipped by
   DST runs at the next valid minute; a repeated hour runs at its first
   occurrence), and a day that already ran never runs again, whatever the clock
-  does. Hourly counts real hours from its anchor. Every occurrence missed
+  does: the task remembers the calendar day that last ran, not its absolute
+  time, so crossing time zones (even the date line) cannot repeat it. Hourly
+  counts real hours from its anchor. Every occurrence missed
   while the app was closed, the Mac slept or the previous run worked (over 5
   minutes late) collapses into one catch-up run marked late, or with **Skip
   missed runs** is skipped and noted. Paused tasks skip their occurrences.
