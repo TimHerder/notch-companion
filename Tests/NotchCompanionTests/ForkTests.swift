@@ -6,6 +6,8 @@ import XCTest
     var onConnectionChange: ((Bool, String?) -> Void)?
     var calls: [(String, [String: Any])] = []
     var failing: [String: Error] = [:]
+    var pauseCreate = false
+    var paused: CheckedContinuation<Void, Never>?
     private var created = 0
     func connect() async throws { onConnectionChange?(true, nil) }
     func disconnect() {}
@@ -14,6 +16,7 @@ import XCTest
         if let error = failing[method] { throw error }
         switch method {
         case "session.create":
+            if pauseCreate { await withCheckedContinuation { paused = $0 } }
             created += 1
             return ["session_id": "live-\(created)", "stored_session_id": "fork-\(created)", "messages": []]
         case "session.resume": return ["session_id": "live-resumed", "stored_session_id": params["session_id"] ?? "", "messages": []]
@@ -70,8 +73,8 @@ import XCTest
             ["id": "turn-3", "status": "inProgress", "items": [["type": "userMessage", "id": "item-4", "clientId": "u4"]]]
         ]]
         XCTAssertEqual(CodexProtocolState.forkTurn(thread, userMessageIDs: ["u1"]), "turn-1")
-        XCTAssertEqual(CodexProtocolState.forkTurn(thread, userMessageIDs: ["hermes-item-2", "item-2"]), "turn-2")
-        XCTAssertEqual(CodexProtocolState.forkTurn(thread, userMessageIDs: ["steer"]), "turn-2", "a steer belongs to its turn")
+        XCTAssertNil(CodexProtocolState.forkTurn(thread, userMessageIDs: ["hermes-item-2", "item-2"]), "a steer continued this answer's turn")
+        XCTAssertEqual(CodexProtocolState.forkTurn(thread, userMessageIDs: ["steer"]), "turn-2", "the steer's answer ends the turn")
         XCTAssertEqual(CodexProtocolState.forkTurn(thread, userMessageIDs: ["turn-1"]), "turn-1")
         XCTAssertNil(CodexProtocolState.forkTurn(thread, userMessageIDs: ["u4"]), "a running turn cannot be forked through")
         XCTAssertNil(CodexProtocolState.forkTurn(thread, userMessageIDs: ["missing", ""]))
@@ -123,6 +126,46 @@ import XCTest
         var unsaved = codex
         unsaved.storedID = nil
         XCTAssertNil(model.forkPoint("a2", in: unsaved))
+    }
+
+    func testCodexHidesAnAnswerALaterSteerContinued() {
+        var session = source()
+        session.messages.insert(ChatMessage(id: "steer", role: "user", text: "Also the docs.", turnID: "u1"), at: 2)
+        session.messages.insert(ChatMessage(id: "a1b", role: "assistant", text: "Docs too.", turnID: "u1"), at: 3)
+        XCTAssertNil(model.forkPoint("a1", in: session))
+        XCTAssertEqual(model.forkPoint("a1b", in: session)?.userMessageIDs, ["steer", "u1"])
+    }
+
+    func testForkCreationCountsAsWorkForTheSourceAndTheFork() async throws {
+        model.sessions = [source()]
+        transport.pauseCreate = true
+        let forking = Task { await model.forkFromHere("a1", in: "source") }
+        for _ in 0..<100 where transport.paused == nil { try await Task.sleep(nanoseconds: 5_000_000) }
+        XCTAssertNotNil(transport.paused, "the native fork is still opening")
+        XCTAssertTrue(model.hasActiveWork)
+        XCTAssertTrue(model.isSubmitting("source"))
+        XCTAssertNotNil(model.forkBlocker(model.sessions.first { $0.id == "source" }!))
+        let fork = try XCTUnwrap(model.sessions.first { $0.forkedFrom != nil }).id
+        XCTAssertTrue(model.isSubmitting(fork))
+        XCTAssertFalse(model.canArchiveSession(fork))
+        transport.paused?.resume()
+        await forking.value
+        XCTAssertFalse(model.hasActiveWork)
+        XCTAssertFalse(model.isSubmitting("source"))
+    }
+
+    func testAWholeSessionForkIsNotMadeAgainOnceTheSourceMovedOn() async throws {
+        var fork = CompanionSession(id: "fork", storedID: "old", title: "Parser fix", workspacePath: folder.path)
+        fork.runtime = .claude
+        model.sessions = [source(.claude)]
+        fork.forkedFrom = model.forkPoint("a2", in: model.sessions[0])
+        XCTAssertNil(fork.forkedFrom?.nativeMessageID)
+        model.sessions.append(fork)
+        XCTAssertNil(model.reforkBlocker(fork.forkedFrom!))
+        model.update("source") { $0.messages.append(ChatMessage(id: "u3", role: "user", text: "More", turnID: "u3")) }
+        XCTAssertNotNil(model.reforkBlocker(fork.forkedFrom!))
+        do { _ = try await model.ensureRuntime("fork"); XCTFail("re-forking a moved source must fail") } catch {}
+        XCTAssertFalse(transport.calls.contains { $0.0 == "session.create" })
     }
 
     func testForkWaitsForTheTreeAndAnUnconfirmedSend() {
@@ -258,6 +301,23 @@ import XCTest
         XCTAssertEqual(parent.messages.last?.kind, ChatMessage.sideChatMessage)
         XCTAssertTrue(parent.queuedSends.isEmpty)
         XCTAssertTrue(model.broughtBack(try XCTUnwrap(model.sessions.first { $0.id == chat })), "a delivered answer stays brought back")
+    }
+
+    func testSideChatQuestionsStayInTheSideChatAndItsResultMarksTheParentUnread() async throws {
+        var parent = source()
+        parent.completionID = "seen"
+        parent.acknowledgedCompletionID = "seen"
+        model.sessions = [parent]
+        await model.openSideChat("source")
+        let chat = try XCTUnwrap(model.sessions.first { $0.isSideChat }).id
+        model.queueQuestionNotice(childID: chat, requestID: "question")
+        XCTAssertTrue(model.sessions[0].queuedSends.isEmpty, "a side chat's question is not relayed to the parent")
+        model.update(chat) { $0.state = .working }
+        model.syncDelegatedChildren()
+        model.update(chat) { $0.state = .finished; $0.completionID = "chat-done" }
+        model.currentID = "source"
+        model.syncDelegatedChildren()
+        XCTAssertTrue(model.sessions.first { $0.id == "source" }!.hasUnreadCompletion)
     }
 
     func testSideChatIsOnlyOfferedOnTopLevelSessionsOfForkingHarnesses() {

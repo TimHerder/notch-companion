@@ -1627,7 +1627,8 @@ never changed.
 
 - **Fork from here.** A finished answer's hover controls, context menu and
   accessibility actions offer it where the harness can fork there: every
-  finished answer in Codex, and in Claude Code every answer this app recorded
+  finished answer in Codex that ends its native turn (not one a later steer
+  continued), and in Claude Code every answer this app recorded
   the native message for, else only the latest. It creates a new top-level
   session with the same harness, profile, folder, title, model and permission
   mode, forked through that answer, and opens it with the composer focused. It
@@ -1642,8 +1643,10 @@ never changed.
   like a delegated child's, with **Side chat of <title>** over the copied
   history. It keeps the parent's harness, folder, model and permission mode.
   The parent keeps working; while the side chat works, the parent's busy
-  state, queue, Quit/Reconnect and read receipts count it like any child, but
-  its result never wakes the parent or joins its turn.
+  state, queue, Quit/Reconnect and read receipts count it like any child, and
+  an unread result there makes the parent's result unread again, but it never
+  wakes the parent or joins its turn, and its questions stay in the side chat
+  instead of being relayed to the parent.
 - **Bring back and Close.** A side chat's composer field opens with a row like
   Plan ready: **Side chat**, then **Close** and **Bring back**. Bring back sends
   the side chat's own latest answer to the parent as one message, “From side

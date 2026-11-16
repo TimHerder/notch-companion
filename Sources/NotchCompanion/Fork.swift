@@ -11,6 +11,8 @@ struct ForkRecord: Codable, Equatable {
     var nativeMessageID: String?
     /// The answer was the source's last visible message.
     var latest: Bool
+    /// The answer forked through, which a whole-session fork made again must still end the source.
+    var answerID: String? = nil
 
     /// `session.create`'s `fork` parameter.
     var parameters: [String: Any] {
@@ -48,13 +50,25 @@ extension AppModel {
             for candidate in [id, id.hasPrefix("hermes-") ? String(id.dropFirst(7)) : id] where !ids.contains(candidate) { ids.append(candidate) }
         }
         switch session.runtime {
-        case .codex: guard !ids.isEmpty else { return nil }
+        // `thread/fork` stops at a turn's end: an answer a later steer continued does not end one.
+        case .codex: guard !ids.isEmpty, !later.contains(where: { $0.role == "user" && $0.turnID == (user?.turnID ?? user?.id) && $0.id != user?.id }) else { return nil }
         // Without the answer's message ID only the whole session can be copied, which is this answer only when it is the last.
         case .claude: guard message.nativeID != nil || later.isEmpty else { return nil }
         default: return nil
         }
         return ForkRecord(sourceSessionID: session.id, sourceTitle: session.title, sourceStoredID: stored,
-                          userMessageIDs: ids, nativeMessageID: message.nativeID, latest: later.isEmpty)
+                          userMessageIDs: ids, nativeMessageID: message.nativeID, latest: later.isEmpty, answerID: message.id)
+    }
+
+    /// A fork nothing was sent to is forked again on reopen. A whole-session fork (Claude Code without the
+    /// answer's message ID) is the same fork only while that answer still ends an idle source.
+    func reforkBlocker(_ fork: ForkRecord) -> String? {
+        guard fork.nativeMessageID == nil, fork.latest, let answer = fork.answerID else { return nil }
+        guard let source = sessions.first(where: { $0.id == fork.sourceSessionID }), !source.isBusyIgnoringDelegates,
+              source.messages.last(where: SessionHistory.isVisibleConversation)?.id == answer else {
+            return "“\(fork.sourceTitle)” has moved on since this fork was made, so its native fork cannot be made again. Fork it anew."
+        }
+        return nil
     }
 
     /// Why this session cannot be forked now, or nil. Its whole tree must be idle with no unconfirmed send.
@@ -93,9 +107,16 @@ extension AppModel {
     private func openFork(of source: CompanionSession, through messageID: String, point: ForkRecord, sideChat: Bool) async {
         if let blocker = forkBlocker(source) { errorMessage = blocker; return }
         guard let end = source.messages.firstIndex(where: { $0.id == messageID }) else { return }
-        forkingSessionIDs.insert(source.id)
-        defer { forkingSessionIDs.remove(source.id) }
         var fork = CompanionSession()
+        // Both count as sending while the fork opens: no send, archive, delete or Quit/Reconnect races it.
+        forkingSessionIDs.insert(source.id)
+        backgroundSubmissions.formUnion([source.id, fork.id])
+        defer {
+            forkingSessionIDs.remove(source.id)
+            backgroundSubmissions.subtract([source.id, fork.id])
+            syncDelegatedChildren()
+            scheduleDeferredOperationIfIdle()
+        }
         fork.runtime = source.runtime
         fork.profileID = source.profileID
         fork.workspacePath = source.workspacePath ?? workspacePath

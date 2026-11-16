@@ -1009,22 +1009,27 @@ title and native ID, the answer's user-row IDs and native message ID, and
 whether it was the latest answer) whose first `session.create` carries a
 `fork` parameter, so the adapter opens a native fork instead of a new session.
 It happens when the user asks, after the whole source tree is idle with no
-unconfirmed send; a failure removes the new entry and shows the harness's
-error. Until a send to the fork is attempted (`nativeSubmissionAttempted`),
-every reopen forks the source again from the same point, since an unprompted
-fork may not be saved natively; the earlier unused fork may remain in the
-harness's own store. The fork's transcript is the source's saved messages,
+unconfirmed send; while it opens, the source and the fork count as submitting,
+so sends, archive, delete, worktree cleanup and Quit/Reconnect wait for it. A
+failure removes the new entry and shows the harness's error. Until a send to
+the fork is attempted (`nativeSubmissionAttempted`), every reopen forks the
+source again from the same point, since an unprompted fork may not be saved
+natively; the earlier unused fork may remain in the harness's own store. A
+whole-session fork (Claude Code without the answer's ID) is made again only
+while that answer (`answerID`) still ends the idle source; otherwise the send
+fails with an explanation rather than forking a longer history. The fork's transcript is the source's saved messages,
 tools and turn ends up to the answer; native history becomes authoritative on
 later resumes. A side chat adds `parentSessionID` and a `ChildAgent` row (role
 `side chat`, its own turn ID) with no `delegation`, so busy, attention,
 Quit/Reconnect and team counts include it, while it never wakes the parent,
-answers `task_status` or folds into the parent's changes. Bring back queues a
+relays its questions, answers `task_status` or folds into the parent's
+changes; its unread result gives the parent a new completion receipt. Bring back queues a
 `QueuedSend` of kind `sideChat` with an ID derived from the side chat and its
 answer, delivered by the queued-send path with its duplicate protections.
 
 | Harness | Native fork | Offered |
 | --- | --- | --- |
-| Codex | `thread/read` (`includeTurns`) finds the turn holding the answer's user message (`clientId`, item ID or turn ID), then [`thread/fork`](https://learn.chatgpt.com/docs/app-server) with `lastTurnId` (inclusive; refused for a running turn), `cwd` and the delegation `config`. No rollback is needed. A turn split by a steer forks through the whole turn. | Every finished answer |
+| Codex | `thread/read` (`includeTurns`) finds the turn holding the answer's user message (`clientId`, item ID or turn ID), then [`thread/fork`](https://learn.chatgpt.com/docs/app-server) with `lastTurnId` (inclusive; refused for a running turn), `cwd` and the delegation `config`. No rollback is needed. An answer a later steer continued in the same turn cannot be a boundary and is refused. | Every finished answer that ends its turn |
 | Claude Code | A new process `--session-id <new> --resume <source> --fork-session`, plus `--resume-session-at <assistant uuid>` (print mode) to stop after that answer. The adapter records the turn's last top-level `assistant` frame `uuid` as the answer's `native_message_id`. `--fork-session` writes a new transcript and leaves the source's alone. | Answers with a recorded ID; else the latest answer only (whole-session fork) |
 | OpenCode 2.0 | `POST /api/session/{id}/fork {before?}` copies history before a message, but records the source as the fork's `parentID`, so the companion's owned child tracking would count the fork as the source's subagent. | Not offered yet |
 | OpenCode 1.x | `POST /session/{id}/fork {messageID?}`, same parent caveat. | Not offered yet |

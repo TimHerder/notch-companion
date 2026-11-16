@@ -746,6 +746,9 @@ extension AppModel {
                     guard let id = parent.agents[row].sessionID else { continue }
                     let child = byID[id]
                     let state = child.map(mirrorState) ?? .interrupted
+                    // A side chat never wakes its parent, so its unread result makes the parent's result unread again.
+                    if let child, child.isSideChat, child.hasUnreadResult, [.working, .waiting].contains(parent.agents[row].state),
+                       [.finished, .failed].contains(state), [.finished, .failed].contains(parent.state) { parent.completionID = UUID().uuidString }
                     if parent.agents[row].state != state { parent.agents[row].state = state }
                     if let child {
                         if parent.agents[row].title != child.title { parent.agents[row].title = child.title }
@@ -851,7 +854,8 @@ extension AppModel {
     /// A child's question reaches its parent as a queued notice, unless a
     /// blocking wait on that child already returns it.
     func queueQuestionNotice(childID: String, requestID: String) {
-        guard let child = sessions.first(where: { $0.id == childID }), let parentID = child.parentSessionID,
+        // A side chat's questions stay in the side chat: only a delegated task relays to its parent.
+        guard let child = sessions.first(where: { $0.id == childID }), child.delegation != nil, let parentID = child.parentSessionID,
               sessions.contains(where: { $0.id == parentID }), delegationWaitTargets[childID] == nil,
               let text = questionNoticeText(childID, requestID) else { return }
         update(parentID) {

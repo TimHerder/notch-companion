@@ -418,15 +418,16 @@ struct CodexProtocolState {
     }
 
     /// The finished turn holding one of these user messages (its client ID, item ID or the turn's own ID):
-    /// `thread/fork`'s `lastTurnId`. Nil when no turn matches or it is still running.
+    /// `thread/fork`'s `lastTurnId`. Nil when no turn matches, it is still running, or a later user message
+    /// (a steer) continued it, since the fork would then go past the answer.
     static func forkTurn(_ thread: [String: Any], userMessageIDs ids: [String]) -> String? {
         let wanted = Set(ids.filter { !$0.isEmpty })
         for turn in thread["turns"] as? [[String: Any]] ?? [] {
-            let holds = wanted.contains(turn["id"] as? String ?? "") || (turn["items"] as? [[String: Any]] ?? []).contains {
-                $0["type"] as? String == "userMessage" && (wanted.contains($0["clientId"] as? String ?? "") || wanted.contains($0["id"] as? String ?? ""))
-            }
-            guard holds else { continue }
-            return turn["status"] as? String == "inProgress" ? nil : turn["id"] as? String
+            let users = (turn["items"] as? [[String: Any]] ?? []).filter { $0["type"] as? String == "userMessage" }
+            let match = users.lastIndex { wanted.contains($0["clientId"] as? String ?? "") || wanted.contains($0["id"] as? String ?? "") }
+            guard match != nil || wanted.contains(turn["id"] as? String ?? "") else { continue }
+            if turn["status"] as? String == "inProgress" || (match.map { $0 < users.count - 1 } ?? false) { return nil }
+            return turn["id"] as? String
         }
         return nil
     }

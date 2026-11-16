@@ -317,7 +317,9 @@ private struct TranscriptMessageView: View {
                     Button("Copy message", systemImage: "doc.on.doc", action: copy)
                 }
                 .accessibilityAction(named: "Quote in reply") { quote?(message.text) }
-                .accessibilityAction(named: "Fork from here") { if forks, forkBlocker == nil { fork?() } }
+                .accessibilityActions {
+                    if forks { Button("Fork from here") { if forkBlocker == nil { fork?() } } }
+                }
         } else {
             entry
         }

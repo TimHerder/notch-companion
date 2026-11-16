@@ -2069,7 +2069,10 @@ final class AppModel: ObservableObject {
         if let mode = session.permissionMode { params["permission_mode"] = mode.rawValue }
         // A fork nothing was sent to yet may not be saved natively: it forks its source again.
         let refork = session.forkedFrom != nil && !session.nativeSubmissionAttempted
-        if refork, let fork = session.forkedFrom { params["fork"] = fork.parameters }
+        if refork, let fork = session.forkedFrom {
+            if let blocker = reforkBlocker(fork) { throw AppError(blocker) }
+            params["fork"] = fork.parameters
+        }
         let delegation = await delegationLaunch(for: session)
         if let delegation { params["delegation"] = delegation }
         let result: [String: Any]
