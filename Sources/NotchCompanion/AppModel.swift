@@ -252,6 +252,8 @@ final class AppModel: ObservableObject {
     /// Delegation sends to sessions other than the composer's.
     var backgroundSubmissions: Set<String> = []
     var backgroundSendErrors: [String: String] = [:]
+    /// Keyed agent sends under way, so a concurrent retry sends nothing new.
+    var sendsInFlight: Set<String> = []
     func isSubmitting(_ id: String) -> Bool { submittingSessionID == id || backgroundSubmissions.contains(id) }
     @Published var delegationEnabled = true {
         didSet { preferences.set(delegationEnabled, forKey: "delegation.enabled") }

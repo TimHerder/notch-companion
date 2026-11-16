@@ -1027,6 +1027,9 @@ extension AppModel {
             return result("started")
         }
         if target.queuedSends.contains(where: { $0.id == messageID }) { return result("queued") }
+        // A concurrent retry with the same key joins the send already under way.
+        guard key == nil || sendsInFlight.insert(messageID).inserted else { return result("started") }
+        defer { sendsInFlight.remove(messageID) }
         guard target.runtime.isSupported, !target.isLegacyPrivate else { throw DelegationFailure("thread_not_sendable", "\(target.runtime.title) cannot be reached here.") }
         // A finished child starts a fresh task, which wakes its parent. A send
         // that fails puts the record back, so the old result cannot wake again.
@@ -1059,6 +1062,7 @@ extension AppModel {
                 throw fail(DelegationFailure("thread_not_sendable", error.localizedDescription))
             } catch {}
         }
+        try checkOutsideAccess(caller) // revoked while a steer was refused
         var delivery = "started"
         if mode == "restart", running {
             await interrupt(sessionID: target.id, cascade: false)

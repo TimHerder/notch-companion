@@ -218,12 +218,18 @@ extension AppModel {
 
     /// Outside clients read and send; they never delegate, interrupt, change
     /// a session's mode or answer a request.
-    func checkOutsideCall(_ caller: DelegationCaller, _ name: String, _ arguments: [String: Any]) throws {
+    /// Rechecked after every suspension before new work: a call or batch
+    /// authenticated before its token was revoked, or the setting turned off, stops.
+    func checkOutsideAccess(_ caller: DelegationCaller) throws {
+        guard caller.client != nil else { return }
         guard outsideClientsEnabled else { throw DelegationFailure("capability_denied", "Outside MCP clients are turned off in Notch Companion's settings.") }
-        // A batch authenticated before its token was revoked stops here.
         guard !Task.isCancelled, outsideClients.contains(where: { "outside:" + $0.id == caller.sessionID }) else {
             throw DelegationFailure("capability_denied", "This client's token was revoked.")
         }
+    }
+
+    func checkOutsideCall(_ caller: DelegationCaller, _ name: String, _ arguments: [String: Any]) throws {
+        try checkOutsideAccess(caller)
         guard OutsideClients.isAllowed(name) else { throw DelegationFailure("capability_denied", OutsideClients.denied) }
         let rows = [arguments] + (arguments["sessions"] as? [[String: Any]] ?? [])
         if rows.contains(where: { $0["runtimeMode"] != nil || $0["interactionMode"] != nil || $0["target"] != nil }) {
@@ -250,9 +256,7 @@ extension AppModel {
         let key = try Delegation.clientRequestID(arguments)
         var created: [[String: Any]] = []
         for (index, row) in rows.enumerated() {
-            guard !Task.isCancelled, outsideClients.contains(where: { "outside:" + $0.id == caller.sessionID }) else {
-                throw DelegationFailure("capability_denied", "This client's token was revoked.")
-            }
+            try checkOutsideAccess(caller)
             let prompt = (row["prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard prompt.count <= Delegation.maxTaskCharacters else { throw DelegationFailure("invalid_request", "A prompt is at most 120,000 characters.") }
             let id = Delegation.derivedID(caller: caller.sessionID, operation: "create_sessions.\(index)", clientRequestID: key)

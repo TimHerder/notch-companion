@@ -7,6 +7,7 @@ import XCTest
     var onConnectionChange: ((Bool, String?) -> Void)?
     var calls: [(String, [String: Any])] = []
     var steerFails = false
+    var steerDelay: Duration?
     /// Runtime IDs whose sends the harness refuses outright.
     var rejectSubmits: Set<String> = []
     var failNextCreate = false
@@ -37,7 +38,12 @@ import XCTest
                 models: [RuntimeModelOption(choice: RuntimeModelChoice(model: "fixture-large"), title: "Large", reasoningEfforts: ["high"])])]
             result["hosts_delegation"] = hosts[params["runtime"] as? String ?? ""]
             return result
-        case "prompt.steer" where steerFails: throw AppError("No running turn.")
+        case "prompt.steer" where steerFails:
+            if let steerDelay { try? await Task.sleep(for: steerDelay) }
+            throw AppError("No running turn.")
+        case "prompt.steer" where steerDelay != nil:
+            try? await Task.sleep(for: steerDelay!)
+            return [:]
         case "prompt.submit" where rejectSubmits.contains(params["session_id"] as? String ?? ""): throw Rejected()
         default: return [:]
         }
@@ -1662,6 +1668,28 @@ extension DelegationTests {
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertFalse(model.sessions.first { $0.id == parentID }?.queuedSends.contains { $0.text == "After revoke" } ?? true)
         XCTAssertFalse(transport.prompts(parentID).contains("After revoke"))
+    }
+
+    func testConcurrentKeyedSendsAndARevokeDuringASteerSendNothingTwice() async throws {
+        let (model, transport, _, _) = makeModel()
+        let (parentID, _) = try await activeParent(model)
+        model.outsideClientsEnabled = true
+        let token = try XCTUnwrap(model.createOutsideClient(name: "Cursor"))
+        let outside = try XCTUnwrap(model.outsideCaller(token: token))
+        transport.steerDelay = .milliseconds(200)
+        let arguments: [String: Any] = ["sessionId": parentID, "message": "Once", "mode": "steer", "clientRequestId": "same"]
+        async let first = model.handleDelegationTool(outside, name: "notch_session_send", arguments: arguments)
+        async let second = model.handleDelegationTool(outside, name: "notch_session_send", arguments: arguments)
+        _ = try await (first, second)
+        XCTAssertEqual(transport.count("prompt.steer"), 1, "A concurrent retry joins the first send")
+
+        // An auto send whose steer is refused after the token was revoked is not queued.
+        transport.steerFails = true
+        let pending = Task { try await model.handleDelegationTool(outside, name: "notch_session_send", arguments: ["sessionId": parentID, "message": "Late"]) }
+        try await Task.sleep(for: .milliseconds(50))
+        model.revokeOutsideClient(try XCTUnwrap(model.outsideClients.first?.id))
+        do { _ = try await pending.value; XCTFail("Revoked") } catch let failure as DelegationFailure { XCTAssertEqual(failure.code, "capability_denied") }
+        XCTAssertFalse(model.sessions.first { $0.id == parentID }?.queuedSends.contains { $0.text == "Late" } ?? true)
     }
 
     func testRepeatedSecurityHeadersAreRefused() {
