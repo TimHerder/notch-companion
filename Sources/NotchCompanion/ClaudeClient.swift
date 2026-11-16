@@ -386,6 +386,7 @@ final class ClaudeClient: RuntimeTransport {
             // state changes. Only an observed state event enables that gate.
             if initialized["session_state"] as? String == "running" { session.state.active = true }
             session.catalog = Self.catalog(models)
+            emit(session.state.event("session.commands", ["commands": Self.commands(initialized["commands"])]))
             // What Default permissions means here: the profile's own mode, e.g. bypassPermissions from its settings.
             // An older CLI reports none: null clears a saved mode rather than leaving it stale.
             session.info["profile_permission_mode"] = Self.profilePermission(initialized["current_permission_mode"] as? String) ?? NSNull()
@@ -447,6 +448,14 @@ final class ClaudeClient: RuntimeTransport {
             } catch { finish(.failure(error)) }
         }
         return Self.catalog(models)
+    }
+
+    /// Initialize lists only what runs in print mode. `/clear` is left out: it moves
+    /// the conversation to a new native session this app would no longer follow.
+    static func commands(_ value: Any?) -> [[String: Any]] {
+        (value as? [[String: Any]] ?? []).filter { $0["name"] as? String != "clear" }.map {
+            ["name": $0["name"] ?? "", "description": $0["description"] ?? "", "hint": $0["argumentHint"] ?? ""]
+        }
     }
 
     static func catalog(_ rows: [[String: Any]]) -> RuntimeModelCatalog {

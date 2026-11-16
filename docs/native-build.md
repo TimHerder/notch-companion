@@ -262,6 +262,9 @@ confirmation for the default branch (`-push`), the pull request form (`-pr`,
 its answer and changes (`compact-`/`full-worked-collapsed`, `-expanded`) and the
 same turn live with its interleaved text and ticking footer (`-worked-live`);
 the full render includes them.
+`--completion-only` renders the composer's `/` command list
+(`completion-commands`, `-full`) and `@` file list (`completion-files`, `-full`)
+from a synthetic catalog and a temporary folder.
 `--transcript-only` renders an answer with a narrow and a wide Markdown table
 (`compact-table`, `full-table`, `markdown-table-narrow`), the full-session
 window's Find selecting a call inside a folded turn (`full-find-folded`) and

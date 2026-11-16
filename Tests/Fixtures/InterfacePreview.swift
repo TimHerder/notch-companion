@@ -1056,6 +1056,33 @@ import ImageIO
             ConversationHistoryView.revealsHoverControls = false
             return
         }
+        if CommandLine.arguments.contains("--completion-only") {
+            // The `/` list from the harness's reported commands, and the `@` list from the session's folder.
+            model.sessions[0].runtime = .claude
+            model.sessions[0].runtimeID = "preview"
+            model.receive("session.commands", payload: ["session_id": "preview", "commands": [
+                ["name": "review", "description": "Review a pull request", "hint": "<pr>"],
+                ["name": "release-notes", "description": "Draft release notes from the merged changes since the last tag"],
+                ["name": "compact", "description": "Free up context by summarizing the conversation so far", "hint": "<instructions>"],
+                ["name": "context", "description": "Visualize current context usage"],
+                ["name": "security-review", "description": "Complete a security review of the pending changes"]]])
+            model.draft = "/re"
+            try render(UnifiedNotchView(model: model), size: compact, name: "completion-commands", output: output)
+            try render(FullSessionView(model: model), size: full, name: "completion-commands-full", output: output)
+            let folder = temporary.appendingPathComponent("project")
+            for path in ["Sources/NotchCompanion/ComposerView.swift", "Sources/NotchCompanion/ComposerCompletion.swift", "Sources/NotchCompanion/AppModel.swift",
+                         "Tests/NotchCompanionTests/ComposerCompletionTests.swift", "docs/interaction-design.md", "Design Notes/composer mock.md", "README.md"] {
+                let url = folder.appendingPathComponent(path)
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data().write(to: url)
+            }
+            FileMentionIndex.shared.store(FileMentionIndex.list(folder.path), for: folder.path)
+            model.sessions[0].workspacePath = folder.path
+            model.draft = "Compare @comp"
+            try render(UnifiedNotchView(model: model), size: compact, name: "completion-files", output: output)
+            try render(FullSessionView(model: model), size: full, name: "completion-files-full", output: output)
+            return
+        }
         if CommandLine.arguments.contains("--full-body-only") {
             for style in NotchBodyStyle.allCases {
                 UserDefaults.standard.register(defaults: [NotchBodyStyle.key: style.rawValue])

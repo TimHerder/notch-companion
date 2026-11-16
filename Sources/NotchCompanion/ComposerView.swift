@@ -9,6 +9,7 @@ struct ComposerView: View {
     var showsTitle = false
     @State private var editorHeight: CGFloat = ComposerTextView.minimumHeight
     @State private var submissionNotice: String?
+    @StateObject private var completion = ComposerCompletion()
     @Environment(\.notchBodyStyle) private var bodyStyle
 
     private var busy: Bool { model.current?.isBusy == true }
@@ -110,6 +111,8 @@ struct ComposerView: View {
             }
         }
         .onChange(of: model.currentID) { _, _ in submissionNotice = nil }
+        .onChange(of: model.composerCommands(for: model.current), initial: true) { _, _ in updateCompletionSources() }
+        .onChange(of: model.current?.workspacePath, initial: true) { _, _ in updateCompletionSources() }
         .onChange(of: busy) { _, _ in submissionNotice = nil }
     }
 
@@ -210,6 +213,15 @@ struct ComposerView: View {
         }
         .background { fieldSurface(lit: lit) }
         .animation(.easeOut(duration: 0.15), value: lit)
+        // Over the transcript, its bottom just above the field: the panel never grows.
+        .overlay(alignment: .top) {
+            ComposerCompletionList(completion: completion).alignmentGuide(.top) { $0[.bottom] + 6 }
+        }
+    }
+
+    /// The `/` list offers the harness's own commands; `@` the session folder's files.
+    private func updateCompletionSources() {
+        completion.setSources(commands: model.composerCommands(for: model.current), folder: model.current?.workspacePath)
     }
 
     /// `[+] [SnapShot] [harness, folder, session] … [mic] [Send]`. When it is tight the
@@ -294,7 +306,8 @@ struct ComposerView: View {
                                  insertion: model.composerInsertion.flatMap { $0.sessionID == model.currentID && $0.inNotch == isCompact ? $0 : nil },
                                  onInserted: { [id = model.composerInsertion?.id] in
                                      if model.composerInsertion?.id == id { model.composerInsertion = nil }
-                                 })
+                                 },
+                                 completion: completion)
                 .id(model.currentID)
                 .frame(height: editorHeight)
           }
@@ -455,6 +468,8 @@ struct NativeComposerEditor: NSViewRepresentable {
     /// A quote to put at the caret once, then report done.
     var insertion: ComposerInsertion? = nil
     var onInserted: (() -> Void)? = nil
+    /// The `/` and `@` list, which takes ↑, ↓, Return, Tab and Escape while open.
+    var completion: ComposerCompletion? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -516,6 +531,9 @@ struct NativeComposerEditor: NSViewRepresentable {
         context.coordinator.synced = text
         scroll.documentView = editor
         editor.string = text
+        editor.completion = completion
+        completion?.editor = editor
+        DispatchQueue.main.async { [weak editor] in editor?.reportCompletion() }
         return scroll
     }
 
@@ -579,6 +597,8 @@ struct NativeComposerEditor: NSViewRepresentable {
             editor.setSelectedRange(NSRange(location: location, length: 0))
             synced = text
             reportComposing()
+            // Outside the view update that brought the draft.
+            DispatchQueue.main.async { [weak editor] in editor?.reportCompletion() }
         }
 
         func textDidChange(_ notification: Notification) {
@@ -589,8 +609,14 @@ struct NativeComposerEditor: NSViewRepresentable {
             updateHeight()
         }
 
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard !applying else { return }
+            editor?.reportCompletion()
+        }
+
         func reportComposing() {
             let now = editor?.hasMarkedText() ?? false
+            if now { editor?.reportCompletion() }
             guard now != composing else { return }
             composing = now
             parent.onComposingChanged?(now)
@@ -623,6 +649,7 @@ final class ComposerTextView: NSTextView {
     var onMarkedTextChanged: (() -> Void)?
     var onPaste: ((NSPasteboard) -> Bool)?
     var recallPrompts: (() -> [String])?
+    weak var completion: ComposerCompletion?
     /// Where ⌘V and ⌘⇧V read from; tests use a private pasteboard.
     var pasteboard = NSPasteboard.general
     /// The prompt ↑ brought back and its place; editing it ends recall.
@@ -696,6 +723,24 @@ final class ComposerTextView: NSTextView {
         return true
     }
 
+    func reportCompletion() {
+        completion?.update(text: string, selection: selectedRange(), composing: hasMarkedText())
+    }
+
+    /// While the list is open it owns ↑ and ↓ (recall waits), Return and Tab choose
+    /// (Return never sends), and Escape closes it, keeping the text.
+    private func completionKey(_ event: NSEvent, modifiers: NSEvent.ModifierFlags) -> Bool {
+        guard let completion, completion.isOpen, !hasMarkedText() else { return false }
+        switch event.keyCode {
+        case 125 where modifiers.isEmpty, 126 where modifiers.isEmpty: completion.move(event.keyCode == 125 ? 1 : -1)
+        case 36 where modifiers != .shift, 76 where modifiers != .shift: completion.choose()
+        case 48 where modifiers.isEmpty: completion.choose()
+        case 53: completion.dismiss()
+        default: return false
+        }
+        return true
+    }
+
     var boundedHeight: CGFloat {
         guard let layoutManager, let textContainer else { return Self.minimumHeight }
         layoutManager.ensureLayout(for: textContainer)
@@ -729,6 +774,7 @@ final class ComposerTextView: NSTextView {
 
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        if completionKey(event, modifiers: modifiers) { return }
         // Only an empty composer reaches the queue; otherwise these keys keep their usual meaning.
         if string.isEmpty, !hasMarkedText(),
            (event.keyCode == 126 && modifiers == .option && onEditQueued?() == true)

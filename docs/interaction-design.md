@@ -982,6 +982,37 @@ identify selection.
   edited, the arrows move the caret
   again. Recall never touches attachments, the queue or other sessions' drafts;
   Option–↑ still edits the newest queued message.
+- **Completions.** One inline list, anchored above the composer field over the
+  transcript (inside the fixed panel, never resizing it; no native menu or
+  extra window), in the notch and the full-session window. It uses the
+  design's popover surface (Refined's card, Tahoe's menu with an accent
+  selection, Instrument's black plate with the white cursor bar and mono
+  names); about six rows show, then it scrolls. Each row is a name and a
+  one-line description, truncated. Typing filters it. While it is open it owns
+  ↑ and ↓ (prompt recall applies only when it is closed); Return or Tab chooses
+  (Return never sends, ⌘↩ and ⌘⇧↩ included; ⇧↩ alone still inserts a newline); Escape closes
+  it and keeps the text, and it stays closed for that word. A click chooses a
+  row. Marked input-method text never opens or chooses. VoiceOver hears the
+  number of rows and the selected row when it opens, and each row ↑/↓ selects.
+  - **`/` commands and skills.** `/` as the draft's first character lists the
+    session harness's own commands and skills as the harness reports them
+    ([support by harness](backend-runtime.md#composer-commands-and-file-mentions));
+    a harness that reports none shows no list. Matches on the name rank by
+    prefix, then inside the name, then letters in order. Choosing writes
+    `/name ` over the typed word; a harness's argument hint follows and is
+    selected, so typing replaces it. The user sends normally. A draft uses the
+    list its harness last reported in the same profile and folder until its
+    own session reports one.
+  - **`@` file mentions.** `@` starting a word lists files in the session's
+    folder (its worktree for a worktree session); a session without a folder,
+    or a folder the app can't read (an OpenClaw agent workspace), shows
+    nothing. Filtering is fuzzy on the relative path: a match in the file's own
+    name ranks first, then a match in its path, then letters in order, shorter
+    paths first; at most 50 rows. A row shows the file name and its folder.
+    Choosing writes `@relative/path ` as text, a reference the agent reads with
+    its own tools, not an attachment; a path with whitespace is written
+    `@"relative/path"`, the quoted form Claude Code reads; choosing inside one
+    replaces it through its closing quote.
 - **Queue.** Queued messages appear above the field in order, three visible
   rows then scrolling; hover shows the full text and file names. Each row
   offers **Steer now** while the running turn can be steered (the steering path

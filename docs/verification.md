@@ -135,6 +135,15 @@ private development hasn't been re-run against this source snapshot. Known limit
   yet checked live: hover and pressed states of Instrument's white keys, the
   question card's More button and scroller flash, keyboard shortcuts for queued
   messages, and a snooze waking on a real question or approval.
+- Composer completions: the `/` and `@` triggers, ranking, hint selection,
+  the open list owning ↑/↓, Return, Tab and Escape (and not opening under
+  marked text), the per-session and per-folder command cache, Claude's
+  `initialize` command list without `/clear`, ACP `available_commands_update`,
+  Pi's `get_commands` and the Git and walked file lists are covered by unit
+  tests and protocol fixtures; the lists by offscreen fixtures in all three
+  designs (`--completion-only`). No live native prompt has sent a listed
+  command to any harness, no physical input method or VoiceOver has been
+  tried, and which ACP agents send `available_commands_update` is unverified.
 - Worktree sessions and worktree cleanup: creating a session's worktree from
   a local base branch, a refused creation keeping the draft, cleanup keeping
   uncommitted work and unmerged branches, a delegated child following its
