@@ -1012,6 +1012,69 @@ import ImageIO
         controller.notice = nil
         model.backgroundSubmissions.insert("git")
         try render(UnifiedNotchView(model: model), size: compact, name: "git-actions-busy", output: output)
+        model.backgroundSubmissions.remove("git")
+        // Watching: the eye before the link stops it.
+        model.update("git") { $0.pullRequestWatch = PullRequestWatch(url: "https://github.com/example/notch-companion/pull/42") }
+        try both("git-actions-watching")
+        model.update("git") { $0.pullRequestWatch = nil }
+        controller.error = "Watching needs the GitHub CLI installed and signed in. Run gh auth login in Terminal, then try again."
+        try render(UnifiedNotchView(model: model), size: compact, name: "git-actions-watch-unavailable", output: output)
+    }
+
+    /// The Scheduled page: tasks with their next run, a late run, a paused one, a refused send, and the inline form.
+    @MainActor static func renderAutomations(output: URL, temporary: URL, preferences: UserDefaults) throws {
+        let model = AppModel(storageURL: temporary.appendingPathComponent("automations.json"), playsSounds: false, client: PreviewTransport(), preferences: preferences)
+        defer { model.shutdown() }
+        model.sessions = [CompanionSession(id: "selected", title: "Release checklist", state: .finished, workspacePath: "/tmp/Website")]
+        model.currentID = "selected"
+        model.connection = true
+        model.connectionMessage = "Codex connected"
+        model.reducedMotion = true
+        model.geometry = NotchGeometry(screen: CGRect(x: 0, y: 0, width: 1920, height: 1080), topInset: 0,
+                                       leftArea: nil, rightArea: nil, indicatorCount: 0)
+        model.notchPresentation = .expanded(model.geometry!)
+        model.expanded = true
+        let compact = model.geometry!.expandedFrame.size
+        let full = NSSize(width: 900, height: 660)
+        func both(_ name: String) throws {
+            model.page = .scheduled
+            try render(UnifiedNotchView(model: model), size: compact, name: "compact-" + name, output: output)
+            try render(FullSessionView(model: model, utility: .scheduled), size: full, name: "full-" + name, output: output)
+        }
+        try both("scheduled-empty")
+        let calendar = Calendar.app
+        let morning = calendar.nextDate(after: Date(), matching: DateComponents(hour: 9, minute: 0), matchingPolicy: .nextTime)!
+        var review = ScheduledTask(name: "Morning review", prompt: "Review yesterday's commits and list anything that needs a follow-up.",
+                                   runtime: .codex, folder: "/tmp/Website", repeats: .weekly, time: DateComponents(hour: 9, minute: 0))
+        review.nextRun = morning
+        review.lastRunAt = morning.addingTimeInterval(-86_400 + 47 * 60)
+        review.lastRunLate = true
+        var triage = ScheduledTask(name: "Issue triage", prompt: "Label new issues.", runtime: .hermes, folder: "/tmp/Website",
+                                   repeats: .hours, hours: 3, continuesSession: true)
+        triage.nextRun = Date().addingTimeInterval(80 * 60)
+        // Its last run was refused: the reason shows under the task.
+        triage.lastRunID = "triage-run"
+        triage.sessionID = "selected"
+        model.sessions[0].queuedSends = [QueuedSend(id: "triage-run", text: "Label new issues.", kind: ChatMessage.scheduledKind("Issue triage", late: false))]
+        model.failedDeliveries.insert("triage-run")
+        model.backgroundSendErrors["selected"] = "Trust this project for Hermes in Notch Companion first."
+        var report = ScheduledTask(name: "Monthly report", prompt: "Draft the monthly report.", runtime: .pi, folder: "/tmp/Reports",
+                                   repeats: .daily, time: DateComponents(hour: 18, minute: 30), skipMissed: true, paused: true)
+        report.nextRun = calendar.nextDate(after: Date(), matching: DateComponents(hour: 18, minute: 30), matchingPolicy: .nextTime)
+        model.scheduledTasks = [review, triage, report]
+        try both("scheduled")
+        model.page = .sessions
+        try render(UnifiedNotchView(model: model), size: compact, name: "compact-sessions-scheduled", output: output)
+        model.scheduledEditing = review
+        try both("scheduled-edit")
+        var once = ScheduledTask(name: "", prompt: "", runtime: .codex, folder: "/tmp/Website", repeats: .once,
+                                 time: calendar.dateComponents([.year, .month, .day, .hour, .minute], from: morning.addingTimeInterval(86_400)))
+        once.id = "new"
+        model.scheduledEditing = once
+        try both("scheduled-new")
+        model.scheduledEditing = nil
+        model.scheduledDeleting = triage.id
+        try both("scheduled-delete")
     }
 
     @MainActor static func render<V: View>(_ content: V, size: NSSize, name: String, output: URL,
@@ -1099,6 +1162,10 @@ import ImageIO
         }
         if CommandLine.arguments.contains("--git-actions-only") {
             try renderGitActions(output: output, temporary: temporary, preferences: preferences)
+            return
+        }
+        if CommandLine.arguments.contains("--automations-only") {
+            try renderAutomations(output: output, temporary: temporary, preferences: preferences)
             return
         }
         if CommandLine.arguments.contains("--work-only") {

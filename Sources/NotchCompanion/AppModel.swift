@@ -203,6 +203,21 @@ final class AppModel: ObservableObject {
     }
     /// Each session's Commit, Push and Open pull request state, shared by the notch and full window.
     var gitActionControllers: [String: GitActionsController] = [:]
+    /// Scheduled tasks, saved beside the session registry.
+    @Published var scheduledTasks: [ScheduledTask] = []
+    /// A tasks file this build cannot read is never overwritten.
+    var scheduledTasksUnreadable = false
+    /// The scheduled task open in its form (new or existing), and the one asking to be deleted.
+    @Published var scheduledEditing: ScheduledTask?
+    @Published var scheduledDeleting: String?
+    /// Wakes for the next scheduled run or pull request poll.
+    var automationTimer: Task<Void, Never>?
+    var automationObservers: [(NotificationCenter, NSObjectProtocol)] = []
+    /// Each watched pull request's polling, by session; in memory only.
+    @Published var pullRequestPolls: [String: PullRequestPoll] = [:]
+    var pullRequestPolling: Set<String> = []
+    /// Runs `gh`; tests inject a fake.
+    var pullRequestRunner: ([String]) async throws -> String = { try await PullRequestEvents.gh($0) }
     var worktreeCleanupTask: Task<Void, Never>?
     /// When each session's worktree removal was last tried, so a kept one waits an hour.
     var worktreeAttempts: [String: Date] = [:]
@@ -304,7 +319,7 @@ final class AppModel: ObservableObject {
         submitting || !backgroundSubmissions.isEmpty || !delegationCreations.isEmpty
             || sessions.contains { $0.isBusy || ($0.pendingSubmission != nil && $0.runtimeID != nil) } || !unfinishedParents.isEmpty
             || unfinishedChildren.values.contains(where: { !$0.isEmpty })
-            || sessions.contains { $0.runtime.isSupported && $0.pendingSubmission == nil && $0.queuedSends.contains { $0.isUserMessage && $0.paused != true && $0.isDue() } }
+            || sessions.contains { $0.runtime.isSupported && $0.pendingSubmission == nil && $0.queuedSends.contains { $0.isUserMessage && $0.paused != true && $0.isDue() || $0.isAutomation && !failedDeliveries.contains($0.id) } }
     }
     var visibleSessions: [CompanionSession] {
         let query = sessionSearch.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -488,6 +503,8 @@ final class AppModel: ObservableObject {
         configureDelegation()
         loadOutsideClients()
         startWorktreeCleanup()
+        loadScheduledTasks()
+        startAutomations()
         self.client.onEvent = { [weak self] name, payload in self?.receive(name, payload: payload) }
         self.client.onConnectionChange = { [weak self] connected, message in
             guard let self else { return }
@@ -846,7 +863,7 @@ final class AppModel: ObservableObject {
         // A hold in progress is dropped, never sent while quitting.
         asking = false
         dictation.cancel()
-        persistTask?.cancel(); snoozeTimer?.cancel(); worktreeTimer?.cancel(); resumeTimer?.cancel(); save(); client.disconnect(); delegationServer.stop()
+        persistTask?.cancel(); snoozeTimer?.cancel(); worktreeTimer?.cancel(); resumeTimer?.cancel(); stopAutomations(); save(); client.disconnect(); delegationServer.stop()
     }
 
     /// `workspace` starts the draft in a project's folder instead of the default.
@@ -1331,6 +1348,12 @@ final class AppModel: ObservableObject {
         picker.prompt = "Use folder"; picker.message = message
         picker.directoryURL = URL(fileURLWithPath: path)
         return picker
+    }
+
+    /// A folder for a scheduled task; nil when cancelled.
+    func pickFolder(_ message: String, from path: String) -> String? {
+        let picker = folderPicker(message, from: path)
+        return runPicker(picker) == .OK ? picker.url?.standardizedFileURL.path : nil
     }
 
     func chooseWorkspace() {

@@ -10,6 +10,9 @@ struct GitActionsView: View {
     var pullRequest: String?
     /// A worktree session shows its actions before the first read (its removed worktree comes back on use).
     var isWorktree = false
+    /// The pull request is being watched; the last poll's error, shown only in the tooltip.
+    var watching = false
+    var watchError: String?
     var harness: String
     var openURL: (URL) -> Void
 
@@ -35,6 +38,7 @@ struct GitActionsView: View {
                         }
                         Spacer(minLength: 0)
                         if let pullRequest, let url = URL(string: pullRequest) {
+                            watchControl(url)
                             Button { openURL(url) } label: { Label("Pull request #\(url.lastPathComponent)", systemImage: "arrow.up.right").lineLimit(1) }
                                 .buttonStyle(NotchTextButtonStyle()).foregroundStyle(CompanionStyle.secondary)
                                 .help("Open \(pullRequest) in your browser")
@@ -141,6 +145,29 @@ struct GitActionsView: View {
                     .disabled(!enabled || controller.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .help("Uses your GitHub CLI login; without one, GitHub’s compare page opens in your browser")
             }
+        }
+    }
+
+    /// Watch beside a github.com link; while watching, its eye stops the watch.
+    @ViewBuilder private func watchControl(_ url: URL) -> some View {
+        if watching {
+            Button { controller.model?.stopWatchingPullRequest(controller.sessionID) } label: { Image(systemName: "eye.fill") }
+                .buttonStyle(NotchTextButtonStyle()).foregroundStyle(watchError == nil ? CompanionStyle.secondary : CompanionStyle.amber)
+                .help("Watching pull request #\(url.lastPathComponent) for failed checks, reviews, comments, conflicts and merging. Click to stop."
+                      + (watchError.map { "\nThe last check failed: \($0) Trying again later." } ?? ""))
+                .accessibilityLabel("Stop watching pull request #\(url.lastPathComponent)")
+        } else if url.host?.lowercased() == "github.com" {
+            Button {
+                Task {
+                    controller.error = nil
+                    controller.working = "Checking GitHub CLI…"
+                    let problem = await controller.model?.watchPullRequest(controller.sessionID)
+                    controller.working = nil
+                    controller.error = problem
+                }
+            } label: { Label("Watch", systemImage: "eye").lineLimit(1) }
+                .buttonStyle(NotchTextButtonStyle()).foregroundStyle(CompanionStyle.secondary).disabled(controller.working != nil)
+                .help("Message this session when checks fail or recover, reviews or comments arrive, conflicts appear, or the pull request merges or closes. Uses your signed-in GitHub CLI; polls every 2 minutes while the app is open.")
         }
     }
 

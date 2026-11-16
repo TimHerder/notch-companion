@@ -710,6 +710,27 @@ inline in the card, never as a menu or window:
   request #N** (opens in the browser) and joins the folder chip's tooltip.
   Without a signed-in GitHub CLI, GitHub's compare page opens in the browser
   instead. Other hosts offer Push only.
+- **Watch**, a quiet eye action before a github.com **Pull request #N** link,
+  first checks the user's installed `gh` with `gh auth status`; without it the
+  card's error line says to install it and run `gh auth login`, and nothing is
+  watched. While watching, a filled eye replaces it (help: what is watched;
+  click stops), and the session's `pullRequestWatch` survives restart. Every 2
+  minutes while the app is open, `gh pr view <url> --json` reads state,
+  mergeability, checks, reviews and comments, and new events become **one**
+  short message per poll, one line each with names and links: a check that
+  failed (“Check `build` failed on PR #12: <link>. Investigate and fix it.”),
+  all checks passing after a reported failure, a review requesting changes, a
+  review comment or PR comment from anyone but the PR's author (the session's
+  own automation posts as the author), new merge conflicts, or merged/closed,
+  which also ends the watch. Comment and review text stays out of the message:
+  it is other people's text, and the agent can read it with `gh`. The first
+  poll counts existing reviews and comments as seen; a check already failing
+  is reported. Check runs (by name, link and start), reviews and comments are
+  remembered by ID with the watch, and each message's ID derives from the
+  watch, so repeated polls and restarts never resend. Messages go through the
+  normal send path, waiting in the session's queue while it works, labelled
+  **PR watch**. A failed poll never messages the session: it backs off (4, 8,
+  16 … up to 30 minutes), turns the eye amber and puts the error in its help.
 
 ## File drops
 
@@ -821,9 +842,10 @@ position are remembered (`FullSessionWindow`).
   now”). “Connects when you send a message.” is left for a session with no
   connection that has not run a turn, and a connected one says so.
 - Header, banners, transcript, tabs and composer share one centred column at
-  most 820 points wide; Settings and Usage use 620.
+  most 820 points wide; Settings, Usage and Scheduled use 620.
 - Settings opens in the main pane from a **Settings** row at the foot of the
-  252-point sidebar, with **Usage** above it when **Show usage** is on.
+  252-point sidebar, with **Scheduled** above it and **Usage** between them
+  when **Show usage** is on.
   Clicking the selected row, Back or a session change returns to the session.
   Choosing a runtime from Settings opens its chooser or setup page; Back returns
   to Settings. Opening the window from the notch's Settings footer opens
@@ -1203,8 +1225,9 @@ identify selection.
   the card appears, so a choice past the edge is never hidden without a cue.
 - **Failed delegated work** gives its parent red attention and a Review action.
   Child turn ownership keeps old failures from changing a later turn's outcome.
-- **Quit and Reconnect** check all app-owned work, including submissions and
-  children. When busy, a dialog offers When Work Finishes, Stop and
+- **Quit and Reconnect** check all app-owned work, including submissions,
+  children, and [scheduled runs](#scheduled-tasks) and PR watch messages
+  waiting to be sent. When busy, a dialog offers When Work Finishes, Stop and
   Quit/Reconnect, or Cancel. Deferred operations can be cancelled in the panel
   or menu; an interruption acknowledgement is not completion.
 
@@ -1427,6 +1450,50 @@ row, opening **Usage**, a scrolling page within the panel bounds; Back returns.
 - **Limit stops.** A turn that ends at the account limit takes its reset from
   these reports and offers Resume at reset
   ([Compact panel](#compact-panel), [Queue](#conversation-usability-and-session-management)).
+
+## Scheduled tasks
+
+A calendar-clock button in the Your sessions title row (always shown, before
+Usage's) opens **Scheduled**, a scrolling page in the panel bounds like
+[Usage](#usage); Back returns. The full-session sidebar has a **Scheduled**
+row. Tasks run only while the app is open; there are no webhooks.
+
+- **List.** One group of rows: the name, its status at the right (**Next**
+  and the time in [snooze's](#conversation-usability-and-session-management)
+  style, **Paused**, **Running** while its last run is queued, sending or
+  working, **Due now**, or **Done** for a one-time task that ran), then
+  “Weekdays at 09:00 · Codex · Website · New session each run”, a quiet “Ran
+  late at …” or “Skipped the run missed at …” note, the reason a run could not
+  be sent in amber, and text actions **Pause**/**Resume**, **Run now**,
+  **Edit** and **Delete** (which asks inline; the sessions stay). A footnote
+  says tasks run only while the app is open. The **+** beside the heading
+  opens a new task's form above the list; Edit opens it in the task's row.
+- **Form.** Name; the prompt (three to six lines); **Harness** as chips of the
+  ready harnesses; **Folder** (the default folder, changed with the folder
+  picker); **Repeat**: **Once** (date and time), **Hourly** (every 1 to 168
+  hours from a time of day), **Daily** (a time) or **Weekly** (day chips in the
+  calendar's week order, at least one, and a time); **Sends to**: **New
+  session each run**, titled “<name> · <date and time>”, or **One session**
+  that each run continues (created by the first run, titled with the name; a
+  new one when the harness or folder changes or it was deleted); and **Skip
+  missed runs**. Save explains what is missing. Times are wall-clock on the
+  user's calendar and time zone (`Calendar.app`, `Locale.app`).
+- **Runs.** A run is queued in its destination session and sent through the
+  normal send path with its staging, duplicate and receipt protections,
+  labelled **Scheduled · <name>** (“· ran late” for a catch-up). A busy
+  session keeps it in its queue; it never interrupts or steers. A run never
+  starts while the task's previous run is still queued, sending or working;
+  the due occurrence waits for it. Run now does the same once, leaving the
+  schedule alone, and is disabled while the previous run is active.
+- **Timing.** The app checks on a timer (at the next run, at most a minute
+  apart), on wake from sleep and when the clock or time zone changes. Daily
+  and weekly times follow the current time zone and DST (a time skipped by
+  DST runs at the next valid minute; a repeated hour runs at its first
+  occurrence), and a day that already ran never runs again, whatever the clock
+  does. Hourly counts real hours from its anchor. Every occurrence missed
+  while the app was closed, the Mac slept or the previous run worked (over 5
+  minutes late) collapses into one catch-up run marked late, or with **Skip
+  missed runs** is skipped and noted. Paused tasks skip their occurrences.
 
 ## SnapShot
 

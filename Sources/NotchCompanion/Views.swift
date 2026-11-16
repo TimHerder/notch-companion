@@ -265,6 +265,7 @@ struct NotchHeaderView: View {
                     Spacer(minLength: 8)
                     if model.page == .session, let session = model.current, !session.agents.isEmpty { teamButton(session) }
                     if model.page == .sessions {
+                        QuietIconButton(symbol: "calendar.badge.clock", label: "Scheduled", size: 24) { model.page = .scheduled }
                         if model.showUsage {
                             QuietIconButton(symbol: "chart.bar", label: "Usage", size: 24) { model.page = .usage }
                         }
@@ -324,7 +325,7 @@ struct NotchHeaderView: View {
                 else if case .agent = model.page { model.page = .team }
                 else if case .runtimeChooser(let defaults) = model.page { model.page = defaults ? .settings : .session }
                 else if model.page.isRuntimeSetup { model.page = .settings }
-                else if model.page == .usage { model.page = .sessions }
+                else if model.page == .usage || model.page == .scheduled { model.page = .sessions }
                 // Archived and Snoozed step back to the active list before leaving the page.
                 else if model.page == .sessions && model.sessionFilter != .all { model.sessionFilter = .all }
                 else { model.page = .session }
@@ -423,7 +424,7 @@ struct NotchHeaderView: View {
     }
 
     private var headerTitle: String {
-        switch model.page { case .sessions: return model.sessionFilter == .all ? "Your sessions" : model.sessionFilter.title; case .team: return "Delegated work"; case .agent: return "Agent details"; case .activity: return "Activity"; case .settings: return "Settings"; case .usage: return "Usage"; case .runtimeSetup(let runtime): return "Set up \(runtime.title)"; case .runtimeChooser(let defaults): return defaults ? "Default agent" : "Choose agent"; case .welcome: return "Welcome"; case .session: return model.current?.title ?? "New session" }
+        switch model.page { case .sessions: return model.sessionFilter == .all ? "Your sessions" : model.sessionFilter.title; case .team: return "Delegated work"; case .agent: return "Agent details"; case .activity: return "Activity"; case .settings: return "Settings"; case .usage: return "Usage"; case .scheduled: return "Scheduled"; case .runtimeSetup(let runtime): return "Set up \(runtime.title)"; case .runtimeChooser(let defaults): return defaults ? "Default agent" : "Choose agent"; case .welcome: return "Welcome"; case .session: return model.current?.title ?? "New session" }
     }
 
     private func teamButton(_ session: CompanionSession) -> some View {
@@ -504,7 +505,7 @@ struct CompactPanelView: View {
                     RequestView(model: model, request: request, compact: true)
                         .frame(height: request.kind == .approval ? nil : 190).padding(.top, 8)
                 }
-            } else if model.page != .settings && model.page != .sessions && !model.page.isRuntimeSetup && !model.page.isWelcome {
+            } else if model.page != .settings && model.page != .sessions && model.page != .scheduled && !model.page.isRuntimeSetup && !model.page.isWelcome {
                 ComposerView(model: model, focused: $focused, showsTitle: model.page != .session)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 6)
@@ -598,6 +599,7 @@ struct CompactPanelView: View {
         case .agent(let id): AgentContent(agent: model.current?.agents.first { $0.id == id })
         case .activity: activityList
         case .usage: UsageView(model: model)
+        case .scheduled: ScheduledView(model: model)
         case .session: ConversationHistoryView(model: model)
         case .welcome(let step): WelcomeView(model: model, step: step)
         }
@@ -1458,7 +1460,7 @@ struct FullSessionView: View {
     @AppStorage(NotchBodyStyle.key) private var bodyStyle = NotchBodyStyle.smoked
     @FocusState private var focused: Bool
     @State private var selectedTab: String
-    /// Settings or Usage, shown in the main pane over the selected session.
+    /// Settings, Usage or Scheduled, shown in the main pane over the selected session.
     @State private var utility: PanelPage?
     /// Find in conversation: nil while closed.
     @State private var findQuery: String?
@@ -1506,6 +1508,9 @@ struct FullSessionView: View {
                 } else if utility == .usage {
                     header("Usage", width: 620, back: { utility = nil })
                     UsageView(model: model).readable(620).padding(.horizontal, 22).padding(.bottom, 12)
+                } else if utility == .scheduled {
+                    header("Scheduled", width: 620, back: { utility = nil })
+                    ScheduledView(model: model).readable(620).padding(.horizontal, 22).padding(.bottom, 12)
                 } else {
                     sessionPane
                 }
@@ -1558,7 +1563,7 @@ struct FullSessionView: View {
     }
 
     private static func utility(for page: PanelPage) -> PanelPage? {
-        page == .settings || page == .usage ? page : nil
+        [.settings, .usage, .scheduled].contains(page) ? page : nil
     }
 
     /// The session header's real state, so it never contradicts the transcript:
@@ -1610,6 +1615,7 @@ struct FullSessionView: View {
             }
             SessionBrowserView(model: model, compact: false)
             VStack(spacing: 2) {
+                sidebarButton("Scheduled", symbol: "calendar.badge.clock", page: .scheduled)
                 if model.showUsage { sidebarButton("Usage", symbol: "chart.bar", page: .usage) }
                 sidebarButton("Settings", symbol: "gearshape", page: .settings)
             }
