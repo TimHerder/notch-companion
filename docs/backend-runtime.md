@@ -1117,6 +1117,42 @@ answer, delivered by the queued-send path with its duplicate protections.
 | ACP (DeepSeek, Cursor, Copilot, Antigravity) | ACP v1 has no fork; `session/fork` is an unstable proposal none of these advertise here. | No |
 | OpenClaw, Legacy Hermes | None through the Gateway or the protected bridge. | No |
 
+## Edit from here
+
+A rewind removes one of your messages and everything after it from the
+current native session, using the harness's own rewind, then returns the
+message's text and files to the composer (ahead of any newer draft, as a failed
+send does); nothing is sent. It runs after confirmation, with the session tree
+idle: no turn, child, staged or unconfirmed send, open question or approval,
+queued message (the user's, a goal's or an automation's) or Git action in that
+checkout. Restoring files also waits for
+every other session working in the same folder, and while it runs no session in
+that checkout may start a turn. While it runs the session counts as submitting.
+A steer is never a rewind point: it continues an earlier row's turn, whose
+tools, changes and outcome cannot be split. The registry must save before the harness is asked. A failure changes
+nothing locally but the live alias (the next use resumes and restores native
+history, so a rewind whose outcome is unknown reconciles) and shows the
+harness's error. Success removes those rows, their tools, change summaries,
+turn ends, outcomes, token reports and limit resets, and native agents of the
+removed turns; app-owned children those turns started are archived, not
+deleted, and no result whose wake left the conversation (nor any result of
+those children) wakes the parent again: their `completionWake` is cleared.
+Removed goal turns leave the goal's `turns` count, its `turnID` clears when
+that turn was removed, and the goal pauses until Resume; no queued entry keeps
+a `resumesTurnID` of a removed turn. Where the adapter returns native history it replaces the current
+segment, as on resume. Forks of a removed answer stay valid (separate native
+sessions; a whole-session fork refuses to refork once its answer no longer ends
+the source). A message you send now records its `attachments` (optional on
+`ChatMessage`), so older messages return their text only.
+
+| Harness | Conversation | Files | Offered |
+| --- | --- | --- | --- |
+| Claude Code | The idle process is reopened with `--resume <id> --resume-session-at <uuid>` (print mode's truncating resume), keeping the chain through the answer before your message (its recorded `native_message_id`). The point is saved as the session's optional `resumeAt` and every reopen resumes at it until the next send is attempted (a definitive send failure keeps it); Start fresh clears it. | File checkpoints (`rewind_files`, `--rewind-files`) are off in print mode unless `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING` was set when the edits were made, so not offered. | Your messages after an answer with a recorded ID, never the first or one following a fork's copied history |
+| OpenCode 2 | `POST /api/session/{id}/revert/stage {messageID, files}` then `POST …/revert/commit`, which deletes the message and every later one; a failed commit clears the staged revert (`DELETE …/revert`), and a failed history read after a commit still reports success, so the app cuts locally. A failed commit request re-reads history first: the boundary gone means it committed; unreadable, the error says the outcome is unknown. The adapter first refreshes and refuses unless the native message exists and the native user turns from it match the conversation's. Offered only when the server's schema lists all three endpoints (reported as the `rewind` capability). | The same revert with `files: true` restores OpenCode's file snapshots. | Any of your messages |
+| Hermes (shared) | `session.undo` drops the latest user turn and everything after it, durably in its session database. | None. | Your latest message only |
+| Codex | `thread/rollback` is gone from 0.162.1; its `thread/revert {threadId, beforeTurnId}` refuses `legacy` history-mode threads, which this app opens. | None (`thread/revert` leaves files). | No |
+| OpenCode 1.x, Pi, ACP, OpenClaw, Legacy Hermes | 1.x's `revert` stays pending until the next prompt; Pi's `fork` opens a new session and its tree navigation is interactive only; ACP v1 has no rewind; OpenClaw and the private bridge expose none. | — | No |
+
 ## Capability boundaries
 
 UI approval buttons honor offered scopes; `always` approval is never exposed.

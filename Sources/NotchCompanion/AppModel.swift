@@ -197,6 +197,10 @@ final class AppModel: ObservableObject {
     var unverifiedHistory: Set<String> = []
     /// Sessions whose native compaction is running.
     @Published var compactingSessionIDs: Set<String> = []
+    /// Sessions whose Edit from here rewind is running.
+    @Published var rewindingSessionIDs: Set<String> = []
+    /// Sessions restoring files natively; no session in the same checkout may start a turn meanwhile.
+    var restoringFilesSessionIDs: Set<String> = []
     /// Settings → Resume automatically after limit resets.
     @Published var resumeAutomatically = false {
         didSet { preferences.set(resumeAutomatically, forKey: Self.resumeAutomaticallyKey) }
@@ -241,6 +245,7 @@ final class AppModel: ObservableObject {
     var modelChangeDecision: ((String) -> Bool)?
     var fullAccessDecision: ((String) -> Bool)?
     var startFreshDecision: ((String) -> Bool)?
+    var rewindDecision: ((String, Bool) -> RewindChoice)?
     var snapShotCapture: ((SnapShotSource, URL) async throws -> URL)?
 
     let client: any RuntimeTransport
@@ -1788,6 +1793,7 @@ final class AppModel: ObservableObject {
         backgroundSendErrors.removeValue(forKey: localID)
         // A commit or push in progress must not race a new turn's edits.
         guard !gitActionRunning(near: localID) else { errorMessage = "Wait for the Git action to finish, then send."; return false }
+        guard !restoringFiles(near: localID) else { errorMessage = "Wait for the rewind to restore files, then send."; return false }
         guard !persistenceBlocked else { errorMessage = "Restore the saved session registry before sending."; return false }
         guard session.runtime.isSupported else { errorMessage = session.runtime.capabilityNote; return false }
         guard isProjectTrusted(session) else {
@@ -1829,6 +1835,7 @@ final class AppModel: ObservableObject {
             turnID: turnID)
         message.kind = kind
         message.from = from
+        if !attachments.isEmpty { message.attachments = attachments }
         update(localID) { target in
             target.stagedSubmission = StagedSubmission(message: message, draft: queuedAttachments != nil ? reply : reply == nil ? session.draft : nil,
                                                         attachments: attachments)
@@ -1913,6 +1920,8 @@ final class AppModel: ObservableObject {
                 if target.title == "New session" { target.title = String(text.prefix(64)); target.titleIsAutomatic = true }
                 target.updatedAt = Date()
                 target.nativeSubmissionAttempted = true
+                // The send extends the native chain from the rewind point, so later resumes need no truncation.
+                target.resumeAt = nil
                 // A later message supersedes Resume at reset.
                 target.queuedSends.removeAll { $0.resumesTurnID != nil && $0.id != turnID }
                 target.pendingSubmission = PendingSubmission(id: turnID, draft: reply ?? session.draft,
@@ -1920,7 +1929,7 @@ final class AppModel: ObservableObject {
                     attachmentIDs: attachments.map(\.id))
             }
             guard save() else {
-                update(localID) { $0.pendingSubmission = nil; $0.nativeSubmissionAttempted = session.nativeSubmissionAttempted }
+                update(localID) { $0.pendingSubmission = nil; $0.nativeSubmissionAttempted = session.nativeSubmissionAttempted; $0.resumeAt = session.resumeAt }
                 throw AppError("The send could not be saved safely. No message was sent.")
             }
             requestedSubmission = true
@@ -1960,6 +1969,7 @@ final class AppModel: ObservableObject {
                             }
                             target.pendingSubmission = nil
                             target.nativeSubmissionAttempted = session.nativeSubmissionAttempted
+                            target.resumeAt = session.resumeAt
                             if queuedAttachments != nil { target.stagedSubmission = nil }
                             else { target.restoreStagedSubmission() }
                         }
@@ -2094,6 +2104,7 @@ final class AppModel: ObservableObject {
                                      "native_submission_attempted": session.nativeSubmissionAttempted]
         if let pending = session.pendingSubmission { params["pending_turn_id"] = pending.id }
         if let mode = session.permissionMode { params["permission_mode"] = mode.rawValue }
+        if let at = session.resumeAt { params["resume_at"] = at }
         // A fork nothing was sent to yet may not be saved natively: it forks its source again.
         let refork = session.forkedFrom != nil && !session.nativeSubmissionAttempted
         if refork, let fork = session.forkedFrom {

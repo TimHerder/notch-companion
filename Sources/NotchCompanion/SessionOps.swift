@@ -145,6 +145,7 @@ extension AppModel {
             target.storedID = nil
             target.runtimeID = nil
             target.nativeSubmissionAttempted = false
+            target.resumeAt = nil
             target.runtimeInfo?.context = nil
             // A resume continues the old context, which the new session does not have.
             target.queuedSends.removeAll { $0.resumesTurnID != nil }

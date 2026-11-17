@@ -268,6 +268,13 @@ final class SharedHermesClient: RuntimeTransport {
             return ["steered": true]
         }
         if method == "session.compact" { return try await Self.compact(sessionID: params["session_id"] ?? "", request: request) }
+        if method == "session.rewind" {
+            // `session.undo` drops the latest user turn and everything after it; the conversation only.
+            guard params["turns"] as? Int == 1, params["files"] as? Bool != true else { throw AppError("Hermes rewinds only its latest turn, and not files.") }
+            let result = try await request("session.undo", params: ["session_id": params["session_id"] ?? ""])
+            guard result["removed"] as? Int ?? 0 > 0 else { throw AppError("Hermes had no turn to remove.") }
+            return ["rewound": true]
+        }
         if method == "runtime.models" {
             let result = try await request("model.options", params: ["explicit_only": true])
             return ["catalog": RuntimeModelCatalog.hermes(result)]

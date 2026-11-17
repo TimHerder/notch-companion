@@ -27,6 +27,8 @@ final class ClaudeClient: RuntimeTransport {
         var resumable = false
         /// A native fork not yet saved by a prompt: a reopen forks the source again.
         var fork: (source: String, at: String?)?
+        /// Rewound with a truncating resume and not prompted since: a reopen resumes at the same answer.
+        var resumeAt: String?
         /// Created without a chosen title: the first prompt asks the CLI to name the session.
         var untitled = false
         /// Launched with computer use and not yet initialized: a failure retries without it.
@@ -71,13 +73,17 @@ final class ClaudeClient: RuntimeTransport {
         "approvals": true, "questions": true, "modelSelection": true, "contextUsage": true, "delegation": true]
 
     static func arguments(id: String, resume: Bool, allowBypass: Bool = false, delegation: [String: Any]? = nil, computerUse executable: String? = nil,
-                          fork: (source: String, at: String?)? = nil) throws -> [String] {
+                          fork: (source: String, at: String?)? = nil, resumeAt: String? = nil) throws -> [String] {
         guard UUID(uuidString: id) != nil else { throw AppError("Claude Code requires a valid saved native session UUID.") }
         // A native fork: a copy of the source under the new ID, through one answer when given; the source is not written.
         var forking: [String] = []
         if let fork {
             guard UUID(uuidString: fork.source) != nil else { throw AppError("Claude Code requires a valid saved native session UUID to fork.") }
             forking = ["--resume=\(fork.source)", "--fork-session"] + (fork.at.map { ["--resume-session-at=\($0)"] } ?? [])
+        } else if resume, let resumeAt {
+            // Edit from here: a truncating resume keeps the native chain through this answer; later turns leave it.
+            guard UUID(uuidString: resumeAt) != nil else { throw AppError("Claude Code requires a valid saved message UUID to rewind to.") }
+            forking = ["--resume-session-at=\(resumeAt)"]
         }
         let allowed = (delegation.map { [allowedDelegationTools($0)] } ?? []) + (executable == nil ? [] : [computerUseTools])
         // Only a session the user gave Full access may switch into bypass; the
@@ -167,7 +173,8 @@ final class ClaudeClient: RuntimeTransport {
             }
             let session = try await open(id: id, cwd: cwd, resume: method == "session.resume",
                                          allowBypass: params["permission_mode"] as? String == PermissionMode.fullAccess.rawValue,
-                                         delegation: params["delegation"] as? [String: Any], fork: method == "session.create" ? fork : nil)
+                                         delegation: params["delegation"] as? [String: Any], fork: method == "session.create" ? fork : nil,
+                                         resumeAt: method == "session.resume" ? params["resume_at"] as? String : nil)
             session.untitled = method == "session.create" && (params["title"] as? String ?? "").isEmpty
             return sessionResult(session)
         }
@@ -312,6 +319,7 @@ final class ClaudeClient: RuntimeTransport {
                 try session.state.begin(turn)
                 started = true
                 session.resumable = true
+                session.resumeAt = nil
                 if session.untitled {
                     session.untitled = false
                     // Print mode names a session only when its host asks; persist saves the name in native history.
@@ -357,6 +365,15 @@ final class ClaudeClient: RuntimeTransport {
             guard !session.state.active else { throw AppError("Wait for Claude Code to finish.") }
             let result = try await control(session, ["subtype": "generate_session_title", "description": params["description"] as? String ?? "", "persist": false], optional: true)
             return ["title": result["title"] as? String ?? ""]
+        case "session.rewind":
+            guard !session.state.active, session.state.children.isEmpty, session.state.requests.isEmpty else { throw AppError("Wait for Claude Code and delegated work before rewinding.") }
+            // File checkpoints are off in print mode, so only the conversation rewinds here.
+            guard params["files"] as? Bool != true else { throw AppError("Claude Code cannot restore files through Notch Companion.") }
+            guard session.resumable, let at = params["native_message_id"] as? String, UUID(uuidString: at) != nil else {
+                throw AppError("Claude Code has no saved answer to rewind to.")
+            }
+            _ = try await reopen(session, allowBypass: session.allowsBypass, resumeAt: at, reason: "Claude Code reopened this session to rewind it.")
+            return ["rewound": true, "resume_at": at]
         case "session.rename": return ["renamed": false, "local_only": true]
         default: throw AppError("Claude Code does not support this operation through the companion.")
         }
@@ -371,31 +388,34 @@ final class ClaudeClient: RuntimeTransport {
     }
 
     /// Bypass can only be allowed at launch: reopen this idle conversation with it.
-    private func reopen(_ old: Session, allowBypass: Bool) async throws -> Session {
+    private func reopen(_ old: Session, allowBypass: Bool, resumeAt: String? = nil,
+                        reason: String = "Claude Code reopened this session to allow Full access.") async throws -> Session {
         let id = old.state.sessionID
         // An unsent whole-session fork would copy whatever the source holds now, past the answer it showed.
         if !old.resumable, let fork = old.fork, fork.at == nil {
             throw AppError("Claude Code cannot switch this unsent fork to Full access without forking its source again. Send a message first, or fork with Full access chosen in the source.")
         }
         sessions.removeValue(forKey: id)
-        old.close(AppError("Claude Code reopened this session to allow Full access."))
+        old.close(AppError(reason))
         let session = try await open(id: id, cwd: old.cwd, resume: old.resumable, allowBypass: allowBypass, delegation: old.delegation,
-                                     fork: old.resumable ? nil : old.fork)
+                                     fork: old.resumable ? nil : old.fork, resumeAt: resumeAt ?? old.resumeAt)
         session.inheritedMode = old.inheritedMode
         session.untitled = old.untitled
         return session
     }
 
     private func open(id: String, cwd: URL, resume: Bool, allowBypass: Bool = false, delegation: [String: Any]? = nil, computerUse: Bool? = nil,
-                      fork: (source: String, at: String?)? = nil) async throws -> Session {
+                      fork: (source: String, at: String?)? = nil, resumeAt: String? = nil) async throws -> Session {
         let computerUse = computerUse ?? !computerUseRefused
-        let arguments = try Self.arguments(id: id, resume: resume, allowBypass: allowBypass, delegation: delegation, computerUse: computerUse ? executable?.path : nil, fork: fork)
+        let arguments = try Self.arguments(id: id, resume: resume, allowBypass: allowBypass, delegation: delegation, computerUse: computerUse ? executable?.path : nil,
+                                           fork: fork, resumeAt: resume ? resumeAt : nil)
         let session = Session(id: id, cwd: cwd)
         session.allowsBypass = allowBypass
         let launchConnection = connection
         session.delegation = delegation
         session.resumable = resume
         session.fork = fork
+        session.resumeAt = resume ? resumeAt : nil
         sessions[id] = session
         session.process.onFrame = { [weak self, weak session] frame in
             guard let self, let session, self.sessions[id] === session else { return }; self.receive(frame, session)
@@ -449,7 +469,7 @@ final class ClaudeClient: RuntimeTransport {
             // A policy such as disableSideloadFlags refuses any --mcp-config before
             // initialize; chat must not depend on the optional server.
             guard retry, connection == launchConnection, executable != nil, sessions[id] == nil else { throw error }
-            let reopened = try await open(id: id, cwd: cwd, resume: resume, allowBypass: allowBypass, delegation: delegation, computerUse: false, fork: fork)
+            let reopened = try await open(id: id, cwd: cwd, resume: resume, allowBypass: allowBypass, delegation: delegation, computerUse: false, fork: fork, resumeAt: resumeAt)
             computerUseRefused = true
             emit(reopened.state.event("runtime.notice", ["message": "Claude Code would not start with its computer-use server, so this session opened without computer use."]))
             return reopened
