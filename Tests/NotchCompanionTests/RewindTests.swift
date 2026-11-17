@@ -296,6 +296,46 @@ import XCTest
         XCTAssertEqual(model.sessions.first { $0.id == "earlier" }?.delegation?.completionWake, false, "a wake that left the conversation")
     }
 
+    func testRewindingPastGoalTurnsRecountsAndPausesTheGoal() async {
+        var rewinding = session(.opencode)
+        rewinding.messages.insert(contentsOf: [ChatMessage(id: "g1", role: "user", text: "Continue toward the goal.", turnID: "g1", kind: ChatMessage.goal),
+                                               ChatMessage(id: "ga1", role: "assistant", text: "One more step.", turnID: "g1")], at: 4)
+        rewinding.goal = SessionGoal(objective: "Ship the parser", cap: 10, limit: 10, turns: 3, turnID: "g1")
+        rewinding.queuedSends = []
+        model.sessions = [rewinding]
+        model.rewindDecision = { _, _ in .conversation }
+        await model.editFromHere("u2", in: "s")
+        let goal = model.sessions[0].goal
+        XCTAssertEqual(goal?.turns, 2, "the removed goal turn no longer counts")
+        XCTAssertNil(goal?.turnID, "the latest goal turn left the conversation")
+        XCTAssertEqual(goal?.pause, .user, "the goal waits for Resume")
+
+        // A rewind that keeps every goal turn leaves the goal alone.
+        var kept = session(.opencode)
+        kept.messages.insert(contentsOf: [ChatMessage(id: "g0", role: "user", text: "Continue toward the goal.", turnID: "g0", kind: ChatMessage.goal),
+                                          ChatMessage(id: "ga0", role: "assistant", text: "Step.", turnID: "g0")], at: 2)
+        kept.goal = SessionGoal(objective: "Ship the parser", cap: 10, limit: 10, turns: 1, turnID: "g0")
+        model.sessions = [kept]
+        await model.editFromHere("u3", in: "s")
+        XCTAssertEqual(model.sessions[0].goal, kept.goal)
+    }
+
+    func testQueuedGoalAndAutomationMessagesRefuseTheRewind() async {
+        var withGoal = session(.opencode)
+        withGoal.goal = SessionGoal(objective: "Ship", cap: 10, limit: 10, turns: 1)
+        withGoal.queuedSends = [QueuedSend(id: "g", text: "Continue toward the goal.", kind: ChatMessage.goal)]
+        model.sessions = [withGoal]
+        XCTAssertEqual(model.rewindBlocker(model.sessions[0]), "Pause the goal, or wait for its next message to be sent.")
+        model.sessions[0].queuedSends = [QueuedSend(id: "a", text: "Nightly check", kind: "scheduled:Nightly")]
+        XCTAssertEqual(model.rewindBlocker(model.sessions[0]), "Wait for the scheduled message to be sent, or cancel it.")
+        model.sessions[0].queuedSends = [QueuedSend(id: "w", text: "Checks failed", kind: ChatMessage.pullRequestWatch)]
+        XCTAssertNotNil(model.rewindBlocker(model.sessions[0]))
+        model.rewindDecision = { _, _ in XCTFail("refused before asking"); return .conversation }
+        await model.editFromHere("u2", in: "s")
+        XCTAssertFalse(transport.calls.contains { $0.0 == "session.rewind" })
+        XCTAssertEqual(model.sessions[0].messages.count, 6)
+    }
+
     func testOlderRegistriesDecodeWithoutRewindFields() throws {
         let data = try JSONEncoder().encode(session())
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])

@@ -1773,7 +1773,8 @@ log header in Instrument), the context menu and an accessibility action. It is
 hidden for relayed and agent messages, steers, delegated children and side chats, and
 where the harness has no native rewind; it is disabled, with the reason as
 help, while the session, a child or an unconfirmed send is busy, a question or
-approval is open, a message is queued or a Git action runs.
+approval is open, a message (yours, a goal's or a scheduled one) is queued or a
+Git action runs. Rewinding past goal turns uncounts them and pauses the goal.
 
 Choosing it asks “Edit from here?”, saying how many later turns go with the
 message: **Rewind**, **Rewind and Restore Files** where the harness reverts

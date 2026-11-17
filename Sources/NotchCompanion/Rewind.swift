@@ -74,6 +74,8 @@ extension AppModel {
             return requests.contains { $0.sessionID == runtimeID }
         }
         if asking { return "Answer the open question or approval first." }
+        if session.queuedSends.contains(where: { $0.kind == ChatMessage.goal }) { return "Pause the goal, or wait for its next message to be sent." }
+        if session.queuedSends.contains(where: \.isAutomation) { return "Wait for the scheduled message to be sent, or cancel it." }
         if !session.queuedSends.isEmpty { return "Send or cancel the queued messages first." }
         if gitActionRunning(near: session.id) { return "Wait for the Git action to finish." }
         if !treeIsIdle(session.id) { return "Wait for this session and its delegated work to finish." }
@@ -173,6 +175,7 @@ extension AppModel {
         let available = files.filter { FileManager.default.isReadableFile(atPath: $0.url.path) }
         var text = message.text
         if !files.isEmpty, let range = text.range(of: "\n\nAttached: ", options: .backwards) { text = String(text[..<range.lowerBound]) }
+        let goalTurns = removed.filter { $0.role == "user" && SessionHistory.isVisibleConversation($0) && session.isGoalTurn($0) }.count
         let children = session.agents.filter { $0.sessionID != nil && $0.turnID.map(keys.contains) == true }.compactMap(\.sessionID)
         update(id) { target in
             target.messages.removeSubrange(cut...)
@@ -189,7 +192,15 @@ extension AppModel {
             target.limitResets = target.limitResets.filter { !keys.contains($0.key) }
             if target.planTurnID.map(keys.contains) == true { target.planTurnID = nil }
             if target.planReadyDismissedTurnID.map(keys.contains) == true { target.planReadyDismissedTurnID = nil }
-            // Goals (a separate change) should re-check their state here against the removed turns.
+            // Removed goal turns no longer count, and the goal waits for Resume rather than continuing from a cut it never saw.
+            if goalTurns > 0, var goal = target.goal {
+                goal.turns = max(0, goal.turns - goalTurns)
+                if goal.turnID.map(keys.contains) == true { goal.turnID = nil }
+                target.goal = goal
+                target.pauseGoal(.user)
+            }
+            // No queued message (a Resume at reset, a goal follow-up) may point at a removed turn.
+            target.queuedSends.removeAll { $0.resumesTurnID.map(keys.contains) == true }
             // Forks of removed answers stay valid: they are separate native sessions, or refork only while their answer ends the source.
             target.resumeAt = result["resume_at"] as? String
             target.state = .idle

@@ -1124,7 +1124,8 @@ current native session, using the harness's own rewind, then returns the
 message's text and files to the composer (ahead of any newer draft, as a failed
 send does); nothing is sent. It runs after confirmation, with the session tree
 idle: no turn, child, staged or unconfirmed send, open question or approval,
-queued message or Git action in that checkout. Restoring files also waits for
+queued message (the user's, a goal's or an automation's) or Git action in that
+checkout. Restoring files also waits for
 every other session working in the same folder, and while it runs no session in
 that checkout may start a turn. While it runs the session counts as submitting.
 A steer is never a rewind point: it continues an earlier row's turn, whose
@@ -1136,7 +1137,9 @@ turn ends, outcomes, token reports and limit resets, and native agents of the
 removed turns; app-owned children those turns started are archived, not
 deleted, and no result whose wake left the conversation (nor any result of
 those children) wakes the parent again: their `completionWake` is cleared.
-Where the adapter returns native history it replaces the current
+Removed goal turns leave the goal's `turns` count, its `turnID` clears when
+that turn was removed, and the goal pauses until Resume; no queued entry keeps
+a `resumesTurnID` of a removed turn. Where the adapter returns native history it replaces the current
 segment, as on resume. Forks of a removed answer stay valid (separate native
 sessions; a whole-session fork refuses to refork once its answer no longer ends
 the source). A message you send now records its `attachments` (optional on
