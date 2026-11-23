@@ -1265,11 +1265,11 @@ final class AppModel: ObservableObject {
         scheduleSave()
     }
 
-    /// Views also read state that changes without a publication (a send in flight, a delegated
-    /// tree settling). The host asks twice a second, and a conversation on screen is evaluated
-    /// again, as the write behind every acknowledgement once did for it.
-    func refreshVisibleConversation() {
-        if let currentID, isConversationOnScreen(currentID) { objectWillChange.send() }
+    /// Views also read what changes without a publication: state the model does not publish (a
+    /// send in flight, a delegated tree settling), the clock, the disk. The host asks twice a
+    /// second, and what the open panel or the full window in front shows is evaluated again.
+    func refreshVisibleViews() {
+        if notchSessionVisible || fullSessionVisible { objectWillChange.send() }
     }
 
     /// The panel's settled session page or the full window's Conversation tab shows it.

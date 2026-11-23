@@ -30,7 +30,7 @@ final class TranscriptPerformanceTests: XCTestCase {
 
     /// Every publication of the model re-evaluates every view of it, so neither the 60 Hz pointer
     /// samples nor reading a conversation that is already read may publish. The host's refresh of
-    /// a conversation on screen is the one deliberate publication, twice a second.
+    /// what the open panel shows is the one deliberate publication, twice a second.
     @MainActor func testPointerSamplesAndIdleVisibilityChecksDoNotPublish() {
         let (model, storage) = fixture()
         defer { cleanUp(model, storage) }
@@ -47,11 +47,15 @@ final class TranscriptPerformanceTests: XCTestCase {
         XCTAssertEqual(publications, 0)
         XCTAssertEqual(model.pointerOffset, CGSize(width: 2, height: 1))
         XCTAssertEqual(model.notchPullState.pull.depth, 4)
-        model.refreshVisibleConversation()
+        model.refreshVisibleViews()
         XCTAssertEqual(publications, 1)
+        model.page = .sessions
+        publications = 0
+        model.refreshVisibleViews()
+        XCTAssertEqual(publications, 1, "Every page of the open panel is refreshed, not only a conversation.")
         model.setSessionVisibility(notchVisible: false)
-        model.refreshVisibleConversation()
-        XCTAssertEqual(publications, 1, "Nothing is refreshed while no conversation shows.")
+        model.refreshVisibleViews()
+        XCTAssertEqual(publications, 1, "Nothing is refreshed while the panel is closed.")
     }
 
     /// The transcript does not observe the model, so it must still be drawn again for what it

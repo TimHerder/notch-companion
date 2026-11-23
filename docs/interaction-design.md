@@ -639,12 +639,14 @@ drop opens its session).
   value and is evaluated again only when that value changes: another
   session's events, a frame of the notch moving and typing a draft leave it
   as it is. It builds its timeline once per change to the session and redraws
-  only the rows whose content changed. State the model does not publish (a
-  send in flight, a delegated tree settling) reaches a conversation on screen
-  through the host's refresh, twice a second. A view that reads the clock or
-  the disk brings its own timeline rather than waiting for a publication: a
-  delivered file's card and the row that may hold one (each second), an age
-  in the glance (each quarter minute, where every step of the label falls).
+  only the rows whose content changed. What changes without a publication
+  (a send in flight, a delegated tree settling, the clock, the disk) reaches
+  the open panel, and the full-session window while it is in front, through
+  the host's refresh twice a second. Where that does not reach, a view brings
+  its own timeline: a delivered file's card and the row that may hold one
+  (each second), an age in the glance (each quarter minute, where every step
+  of the label falls); the transcript also reads the day while a
+  limit-stopped turn words its reset by it.
 - Input and approval requests never rotate out with ordinary activity rows.
 - Scrolling up stops following new content until the user returns with
   **Jump to latest** or scrolls to the end.

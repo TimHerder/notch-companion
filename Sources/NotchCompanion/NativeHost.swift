@@ -587,7 +587,7 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         // must not turn a background completion into a checked conversation.
         if now - (lastVisibilitySample ?? 0) >= 0.5 {
             refreshSessionVisibility()
-            model.refreshVisibleConversation()
+            model.refreshVisibleViews()
         }
         let location = NSEvent.mouseLocation
         let center = mascotCenter()
