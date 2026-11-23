@@ -29,7 +29,8 @@ struct MarkdownListItem: Identifiable, Equatable {
 
 enum MarkdownDocument {
     static func parse(_ source: String) -> [MarkdownBlock] {
-        let normalized = source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        // Most text holds no carriage return, and a growing answer is parsed again with every delta.
+        let normalized = source.utf8.contains(13) ? source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n") : source
         let lines = normalized.components(separatedBy: "\n").enumerated().map { Line(text: $0.element, source: $0.offset) }
         return parse(lines, depth: 0)
     }
@@ -247,9 +248,20 @@ enum MarkdownDocument {
 
     private static func isRule(_ line: Line) -> Bool {
         guard line.indent <= 3 else { return false }
-        let symbols = line.trimmed.filter { !$0.isWhitespace }
-        guard symbols.count >= 3, let first = symbols.first, ["-", "*", "_"].contains(first) else { return false }
-        return symbols.allSatisfy { $0 == first }
+        // Asked of every line: it stops at the first symbol a rule cannot hold, without first
+        // filtering the line into a second string.
+        var first: Character?
+        var count = 0
+        for symbol in line.trimmed where !symbol.isWhitespace {
+            if let first {
+                guard symbol == first else { return false }
+            } else {
+                guard symbol == "-" || symbol == "*" || symbol == "_" else { return false }
+                first = symbol
+            }
+            count += 1
+        }
+        return count >= 3
     }
 
     private static func quoteText(_ line: Line) -> String? {

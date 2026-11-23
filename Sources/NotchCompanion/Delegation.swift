@@ -686,7 +686,7 @@ extension AppModel {
 
     // MARK: Lifecycle
 
-    func delegatedChildren(of id: String) -> [String] { sessions.filter { $0.parentSessionID == id }.map(\.id) }
+    func delegatedChildren(of id: String) -> [String] { sessions.compactMap { $0.parentSessionID == id ? $0.id : nil } }
 
     func delegatedDescendants(of id: String) -> [String] {
         delegatedChildren(of: id).flatMap { [$0] + delegatedDescendants(of: $0) }

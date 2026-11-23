@@ -52,11 +52,14 @@ extension SessionDigest {
 extension AppModel {
     /// What the island counts: a snoozed session's work still shows, its unread result does not.
     var noticedSessions: [CompanionSession] {
-        topLevelSessions.map { session in
+        if let noticedCache { return noticedCache }
+        let noticed = topLevelSessions.map { session in
             var quiet = session
             if quiet.snoozedUntil != nil { quiet.acknowledgeResult() }
             return quiet
         }
+        noticedCache = noticed
+        return noticed
     }
 
     var snoozedCount: Int { topLevelSessions.filter { $0.snoozedUntil != nil }.count }

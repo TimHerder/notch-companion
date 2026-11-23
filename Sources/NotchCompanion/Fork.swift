@@ -40,7 +40,8 @@ extension AppModel {
               let index = session.messages.firstIndex(where: { $0.id == messageID }),
               session.messages[index].role == "assistant", SessionHistory.isVisibleConversation(session.messages[index]) else { return nil }
         let message = session.messages[index]
-        let later = session.messages[(index + 1)...].filter(SessionHistory.isVisibleConversation)
+        // Lazy: each answer's row asks, and copying every later message for each would cost more than the scan.
+        let later = session.messages[(index + 1)...].lazy.filter(SessionHistory.isVisibleConversation)
         // The running turn's text is not a finished answer yet.
         if session.isBusyIgnoringDelegates, !later.contains(where: { $0.role == "user" }) { return nil }
         let user = session.messages[..<index].last { $0.role == "user" && SessionHistory.isVisibleConversation($0) }

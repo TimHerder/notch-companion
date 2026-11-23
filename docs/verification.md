@@ -163,6 +163,19 @@ private development hasn't been re-run against this source snapshot. Known limit
 - The island update, stage, "Worked for" fold, context bubble and session list
   are covered by offscreen fixtures in all three designs. No physical-notch,
   live-hover or VoiceOver acceptance has been done for them.
+- Responsiveness (2026-11-23): what publishes the model (pointer samples, a
+  conversation already read, the host's refresh), the registry's bytes and the
+  order of its writes, and the cheaper text checks are covered by offline
+  tests. The main-thread cost per 60 Hz tick was measured with the opt-in
+  offscreen harness ([native build](native-build.md#validation)) on one Apple
+  silicon Mac in an optimized build, before and after, over a 400-turn session:
+  a pointer sample 56 → 0.4 ms, a frame of the notch moving 56 → 6–8 ms, a
+  delta in another session 56 → 5–8 ms, a delta in the session shown 103 → 14
+  ms, and a save of a 52 MB registry after one session changed 564 → 15 ms;
+  scrolling itself stayed at about 8 ms. That is not a frame rate: nothing was
+  measured on the physical notch, in the running app or with Instruments. One
+  hosted test checks that the transcript is drawn again for a turn unfolding
+  and a new message, not for each value it reads from the model.
 - Scheduled tasks and PR watch: schedule arithmetic (DST in both directions,
   time-zone change, clock set back, weekly, hourly, once), missed-run catch-up
   and skipping, waiting on a busy destination and on the previous run, restart

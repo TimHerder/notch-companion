@@ -1184,6 +1184,13 @@ unchanged and resumable; nothing native happens until Send, and no history is
 rewritten or merged. Exports are mode 0600 in the private `Migration Context`
 directory.
 
+The registry is one JSON file, rewritten whole and atomically. A save encodes
+again only the sessions that changed since the one before, and one serial
+writer keeps saves in the order they were asked for. The save that follows
+activity (800 ms after the last event, keystroke or selection) is written off
+the main thread; a save that gates a send or a native call is on disk, after
+any earlier one, before its caller continues. Quitting waits for the last one.
+
 A saved staging record keeps submitted text/files as the composer clears, before
 any asynchronous setup, and is projected into the transcript without touching
 native history. Setup failure or restart before the send intent restores it

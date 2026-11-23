@@ -222,9 +222,10 @@ enum SessionDigest {
     /// When the current turn began: its last visible prompt, or the earliest one a
     /// steer or steered wake continued (same turn ID, no end of its own, as the timeline keeps open).
     static func turnStart(_ session: CompanionSession) -> Date? {
-        let prompts = session.messages.filter { $0.role == "user" && SessionHistory.isVisibleConversation($0) }
-        guard var start = prompts.last else { return nil }
-        for prompt in prompts.dropLast().reversed() {
+        // From the end, stopping where the turn began: asked whenever a working session changes.
+        var prompts = session.messages.reversed().lazy.filter { $0.role == "user" && SessionHistory.isVisibleConversation($0) }.makeIterator()
+        guard var start = prompts.next() else { return nil }
+        while let prompt = prompts.next() {
             guard prompt.turnID != nil, prompt.turnID == start.turnID, session.turnEndedAt[prompt.id] == nil else { break }
             start = prompt
         }
@@ -253,11 +254,21 @@ enum SessionDigest {
     }
 
     static func plainText(_ markdown: String) -> String {
+        // Every row of the session list asks for its preview whenever the model changes.
+        if let known = plainTexts.object(forKey: markdown as NSString) { return known as String }
         let blocks = blockText(MarkdownDocument.parse(markdown))
         let formatted = (try? AttributedString(markdown: blocks, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
             .map { String($0.characters) } ?? blocks
-        return oneLine(formatted)
+        let plain = oneLine(formatted)
+        plainTexts.setObject(plain as NSString, forKey: markdown as NSString)
+        return plain
     }
+
+    private static let plainTexts: NSCache<NSString, NSString> = {
+        let cache = NSCache<NSString, NSString>()
+        cache.countLimit = 500
+        return cache
+    }()
 
     static func oneLine(_ text: String) -> String {
         text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
@@ -511,8 +522,11 @@ private struct GlanceRow: View {
                 }
                 if showsStop { Color.clear.frame(width: 20, height: 1) }
             } else {
-                Text(SessionDigest.compactAge(Date().timeIntervalSince(entry.since)))
-                    .foregroundStyle(IslandStyle.secondary)
+                // Nothing publishes as a session ages; every step of the label falls on a 15-second mark.
+                TimelineView(.periodic(from: entry.since, by: 15)) { context in
+                    Text(SessionDigest.compactAge(context.date.timeIntervalSince(entry.since)))
+                        .foregroundStyle(IslandStyle.secondary)
+                }
             }
         }
         .font(.system(size: 10.5).monospacedDigit())

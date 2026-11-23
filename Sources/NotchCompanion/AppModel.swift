@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var sessions: [CompanionSession] = [] { didSet { glanceCache = nil; liveCache = nil; wakeSessionsThatNeedYou(since: oldValue) } }
+    @Published var sessions: [CompanionSession] = [] { didSet { glanceCache = nil; liveCache = nil; noticedCache = nil; wakeSessionsThatNeedYou(since: oldValue) } }
     @Published var currentID: String? {
         didSet {
             // Leaving a session counts as seeing it, so it never archives the moment it stops being the selection.
@@ -45,7 +45,13 @@ final class AppModel: ObservableObject {
     @Published var pointerPull = UserDefaults.standard.object(forKey: "notch.pointerPull") as? Bool ?? true {
         didSet { UserDefaults.standard.set(pointerPull, forKey: "notch.pointerPull") }
     }
-    @Published var notchPull = NotchPull()
+    /// Stepped with the gaze at up to 60 Hz. It publishes on its own object, so a moving
+    /// pointer redraws the contour and not every view of the model.
+    let notchPullState = NotchPullState()
+    var notchPull: NotchPull {
+        get { notchPullState.pull }
+        set { notchPullState.pull = newValue }
+    }
     /// A working or waiting session shown in the resting band's right shoulder.
     @Published var liveActivityEnabled = UserDefaults.standard.object(forKey: LiveActivity.enabledKey) as? Bool ?? true {
         didSet { UserDefaults.standard.set(liveActivityEnabled, forKey: LiveActivity.enabledKey) }
@@ -72,7 +78,9 @@ final class AppModel: ObservableObject {
     /// Settings → macOS notifications; tests capture them instead.
     var postSystemNotice: (SystemNotice) -> Void = { SystemNotifications.shared.post($0) }
     var removeSystemNotices: ([String]) -> Void = { SystemNotifications.shared.remove($0) }
-    @Published var pointerOffset = CGSize.zero
+    /// The eased gaze, stepped at up to 60 Hz. Unpublished: the eyes' own timeline reads it
+    /// each frame, and Reduce Motion, which pauses that timeline, holds it at zero.
+    var pointerOffset = CGSize.zero
     /// Set by the host after a quiet spell with nobody near; the eyes doze.
     @Published var drowsy = false
     /// A file is over the notch or just landed; the eyes widen toward it.
@@ -267,6 +275,7 @@ final class AppModel: ObservableObject {
     private let playsSounds: Bool
     let preferences: UserDefaults
     private var persistenceBlocked = false
+    private lazy var registry = RegistryWriter(url: storageURL)
     private var deferredOperationTask: Task<Void, Never>?
     private var executingOperation = false
     private var showingOperationAlert = false
@@ -306,10 +315,12 @@ final class AppModel: ObservableObject {
     /// Sessions whose adapter was sent a mode; Inherit then asks it to restore once.
     var permissionOverrides: Set<String> = []
     var unfinishedChildren: [String: Set<String>] = [:]
-    /// Views re-evaluate on every published pointer sample; derive glance
+    /// Views re-evaluate on every publication of the model; derive glance
     /// text only when sessions or requests actually change.
     private var glanceCache: [GlanceEntry]?
     private var liveCache: LiveActivity??
+    /// `noticedSessions`, which the host's 60 Hz tick and several views read through the indicators.
+    var noticedCache: [CompanionSession]?
 
     var current: CompanionSession? { sessions.first { $0.id == currentID } }
     func fileDropSession(_ id: String) -> CompanionSession? {
@@ -381,7 +392,7 @@ final class AppModel: ObservableObject {
     }
     /// App-owned children appear only inside their parent, never as rows or indicators of their own.
     var topLevelSessions: [CompanionSession] { sessions.filter { $0.parentSessionID == nil } }
-    var activeCount: Int { topLevelSessions.filter(\.isBusy).count }
+    var activeCount: Int { sessions.lazy.filter { $0.parentSessionID == nil && $0.isBusy }.count }
     var collapsedStatus: CollapsedStatus { CollapsedStatus.resolve(sessions: noticedSessions) }
     var sessionIndicators: [SessionIndicator] { SessionIndicator.resolve(sessions: noticedSessions) }
     var unreadResultCount: Int { noticedSessions.filter { $0.hasUnreadResult && !$0.isBusy }.count }
@@ -536,6 +547,8 @@ final class AppModel: ObservableObject {
                 self.scheduleDeferredOperationIfIdle()
             }
         }
+        // Off the main thread, so the first save after launch need not encode the whole registry.
+        registry.prepare(sessions)
     }
 
     func connectionStatus(for runtime: RuntimeKind) -> (connected: Bool, message: String) {
@@ -545,8 +558,9 @@ final class AppModel: ObservableObject {
 
     var readyRuntimes: [RuntimeKind] {
         RuntimeKind.allCases.filter {
-            !runtimeSettingsPending.contains($0)
-                && configuredRuntimeProfiles[$0.rawValue] == RuntimeRoute.defaultProfile($0, defaults: preferences)
+            // Resolving a profile reads the environment and the real path, so only for a configured harness.
+            guard !runtimeSettingsPending.contains($0), let configured = configuredRuntimeProfiles[$0.rawValue] else { return false }
+            return configured == RuntimeRoute.defaultProfile($0, defaults: preferences)
         }
     }
 
@@ -565,11 +579,15 @@ final class AppModel: ObservableObject {
     }
 
     var newDraftRuntime: RuntimeKind {
-        readyRuntimes.contains(defaultRuntime) ? defaultRuntime : readyRuntimes.first ?? defaultRuntime
+        let ready = readyRuntimes
+        return ready.contains(defaultRuntime) ? defaultRuntime : ready.first ?? defaultRuntime
     }
 
     /// The harness a new draft would use, or nil when none is set up yet.
-    var newSessionRuntimeTitle: String? { readyRuntimes.isEmpty ? nil : newDraftRuntime.title }
+    var newSessionRuntimeTitle: String? {
+        let ready = readyRuntimes
+        return ready.isEmpty ? nil : (ready.contains(defaultRuntime) ? defaultRuntime : ready[0]).title
+    }
 
     private func setRuntimeReady(_ runtime: RuntimeKind, ready: Bool) {
         let profile = RuntimeRoute.defaultProfile(runtime, defaults: preferences)
@@ -1240,8 +1258,18 @@ final class AppModel: ObservableObject {
     func acknowledgeVisibleSession() {
         guard let currentID, isConversationOnScreen(currentID) else { return }
         removeSystemNotices([currentID])
-        guard let index = sessions.firstIndex(where: { $0.id == currentID }), sessions[index].acknowledgeResult() else { return }
+        // Asked before the mutating call: writing `sessions` publishes even when nothing is
+        // acknowledged, and the host asks twice a second while a conversation is on screen.
+        guard let index = sessions.firstIndex(where: { $0.id == currentID }), sessions[index].hasUnreadResult, !sessions[index].isBusy,
+              sessions[index].acknowledgeResult() else { return }
         scheduleSave()
+    }
+
+    /// Views also read what changes without a publication: state the model does not publish (a
+    /// send in flight, a delegated tree settling), the clock, the disk. The host asks twice a
+    /// second, and what the open panel or the full window in front shows is evaluated again.
+    func refreshVisibleViews() {
+        if notchSessionVisible || fullSessionVisible { objectWillChange.send() }
     }
 
     /// The panel's settled session page or the full window's Conversation tab shows it.
@@ -2718,19 +2746,24 @@ final class AppModel: ObservableObject {
     func scheduleSave() {
         persistTask?.cancel()
         persistTask = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(800)); self?.save() } catch { }
+            do { try await Task.sleep(for: .milliseconds(800)); self?.saveLater() } catch { }
         }
     }
+    /// The debounced save. Nothing waits for it, so it encodes and writes off the main thread.
+    private func saveLater() {
+        guard !persistenceBlocked else { return }
+        registry.writeLater(sessions) { [weak self] error in self?.saveFailed(error) }
+    }
+    /// On disk when it returns, after any debounced save still being written.
+    // shortcut: a session that changed is encoded whole, and the registry written whole, while the caller
+    // waits (some 100 ms in a session of 8 MB); store sessions apart if these saves show in a profile.
     @discardableResult
     func save() -> Bool {
         guard !persistenceBlocked else { return false }
-        do {
-            try FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-            try encoder.encode(sessions).write(to: storageURL, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: storageURL.path)
-            return true
-        } catch { errorMessage = "Could not save local session history: \(error.localizedDescription)"; return false }
+        do { try registry.write(sessions); return true } catch { saveFailed(error); return false }
+    }
+    private func saveFailed(_ error: Error) {
+        errorMessage = "Could not save local session history: \(error.localizedDescription)"
     }
 
     func play(_ cue: SoundPlayer.Cue) { if playsSounds { SoundPlayer.shared.play(cue) } }

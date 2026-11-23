@@ -631,6 +631,22 @@ drop opens its session).
   blocks stay correct after reconnect or resume.
 - Long tool labels truncate with a way to see the full text.
 - Streaming updates within the existing region, never resizing the notch.
+- **Responsiveness.** Every view of the model is evaluated again when it
+  publishes, and the panel stays mounted while the notch is closed, so the
+  model publishes only what changed. What the host samples each frame stays
+  off it: the eyes read the gaze on their own clock, and the pointer pull
+  publishes to the contour alone. The transcript reads the model through one
+  value and is evaluated again only when that value changes: another
+  session's events, a frame of the notch moving and typing a draft leave it
+  as it is. It builds its timeline once per change to the session and redraws
+  only the rows whose content changed. What changes without a publication
+  (a send in flight, a delegated tree settling, the clock, the disk) reaches
+  the open panel, and the full-session window while it is in front, through
+  the host's refresh twice a second. Where that does not reach, a view brings
+  its own timeline: a delivered file's card and the row that may hold one
+  (each second), an age in the glance (each quarter minute, where every step
+  of the label falls); the transcript's snapshot also holds how a
+  limit-stopped turn's reset reads, which follows the day and the time zone.
 - Input and approval requests never rotate out with ordinary activity rows.
 - Scrolling up stops following new content until the user returns with
   **Jump to latest** or scrolls to the end.

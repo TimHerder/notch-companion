@@ -210,6 +210,23 @@ Use meaningful regression scenarios, not tests that only restate implementation.
 For changed app behavior, run the relevant checks and rebuild. Tests cannot
 establish live glass, hover, notch alignment or animation smoothness.
 
+What a change costs the main thread can be timed without a runtime:
+
+```sh
+NOTCH_RUN_PERF_TESTS=1 swift test --filter TranscriptPerformanceTests
+```
+
+It hosts the real panel offscreen over a 400-turn session and prints the
+main-thread milliseconds per 60 Hz tick of a pointer sample, a frame of the
+notch moving, a delta in another session and in the one shown, and scrolling,
+plus a save of a 50 MB registry. `NOTCH_PERF_SOAK=<case>` repeats one case
+(`scroll`, say) long enough to profile it with `sample`. The numbers depend on
+the Mac and on the build, so compare them with a run of the commit before;
+they are not a frame rate. `swift test` builds unoptimized. For an optimized
+run add `-c release -Xswiftc -enable-testing -Xswiftc -DDEBUG`: the last flag
+keeps the package's own resource lookup, which a release build otherwise
+expects inside the app bundle.
+
 Native acceptance runs separately on a trusted local Mac with existing agent
 setup. These opt-ins can send real prompts and consume account quota:
 
