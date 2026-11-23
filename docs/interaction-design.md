@@ -645,8 +645,8 @@ drop opens its session).
   the host's refresh twice a second. Where that does not reach, a view brings
   its own timeline: a delivered file's card and the row that may hold one
   (each second), an age in the glance (each quarter minute, where every step
-  of the label falls); the transcript also reads the day while a
-  limit-stopped turn words its reset by it.
+  of the label falls); the transcript's snapshot also holds how a
+  limit-stopped turn's reset reads, which follows the day and the time zone.
 - Input and approval requests never rotate out with ordinary activity rows.
 - Scrolling up stops following new content until the user returns with
   **Jump to latest** or scrolls to the end.

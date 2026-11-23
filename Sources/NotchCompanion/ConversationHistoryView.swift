@@ -313,8 +313,9 @@ private struct TranscriptDependencies: Equatable {
     var watchError: String?
     /// Limit-stopped turns that offer Resume at reset.
     var resumableTurns: Set<String> = []
-    /// The day, while a limit-stopped turn words its reset by it ("resets 3:40 PM", or with its date).
-    var day: Date?
+    /// How each limit-stopped turn's reset reads now ("3:40 PM", or with its date): the wording
+    /// follows the day, the time zone and the clock's style, none of which publishes.
+    var resetWording: [String] = []
     /// An empty draft chooses its harness and folder, and says so when none is set up.
     var choosesRuntime = false
     var noRuntimes = false
@@ -341,7 +342,7 @@ private struct TranscriptDependencies: Equatable {
             if !derived.latestChanges.isEmpty { gitActionsIdle = model.gitActionsIdle(session.id) }
             watchError = model.pullRequestPolls[session.id]?.error
             resumableTurns = Set(session.limitResets.keys.filter { model.canResumeAtReset(session.id, turn: $0) })
-            if !session.limitResets.isEmpty { day = Calendar.app.startOfDay(for: Date()) }
+            resetWording = session.limitResets.values.map { SnoozeChoice.time($0) }.sorted()
             choosesRuntime = items.isEmpty && model.canChangeRuntime(session.id)
             noRuntimes = choosesRuntime && model.readyRuntimes.isEmpty
         }
