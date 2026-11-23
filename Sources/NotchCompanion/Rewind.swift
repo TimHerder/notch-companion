@@ -45,7 +45,7 @@ extension AppModel {
             start = max(start, copied + 1)
         }
         guard index >= start else { return nil }
-        let turns = session.messages[index...].filter { $0.role == "user" && SessionHistory.isVisibleConversation($0) }.count
+        let turns = session.messages[index...].lazy.filter { $0.role == "user" && SessionHistory.isVisibleConversation($0) }.count
         var point = RewindPoint(messageID: messageID, turns: turns)
         switch session.runtime {
         case .claude:

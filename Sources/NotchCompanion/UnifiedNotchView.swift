@@ -150,11 +150,10 @@ struct UnifiedNotchView: View {
         // and stay pure black like the band they extend.
         .background(NotchFlares(radius: presentation.flare).fill(.black).allowsHitTesting(false))
         // The resting contour leaning toward a nearby pointer; any tier opening absorbs it.
-        .background(NotchPullShape(pull: model.notchPull,
-                                   depth: model.notchPull.depth
-                                    * (1 - min(1, max(presentation.progress, presentation.peek, presentation.stage, presentation.hello))),
-                                   cornerRadius: presentation.cornerRadius)
-            .fill(.black).allowsHitTesting(false))
+        .background(NotchPullBackground(state: model.notchPullState,
+                                        absorbed: min(1, max(presentation.progress, presentation.peek, presentation.stage, presentation.hello)),
+                                        cornerRadius: presentation.cornerRadius)
+            .allowsHitTesting(false))
         .environment(\.colorScheme, .dark)
         .environment(\.notchBodyStyle, bodyStyle)
         // AppKit rounds the window out to whole points mid-animation; pinning to
@@ -271,6 +270,18 @@ struct NotchFlares: Shape {
             path.closeSubpath()
         }
         return path
+    }
+}
+
+/// Observes the pull alone, so its 60 Hz samples redraw this shape and not the panel.
+private struct NotchPullBackground: View {
+    @ObservedObject var state: NotchPullState
+    /// How far an opening tier has absorbed the pull, 0 to 1.
+    var absorbed: CGFloat
+    var cornerRadius: CGFloat
+
+    var body: some View {
+        NotchPullShape(pull: state.pull, depth: state.pull.depth * (1 - absorbed), cornerRadius: cornerRadius).fill(.black)
     }
 }
 

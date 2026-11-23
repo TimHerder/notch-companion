@@ -343,16 +343,32 @@ enum GitActions {
 extension AppModel {
     /// Sessions sharing a checkout (one folder inside the other) share its Git actions' safety.
     func sharesCheckout(_ first: String, _ second: String) -> Bool {
-        func folder(_ id: String) -> String? {
-            sessions.first { $0.id == id }.map { URL(fileURLWithPath: $0.workspacePath ?? workspacePath).standardizedFileURL.path }
-        }
-        guard let a = folder(first), let b = folder(second) else { return false }
-        return a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/")
+        guard let a = sessions.first(where: { $0.id == first }), let b = sessions.first(where: { $0.id == second }) else { return false }
+        return Self.sameCheckout(checkoutFolder(a), checkoutFolder(b))
+    }
+
+    private func checkoutFolder(_ session: CompanionSession) -> String {
+        URL(fileURLWithPath: session.workspacePath ?? workspacePath).standardizedFileURL.path
+    }
+
+    private static func sameCheckout(_ a: String, _ b: String) -> Bool {
+        a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/")
     }
 
     /// Git actions run only while this session's tree and every session in the same checkout are idle.
     func gitActionsIdle(_ id: String) -> Bool {
-        treeIsIdle(id) && sessions.allSatisfy { $0.id == id || !sharesCheckout(id, $0.id) || treeIsIdle($0.id) }
+        guard treeIsIdle(id) else { return false }
+        // The transcript asks whenever the model changes: this session's folder once and each
+        // distinct folder once, where `sharesCheckout` would resolve both for every pair.
+        guard let own = sessions.first(where: { $0.id == id }).map(checkoutFolder) else { return true }
+        var folders: [String: String] = [:]
+        return sessions.allSatisfy { other in
+            if other.id == id { return true }
+            let path = other.workspacePath ?? workspacePath
+            let folder = folders[path] ?? checkoutFolder(other)
+            folders[path] = folder
+            return !Self.sameCheckout(own, folder) || treeIsIdle(other.id)
+        }
     }
 
     /// A commit or push running in this session's checkout, which a send must wait for.

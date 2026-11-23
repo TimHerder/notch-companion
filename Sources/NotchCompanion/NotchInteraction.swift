@@ -29,6 +29,11 @@ enum PointerGazeMotion {
     }
 }
 
+/// The pull as its own publisher, observed by the contour alone.
+@MainActor final class NotchPullState: ObservableObject {
+    @Published var pull = NotchPull()
+}
+
 /// The resting outline yielding toward a nearby pointer: distance sets how far
 /// the nearest contour reaches, direction how it bends. Sampled with the gaze.
 struct NotchPull: Equatable {

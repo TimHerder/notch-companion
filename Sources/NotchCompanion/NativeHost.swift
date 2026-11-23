@@ -332,7 +332,10 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
     }
 
     private func updateAccessibilityPreferences() {
-        model.reducedMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        // The paused eyes stop reading the gaze each frame, so it is centred before they redraw.
+        if reduced { model.pointerOffset = .zero }
+        model.reducedMotion = reduced
         if model.reducedMotion, frameAnimation != nil { movePanel(animated: false) }
     }
 
@@ -582,7 +585,10 @@ final class NativeHost: NSObject, NSMenuDelegate, NSWindowDelegate {
         guard let geometry = model.geometry else { return }
         // Check desktop visibility separately from 60 Hz gaze; the lock screen
         // must not turn a background completion into a checked conversation.
-        if now - (lastVisibilitySample ?? 0) >= 0.5 { refreshSessionVisibility() }
+        if now - (lastVisibilitySample ?? 0) >= 0.5 {
+            refreshSessionVisibility()
+            model.refreshVisibleConversation()
+        }
         let location = NSEvent.mouseLocation
         let center = mascotCenter()
         let presentation = model.notchPresentation

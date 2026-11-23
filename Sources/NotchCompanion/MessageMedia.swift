@@ -21,7 +21,9 @@ struct MessageContent: Equatable {
     var media: [MessageMedia]
 
     static func parse(_ source: String, fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> MessageContent {
-        guard source.contains("MEDIA:") || source.contains("![") else { return MessageContent(text: source, media: []) }
+        // The bytes first: every answer drawn asks, and nearly none holds either.
+        guard source.holdsBytes("MEDIA:") || source.holdsBytes("!["),
+              source.contains("MEDIA:") || source.contains("![") else { return MessageContent(text: source, media: []) }
         var media: [MessageMedia] = []
         func add(_ path: String, caption: String? = nil) {
             let url = URL(fileURLWithPath: path).standardizedFileURL

@@ -105,6 +105,10 @@ struct ToolActivity: Identifiable, Codable, Equatable {
         "pending_request_read": ["Read", "Reading", "Read", "a pending question"],
         "pending_request_respond": ["Answer", "Answering", "Answered", "a pending question"]
     ]
+    /// Compiled once: every tool row asks for its display name.
+    private static let sessionServer = #/notch-[0-9a-f]{16}_/#
+    private static let plainNames = ["terminal": "Terminal", "web_search": "Searching the web", "web_extract": "Reading a page", "read_file": "Reading a file", "write_file": "Writing a file", "browser_navigate": "Opening a page", "python": "Running Python"]
+
     /// The companion's tool under any harness prefix; Codex reports it bare.
     static func delegationTool(_ name: String) -> String? {
         let server = DelegationServer.name
@@ -112,7 +116,7 @@ struct ToolActivity: Identifiable, Codable, Equatable {
             return String(name.dropFirst(prefix.count))
         }
         // OpenCode 2 gives each session its own server, `notch-<16 hex>`.
-        if let match = name.prefixMatch(of: #/notch-[0-9a-f]{16}_/#) { return String(name[match.range.upperBound...]) }
+        if let match = name.prefixMatch(of: sessionServer) { return String(name[match.range.upperBound...]) }
         // OpenClaw node tools are `notch_<tool>`; a bare `notch_session_*` is the tool itself.
         if name.hasPrefix(server + "_"), delegationLabels[String(name.dropFirst(server.count + 1))] != nil { return String(name.dropFirst(server.count + 1)) }
         return delegationLabels[name] == nil ? nil : name
@@ -121,8 +125,7 @@ struct ToolActivity: Identifiable, Codable, Equatable {
         if let tool = Self.delegationTool(name), let labels = Self.delegationLabels[tool] {
             return (state == .working ? labels[1] : state == .finished ? labels[2] : labels[0]) + " " + labels[3]
         }
-        let names = ["terminal": "Terminal", "web_search": "Searching the web", "web_extract": "Reading a page", "read_file": "Reading a file", "write_file": "Writing a file", "browser_navigate": "Opening a page", "python": "Running Python"]
-        return names[name] ?? name.replacingOccurrences(of: "_", with: " ").capitalized
+        return Self.plainNames[name] ?? name.replacingOccurrences(of: "_", with: " ").capitalized
     }
 }
 
@@ -808,6 +811,16 @@ enum EventValue {
     }
 }
 
+extension String {
+    /// Whether these ASCII bytes occur in the text. A search for them cannot succeed without
+    /// them, and this costs a fraction of one: for texts searched often that rarely hold them.
+    /// Not for K, `;` or a backtick, which a search also finds as U+212A, U+037E and U+1FEF.
+    func holdsBytes(_ ascii: StaticString) -> Bool {
+        var text = self
+        return text.withUTF8 { memmem($0.baseAddress, $0.count, ascii.utf8Start, ascii.utf8CodeUnitCount) != nil }
+    }
+}
+
 enum SessionHistory {
     /// Hermes persists operational prompts as role=user. Prefer its explicit
     /// display typing; only recognize exact legacy envelopes when typing was
@@ -823,15 +836,21 @@ enum SessionHistory {
         return isVisibleConversation(role: message.role, text: message.text, displayKind: nil)
     }
 
+    private static let blank = CharacterSet.whitespacesAndNewlines
+    private static let operationalKinds: Set<String> = ["async_delegation_complete", "auto_continue", "model_switch", "personality_switch"]
+
     private static func isVisibleConversation(role: String, text: String, displayKind: String?) -> Bool {
-        guard ["user", "assistant"].contains(role), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        // Every transcript derivation asks this of every message: the same test as trimming
+        // the text to nothing, without copying a long answer to find out.
+        guard role == "user" || role == "assistant", !text.unicodeScalars.allSatisfy(blank.contains) else { return false }
         if displayKind == "hidden" { return false }
         guard role == "user" else { return true }
-        let operationalKinds: Set<String> = ["async_delegation_complete", "auto_continue", "model_switch", "personality_switch"]
         if let displayKind, operationalKinds.contains(displayKind) { return false }
         // A slash-skill invocation and future unfamiliar display kinds remain
         // real conversation text. Do not interpret their contents heuristically.
         if let displayKind, !displayKind.isEmpty { return true }
+        // Every envelope below opens with a bracket, so an ordinary message is not copied to look for one.
+        guard text.unicodeScalars.first(where: { !blank.contains($0) }) == "[" else { return true }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let lines = trimmed.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
         let header = String(lines.first ?? "")
@@ -877,6 +896,8 @@ enum SessionHistory {
     /// standalone trailing @file blocks and Hermes's actual expansion header;
     /// leave ordinary prose, inline refs, and quoted section headings intact.
     static func projectedUserText(_ text: String) -> String {
+        // Asked of every user-role row whenever the timeline is built, and delegation results run long.
+        guard text.holdsBytes("\n\n--- ") else { return text }
         let markers = ["\n\n--- Context Warnings ---\n", "\n\n--- Attached Context ---\n\n"]
         let ranges = markers.compactMap { marker -> (String, Range<String.Index>)? in
             text.range(of: marker).map { (marker, $0) }

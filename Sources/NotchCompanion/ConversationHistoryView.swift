@@ -11,22 +11,37 @@ struct ConversationHistoryView: View {
     var findOpen = false
     /// Its current match, revealed and highlighted.
     var find: TranscriptFindMatch? = nil
+    @State private var derived = TranscriptDerivation()
+
+    var body: some View {
+        Transcript(model: model, derived: derived, shown: TranscriptDependencies(model, derived),
+                   inNotch: inNotch, findOpen: findOpen, find: find)
+            .equatable()
+    }
+}
+
+/// The transcript itself. It does not observe the model, which publishes for every event of
+/// every session and every frame the notch moves: what it draws comes from `shown`, and it is
+/// evaluated again only when that changed. The model is here for the actions, and for
+/// questions about `shown.session` alone.
+private struct Transcript: View, Equatable {
+    let model: AppModel
+    let derived: TranscriptDerivation
+    var shown: TranscriptDependencies
+    var inNotch: Bool
+    var findOpen: Bool
+    var find: TranscriptFindMatch?
     @StateObject private var scrolling = HistoryScrollCoordinator()
 
-    private var session: CompanionSession? { model.current }
-    private var timeline: [ConversationTimelineItem] { session.map(ConversationTimeline.build) ?? [] }
-    private var revision: HistoryRevision {
-        HistoryRevision(sessionID: session?.id, messageCount: session?.messages.count ?? 0,
-                        stagedMessageID: session?.stagedSubmission?.message.id,
-                        lastMessage: session?.messages.last?.text ?? "", toolCount: session?.tools.count ?? 0,
-                        finishedTools: session?.tools.filter { $0.state != .working }.count ?? 0,
-                        state: session?.state ?? .idle, changes: session?.changes ?? [])
+    static func == (a: Self, b: Self) -> Bool {
+        a.shown == b.shown && a.inNotch == b.inNotch && a.findOpen == b.findOpen && a.find == b.find
     }
 
     var body: some View {
         ScrollViewReader { proxy in
-        let items = timeline
-        let latestChanges = session.map { ChangeSummaryView.latestFinished(in: items, session: $0) } ?? []
+        let session = shown.session
+        let items = shown.items
+        let latestChanges = derived.latestChanges
         VStack(spacing: 0) {
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: PanelTheme.pick(16, 18, 19)) {
@@ -34,7 +49,7 @@ struct ConversationHistoryView: View {
                     ForEach(items) { item in
                         switch item {
                         case .message(let message) where message.isSessionMarker:
-                            SessionMarkerRow(message: message, expanded: model.expandedWork.contains("marker:\(message.id)")) {
+                            SessionMarkerRow(message: message, expanded: shown.expandedWork.contains("marker:\(message.id)")) {
                                 if model.expandedWork.remove("marker:\(message.id)") == nil {
                                     model.expandedWork.insert("marker:\(message.id)")
                                     scrolling.stopFollowing()
@@ -42,43 +57,43 @@ struct ConversationHistoryView: View {
                             }
                             .transcriptFindRow("message:\(message.id)")
                         case .message(let message) where message.delegationSummary != nil:
-                            let childID = message.delegationChildID.flatMap { id in model.sessions.contains { $0.id == id } ? id : nil }
+                            let childID = message.delegationChildID.flatMap { id in shown.sessionIDs.contains(id) ? id : nil }
                             DelegationResultRow(summary: message.delegationSummary ?? "", failed: message.delegationSummary?.hasSuffix(" failed") == true,
                                                 open: childID.map { id in { model.openDelegatedSession(id) } })
                                 .transcriptFindRow("message:\(message.id)")
                         case .message(let message):
                             messageView(message, commentary: false)
-                                .transition(message.id == session?.stagedSubmission?.message.id && !model.reducedMotion
+                                .transition(message.id == session?.stagedSubmission?.message.id && !shown.reducedMotion
                                     ? .asymmetric(insertion: .offset(y: 8).combined(with: .opacity), removal: .identity)
                                     : .identity)
                         case .commentary(let message):
                             messageView(message, commentary: true)
                         case .tools(let group):
-                            TranscriptToolGroup(group: group, reducedMotion: model.reducedMotion,
-                                                onInspect: scrolling.stopFollowing, reveal: find?.group == group.id)
+                            TranscriptToolGroup(group: group, reducedMotion: shown.reducedMotion,
+                                                onInspect: scrolling.stopFollowing, reveal: find?.group == group.id).equatable()
                         case .work(let work):
-                            TurnWorkView(work: work, expanded: !work.folds || model.expandedWork.contains(work.id), toggle: {
+                            TurnWorkView(work: work, expanded: !work.folds || shown.expandedWork.contains(work.id), toggle: {
                                 if model.expandedWork.remove(work.id) == nil {
                                     model.expandedWork.insert(work.id)
                                     scrolling.stopFollowing()
                                 }
-                            }, resume: session.flatMap { session in model.canResumeAtReset(session.id, turn: work.turnRowID)
+                            }, resume: session.flatMap { session in shown.resumableTurns.contains(work.turnRowID)
                                 ? { model.resumeAtReset(session.id, turn: work.turnRowID) } : nil }) {
                                 ForEach(work.entries) { entry in
                                     switch entry {
                                     case .commentary(let message), .message(let message):
                                         messageView(message, commentary: true)
                                     case .tools(let group):
-                                        TranscriptToolGroup(group: group, reducedMotion: model.reducedMotion,
-                                                            onInspect: scrolling.stopFollowing, inWork: true)
+                                        TranscriptToolGroup(group: group, reducedMotion: shown.reducedMotion,
+                                                            onInspect: scrolling.stopFollowing, inWork: true).equatable()
                                     default: EmptyView()
                                     }
                                 }
                             }
                         case .changes(let summary):
                             let key = "\(session?.id ?? ""):\(summary.id)"
-                            let shows = model.changeDisclosure[key] ?? latestChanges.contains(summary.id)
-                            ChangeSummaryView(summary: summary, editorName: model.codeEditorName,
+                            let shows = shown.changeDisclosure[key] ?? latestChanges.contains(summary.id)
+                            ChangeSummaryView(summary: summary, editorName: shown.codeEditorName,
                                               open: { model.openInCodeEditor($0) },
                                               chooseEditor: { model.openInCodeEditor($0, choose: true) },
                                               onInspect: scrolling.stopFollowing,
@@ -86,13 +101,13 @@ struct ConversationHistoryView: View {
                                               fileLimit: inNotch ? 3 : 6,
                                               actions: session.flatMap { session in latestChanges.contains(summary.id) ? GitActionsView(
                                                 controller: model.gitActions(for: session.id),
-                                                blocked: model.gitActionsIdle(session.id) ? nil : "Git actions wait until this session, its delegated work, sessions in the same folder and any unconfirmed send are idle.",
+                                                blocked: shown.gitActionsIdle ? nil : "Git actions wait until this session, its delegated work, sessions in the same folder and any unconfirmed send are idle.",
                                                 pullRequest: session.pullRequest, isWorktree: session.worktree != nil,
-                                                watching: session.pullRequestWatch != nil, watchError: model.pullRequestPolls[session.id]?.error, harness: session.runtime.title,
+                                                watching: session.pullRequestWatch != nil, watchError: shown.watchError, harness: session.runtime.title,
                                                 openURL: { model.openExternally($0) }) : nil })
                         }
                     }
-                    .animation(model.reducedMotion ? nil : .easeOut(duration: 0.18),
+                    .animation(shown.reducedMotion ? nil : .easeOut(duration: 0.18),
                                value: session?.stagedSubmission?.message.id)
                     if session?.stagedSubmission != nil && session?.pendingSubmission == nil {
                         Group {
@@ -114,7 +129,7 @@ struct ConversationHistoryView: View {
                         LiveTurnFooter(since: SessionDigest.turnStart(session) ?? session.updatedAt,
                                        waiting: session.state == .waiting,
                                        hint: workingHint(session).map { hint in session.goalFooter.map { hint + " · " + $0 } ?? hint } ?? session.goalFooter,
-                                       reducedMotion: model.reducedMotion)
+                                       reducedMotion: shown.reducedMotion)
                     }
                     Color.clear.frame(height: 2).id("conversation-tail")
                 }
@@ -146,10 +161,10 @@ struct ConversationHistoryView: View {
             }
             // A new draft chooses its harness and folder in the middle of its empty conversation.
             .overlay {
-                if items.isEmpty, let session, model.canChangeRuntime(session.id) { emptyDraft(session) }
+                if shown.choosesRuntime, let session { emptyDraft(session) }
             }
         }
-        .onChange(of: revision) { old, new in
+        .onChange(of: HistoryRevision(session)) { old, new in
             if old.sessionID != new.sessionID { scrolling.resetForSession() }
             scrolling.contentChanged()
         }
@@ -173,7 +188,7 @@ struct ConversationHistoryView: View {
                 DispatchQueue.main.async { proxy.scrollTo(new.scrollID, anchor: .center) }
             }
         }
-        .onChange(of: model.notchPresentation.contentIsInteractive) { _, revealed in
+        .onChange(of: shown.revealed) { _, revealed in
             if revealed { scrolling.revealIfFollowing() }
         }
         }
@@ -182,7 +197,7 @@ struct ConversationHistoryView: View {
     /// Without a configured harness it says how to start; otherwise only the choosers.
     private func emptyDraft(_ session: CompanionSession) -> some View {
         VStack(spacing: 14) {
-            if model.readyRuntimes.isEmpty {
+            if shown.noRuntimes {
                 VStack(spacing: 6) {
                     Text("Connect a harness to get started.")
                         .font(CompanionStyle.title)
@@ -227,34 +242,35 @@ struct ConversationHistoryView: View {
     }
 }
 
-extension ConversationHistoryView {
+extension Transcript {
     fileprivate func messageView(_ message: ChatMessage, commentary: Bool) -> some View {
-        TranscriptMessageView(message: message, runtimeTitle: session?.runtime.title ?? model.defaultRuntime.title,
-                              questionStatus: questionStatus(message), commentary: commentary,
-                              open: { url, reveal in model.openExternally(url, reveal: reveal) },
-                              reply: { questions, answers in await model.replyToQuestions(questions, answers: answers) },
-                              quote: { [inNotch] text in model.quoteInReply(text, inNotch: inNotch) },
-                              fork: commentary ? nil : session.flatMap { session in
-                                  model.forkPoint(message.id, in: session).map { _ in { Task { await model.forkFromHere(message.id, in: session.id) } } }
-                              },
-                              forkBlocker: session.flatMap(model.forkBlocker),
-                              edit: commentary ? nil : session.flatMap { session in
-                                  model.rewindPoint(message.id, in: session).map { _ in { Task { await model.editFromHere(message.id, in: session.id) } } }
-                              },
-                              editBlocker: session.flatMap { model.rewindBlocker($0) })
+        let session = shown.session
+        let sessionID = session?.id ?? ""
+        let forks = !commentary && derived.forks(message.id) { session.flatMap { model.forkPoint(message.id, in: $0) } != nil }
+        let edits = !commentary && derived.edits(message.id) { session.flatMap { model.rewindPoint(message.id, in: $0) } != nil }
+        return TranscriptMessageView(message: message, runtimeTitle: session?.runtime.title ?? shown.defaultRuntimeTitle,
+                                     questionStatus: questionStatus(message, in: session), commentary: commentary,
+                                     open: { url, reveal in model.openExternally(url, reveal: reveal) },
+                                     reply: { questions, answers in await model.replyToQuestions(questions, answers: answers) },
+                                     quote: { [inNotch] text in model.quoteInReply(text, inNotch: inNotch) },
+                                     fork: forks ? { Task { await model.forkFromHere(message.id, in: sessionID) } } : nil,
+                                     forkBlocker: shown.forkBlocker,
+                                     edit: edits ? { Task { await model.editFromHere(message.id, in: sessionID) } } : nil,
+                                     editBlocker: shown.editBlocker)
+            .equatable()
             .transcriptFindRow("message:\(message.id)")
     }
 
     /// A quiet line over a fork's copied history that opens the session it came from.
     fileprivate func forkedFromHeader(_ fork: ForkRecord, sideChat: Bool) -> some View {
-        let source = model.sessions.first { $0.id == fork.sourceSessionID }
-        let text = (sideChat ? "Side chat of " : "Forked from ") + (source?.title ?? fork.sourceTitle)
-        return Button { if let source { model.selectSession(source.id) } } label: {
+        let source = shown.sessionIDs.firstIndex(of: fork.sourceSessionID).map { shown.sessionTitles[$0] }
+        let text = (sideChat ? "Side chat of " : "Forked from ") + (source ?? fork.sourceTitle)
+        return Button { if source != nil { model.selectSession(fork.sourceSessionID) } } label: {
             Label(text, systemImage: "arrow.triangle.branch").font(.system(size: 11, weight: .medium)).lineLimit(1)
         }
         .buttonStyle(.plain).foregroundStyle(CompanionStyle.secondary)
         .disabled(source == nil).pressableCursor()
-        .help(source == nil ? "The source session was deleted" : "Open \(source?.title ?? "")")
+        .help(source.map { "Open \($0)" } ?? "The source session was deleted")
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -265,15 +281,119 @@ extension ConversationHistoryView {
         return agents.first.map { "\($0.title) is working" }
     }
 
-    fileprivate func questionStatus(_ message: ChatMessage) -> AsyncQuestionCard.Status? {
+    fileprivate func questionStatus(_ message: ChatMessage, in session: CompanionSession?) -> AsyncQuestionCard.Status? {
         guard message.questions != nil, let session else { return nil }
         guard ConversationTimeline.questionsOpen(message.id, in: session) else { return .answered }
         let runtime = session.runtime.title
         if session.isBusy { return .open(canReply: false, hint: "Reply when \(runtime) finishes this turn.") }
-        if model.submitting { return .open(canReply: false, hint: "Sending…") }
+        if shown.submitting { return .open(canReply: false, hint: "Sending…") }
         if session.pendingSubmission != nil { return .open(canReply: false, hint: "Check the last send before replying.") }
         return .open(canReply: true, hint: "Sent as your next message.")
     }
+}
+
+/// Everything the transcript reads from the model, as values. Whatever a row newly reads from
+/// the model belongs here, or the transcript will not notice it change.
+private struct TranscriptDependencies: Equatable {
+    /// Without its draft, which the composer alone shows: typing leaves the transcript as it is.
+    var session: CompanionSession?
+    var items: TimelineItems
+    var expandedWork: Set<String>
+    var changeDisclosure: [String: Bool]
+    var reducedMotion: Bool
+    var submitting: Bool
+    /// The panel has opened far enough to show its content.
+    var revealed: Bool
+    var codeEditorName: String
+    var defaultRuntimeTitle: String
+    /// Why Fork from here and Edit from here must wait, the same for every row.
+    var forkBlocker: String?
+    var editBlocker: String?
+    var gitActionsIdle = true
+    var watchError: String?
+    /// Limit-stopped turns that offer Resume at reset.
+    var resumableTurns: Set<String> = []
+    /// An empty draft chooses its harness and folder, and says so when none is set up.
+    var choosesRuntime = false
+    var noRuntimes = false
+    /// The other sessions, as delegation rows and a fork's header name them.
+    var sessionIDs: [String]
+    var sessionTitles: [String]
+
+    @MainActor init(_ model: AppModel, _ derived: TranscriptDerivation) {
+        var session = model.current
+        session?.draft = ""
+        self.session = session
+        items = derived.timeline(for: session)
+        expandedWork = model.expandedWork
+        changeDisclosure = model.changeDisclosure
+        reducedMotion = model.reducedMotion
+        submitting = model.submitting
+        revealed = model.notchPresentation.contentIsInteractive
+        codeEditorName = model.codeEditorName
+        defaultRuntimeTitle = model.defaultRuntime.title
+        forkBlocker = session.flatMap(model.forkBlocker)
+        editBlocker = session.flatMap { model.rewindBlocker($0) }
+        if let session {
+            // Only the latest change card offers Git actions, and only an empty draft its choosers.
+            if !derived.latestChanges.isEmpty { gitActionsIdle = model.gitActionsIdle(session.id) }
+            watchError = model.pullRequestPolls[session.id]?.error
+            resumableTurns = Set(session.limitResets.keys.filter { model.canResumeAtReset(session.id, turn: $0) })
+            choosesRuntime = items.isEmpty && model.canChangeRuntime(session.id)
+            noRuntimes = choosesRuntime && model.readyRuntimes.isEmpty
+        }
+        sessionIDs = model.sessions.map(\.id)
+        sessionTitles = model.sessions.map(\.title)
+    }
+}
+
+/// What the transcript derives from its session, kept until the session changes. The model
+/// publishes far more often than that, and each of these walks the whole history.
+@MainActor private final class TranscriptDerivation {
+    private var source: CompanionSession?
+    private var items = TimelineItems()
+    private(set) var latestChanges: Set<String> = []
+    private var forkable: [String: Bool] = [:]
+    private var editable: [String: Bool] = [:]
+
+    func timeline(for session: CompanionSession?) -> TimelineItems {
+        if session != source {
+            source = session
+            let built = session.map(ConversationTimeline.build) ?? []
+            items = TimelineItems(items: built, build: items.build + 1)
+            latestChanges = session.map { ChangeSummaryView.latestFinished(in: built, session: $0) } ?? []
+            forkable = [:]
+            editable = [:]
+        }
+        return items
+    }
+
+    /// Whether a row offers Fork from here, found once per row and session change.
+    func forks(_ id: String, _ find: () -> Bool) -> Bool {
+        if let known = forkable[id] { return known }
+        let found = find()
+        forkable[id] = found
+        return found
+    }
+
+    func edits(_ id: String, _ find: () -> Bool) -> Bool {
+        if let known = editable[id] { return known }
+        let found = find()
+        editable[id] = found
+        return found
+    }
+}
+
+/// One build of the timeline. SwiftUI compares the list it is given at every level of the
+/// view above it, and comparing a long history item by item costs more than building it:
+/// two lists are the same when they are the same build.
+private struct TimelineItems: RandomAccessCollection, Equatable {
+    var items: [ConversationTimelineItem] = []
+    var build = 0
+    var startIndex: Int { items.startIndex }
+    var endIndex: Int { items.endIndex }
+    subscript(position: Int) -> ConversationTimelineItem { items[position] }
+    static func == (a: Self, b: Self) -> Bool { a.build == b.build }
 }
 
 private struct HistoryRevision: Equatable {
@@ -285,9 +405,20 @@ private struct HistoryRevision: Equatable {
     var finishedTools: Int
     var state: WorkState
     var changes: [TurnChanges]
+
+    init(_ session: CompanionSession?) {
+        sessionID = session?.id
+        messageCount = session?.messages.count ?? 0
+        stagedMessageID = session?.stagedSubmission?.message.id
+        lastMessage = session?.messages.last?.text ?? ""
+        toolCount = session?.tools.count ?? 0
+        finishedTools = session?.tools.filter { $0.state != .working }.count ?? 0
+        state = session?.state ?? .idle
+        changes = session?.changes ?? []
+    }
 }
 
-private struct TranscriptMessageView: View {
+private struct TranscriptMessageView: View, Equatable {
     var message: ChatMessage
     var runtimeTitle: String
     var questionStatus: AsyncQuestionCard.Status?
@@ -321,6 +452,15 @@ private struct TranscriptMessageView: View {
     /// Refined and Tahoe: your own words read as a sent bubble at the trailing edge.
     private var isOwnMessage: Bool { message.role == "user" && message.agentLabel == nil }
 
+    /// The actions hold only the model, this row's IDs and `inNotch`, none of which change for a
+    /// row, so they are left out: a row redraws only when what it shows changed.
+    static func == (a: Self, b: Self) -> Bool {
+        a.message == b.message && a.runtimeTitle == b.runtimeTitle && a.questionStatus == b.questionStatus
+            && a.commentary == b.commentary && (a.quote == nil) == (b.quote == nil)
+            && (a.fork == nil) == (b.fork == nil) && a.forkBlocker == b.forkBlocker
+            && (a.edit == nil) == (b.edit == nil) && a.editBlocker == b.editBlocker
+    }
+
     var body: some View {
         if quotes {
             entry
@@ -347,7 +487,17 @@ private struct TranscriptMessageView: View {
         }
     }
 
+    /// A delivered file is looked for on disk as its row is drawn, and nothing publishes when it
+    /// appears or goes: a row that may hold one is drawn again every second.
     @ViewBuilder private var entry: some View {
+        if message.role != "user", message.text.holdsBytes("MEDIA:") || message.text.holdsBytes("![") {
+            TimelineView(.periodic(from: .now, by: 1)) { _ in drawn }
+        } else {
+            drawn
+        }
+    }
+
+    @ViewBuilder private var drawn: some View {
         if commentary && message.role == "assistant" {
             commentaryBody
         } else {
@@ -638,7 +788,7 @@ private struct DelegationResultRow: View {
     }
 }
 
-private struct TranscriptToolGroup: View {
+private struct TranscriptToolGroup: View, Equatable {
     var group: ToolCallGroup
     var reducedMotion: Bool
     var onInspect: () -> Void
@@ -647,6 +797,10 @@ private struct TranscriptToolGroup: View {
     /// Find selected a call behind the collapsed line, so it shows.
     var reveal = false
     @State private var showsOlder = false
+
+    static func == (a: Self, b: Self) -> Bool {
+        a.group == b.group && a.reducedMotion == b.reducedMotion && a.inWork == b.inWork && a.reveal == b.reveal
+    }
 
     var body: some View {
         let theme = PanelTheme.current
@@ -926,7 +1080,13 @@ private struct ToolHistoryDetail: View {
 @MainActor
 final class HistoryScrollCoordinator: ObservableObject {
     @Published private(set) var followsLatest = true
-    @Published private(set) var hasNewActivity = false
+    /// Published only when it changes: each publication re-evaluates the transcript, and it is
+    /// written with every scroll at the end and every delta while reading back.
+    private(set) var hasNewActivity: Bool {
+        get { newActivity }
+        set { if newActivity != newValue { newActivity = newValue } }
+    }
+    @Published private var newActivity = false
     private weak var scrollView: NSScrollView?
     private var boundsObserver: NSObjectProtocol?
     private var frameObserver: NSObjectProtocol?
