@@ -522,8 +522,11 @@ private struct GlanceRow: View {
                 }
                 if showsStop { Color.clear.frame(width: 20, height: 1) }
             } else {
-                Text(SessionDigest.compactAge(Date().timeIntervalSince(entry.since)))
-                    .foregroundStyle(IslandStyle.secondary)
+                // Nothing publishes as a session ages; every step of the label falls on a 15-second mark.
+                TimelineView(.periodic(from: entry.since, by: 15)) { context in
+                    Text(SessionDigest.compactAge(context.date.timeIntervalSince(entry.since)))
+                        .foregroundStyle(IslandStyle.secondary)
+                }
             }
         }
         .font(.system(size: 10.5).monospacedDigit())

@@ -487,8 +487,9 @@ private struct TranscriptMessageView: View, Equatable {
         }
     }
 
-    /// A delivered file is looked for on disk as its row is drawn, and nothing publishes when it
-    /// appears or goes: a row that may hold one is drawn again every second.
+    /// Which files a row delivers is read against the disk (a path with spaces, a local image),
+    /// and nothing publishes when one appears: a row that may hold one is read again every
+    /// second. Each file's card asks for its own file.
     @ViewBuilder private var entry: some View {
         if message.role != "user", message.text.holdsBytes("MEDIA:") || message.text.holdsBytes("![") {
             TimelineView(.periodic(from: .now, by: 1)) { _ in drawn }

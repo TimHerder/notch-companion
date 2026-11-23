@@ -98,6 +98,44 @@ final class TranscriptPerformanceTests: XCTestCase {
         XCTAssertNotEqual(longer, unfolded, "A new message appears.")
     }
 
+    /// Nothing publishes when a delivered file is written after its answer: its card asks the disk again.
+    @MainActor func testFileCardNoticesItsFileAppearing() async throws {
+        _ = NSApplication.shared
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("NotchCompanionTests.performance.\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("report.pdf")
+        let list = MessageMediaList(media: [MessageMedia(url: file)], open: { _, _ in })
+        let hosting = NSHostingView(rootView: list.frame(width: 460, height: 80).background(Color.black))
+        hosting.sizingOptions = []
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 460, height: 80), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer { window.close() }
+        func drawn() async throws -> Data {
+            for _ in 0..<12 { hosting.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(40)) }
+            let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+            return try XCTUnwrap(bitmap.tiffRepresentation)
+        }
+        let missing = try await drawn()
+        try Data("A report".utf8).write(to: file)
+        var appeared = missing
+        for _ in 0..<20 where appeared == missing { appeared = try await drawn() }
+        XCTAssertNotEqual(appeared, missing, "The card offers Open once its file exists.")
+    }
+
+    /// The glance's age label has its own 15-second clock, so every step of the label must fall on one.
+    func testEveryStepOfAnAgeFallsOnAQuarterMinute() {
+        var label = SessionDigest.compactAge(0)
+        for second in 1..<400_000 {
+            let next = SessionDigest.compactAge(TimeInterval(second))
+            if next != label { XCTAssertEqual(second % 15, 0, "\(label) became \(next) at \(second) s") }
+            label = next
+        }
+    }
+
     /// Scrolling at the end and each delta while reading back write the same value again.
     @MainActor func testNewActivityPublishesOnlyWhenItChanges() async {
         let follow = HistoryScrollCoordinator()

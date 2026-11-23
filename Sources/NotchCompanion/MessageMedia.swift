@@ -254,6 +254,11 @@ private struct MediaFileCard: View {
     private var exists: Bool { FileManager.default.fileExists(atPath: item.url.path) }
 
     var body: some View {
+        // The file can be written, moved or deleted without anything publishing: asked again each second.
+        TimelineView(.periodic(from: .now, by: 1)) { _ in card }
+    }
+
+    @ViewBuilder private var card: some View {
         let available = exists
         HStack(spacing: 10) {
             Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path)).resizable().frame(width: 28, height: 28)
